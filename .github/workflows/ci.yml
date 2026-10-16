@@ -1,0 +1,28 @@
+name: ioscaffeinate CI
+on:
+  push:
+  pull_request:
+jobs:
+  linux-protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build mock and integration test
+        run: |
+          ./scripts/build-linux-test.sh
+          python3 tests/integration.py
+  ios-cross-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cross-compile iOS 12 ARM64 executables
+        run: ./scripts/build-macos.sh
+      - name: Inspect outputs
+        run: |
+          file dist/ioscaffeinate dist/ioscaffeinated
+          xcrun otool -hv dist/ioscaffeinate dist/ioscaffeinated
+          plutil -lint packaging/com.ioscaffeinate.daemon.plist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ioscaffeinate-ios12-arm64-UNSIGNED
+          path: dist/
