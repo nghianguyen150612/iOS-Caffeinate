@@ -3,7 +3,7 @@
 | Milestone | Deliverable | Status |
 |---|---|---|
 | P001 | Native C CLI/daemon, bounded hold, mock tests, unsigned iOS cross-build and disabled launchd template | Baseline `069ad94eb344da08d414c9478b6e212146c8fc28` verified |
-| P002 | Source audit, canonical names, runtime diagnostics, iOS 12 ARM64 build/inspection, safe hardware and network validation | Engineering in progress; hardware PENDING; see P002 evidence |
+| P002 | Source audit, canonical names, runtime diagnostics, iOS 12 ARM64 build/inspection, safe hardware and network validation | Cloud/local engineering complete; hardware PENDING; see P002 evidence |
 | P003 | Further lifecycle/health work and launchd integration | NOT AUTHORIZED |
 | P004 | --until, scheduled and recurrent awake windows | NOT STARTED |
 | P005 | Validate possible system/RTC scheduled wake, or mark unsupported | NOT STARTED |

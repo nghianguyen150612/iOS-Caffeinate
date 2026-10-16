@@ -1,6 +1,6 @@
 # P002 audit and evidence — 2026-10-16
 
-P002 status: PARTIAL until hardware gates are measured. No iPad changes have been made.
+P002 status: PARTIAL overall; all cloud/local engineering gates are complete. Hardware gates remain PENDING. No iPad changes have been made.
 
 ## Baseline and available environment
 
@@ -33,9 +33,9 @@ No architectural replacement, launchd activation, installer, entitlement expansi
 
 | Level | Status | Evidence / limitation |
 |---|---|---|
-| SOURCE VALIDATED | PASS | P001 files reviewed and P002 fixes inspected; final diff check required before each commit |
-| MOCK TESTED | PASS locally | `./scripts/build-linux-test.sh` + `python3 tests/integration.py`; 20 integration tests, UID 1000, C11 `-Wall -Wextra -Werror`; latest full local run: 20/20 OK in 10.042 seconds; no power effect |
-| CROSS-BUILD VALIDATED | PENDING current branch CI | Will record exact tested SHA, SDK, artifact hashes, platform and linked libraries after Actions |
+| SOURCE VALIDATED | PASS | P001 files reviewed and P002 fixes inspected; final source/diff review and whitespace checks passed |
+| MOCK TESTED | PASS locally | `./scripts/build-linux-test.sh` + `python3 tests/integration.py`; 20 integration tests, UID 1000, C11 `-Wall -Wextra -Werror`; latest source run: 20/20 OK in 10.031 seconds; no power effect |
+| CROSS-BUILD VALIDATED | PASS in macOS Actions | Exact implementation SHA `8534e88716623dbb25d589a3843a29c3fb618a46`; all three jobs SUCCESS in [run 38867358085](https://github.com/nghianguyen150612/iOS-Caffeinate/actions/runs/38867358085); official iPhoneOS 26.5 SDK, ARM64 device platform, min iOS 12.0 |
 | DEVICE RUNTIME VALIDATED | PENDING | No reachable authorized iPad session |
 | ASSERTION API VALIDATED | PENDING | No real IOKit load/symbol/create/release measurements |
 | NETWORK EFFECT VALIDATED | PENDING | No screen-locked LAN SSH or independent Tailscale measurements |
@@ -48,6 +48,34 @@ Additional local checks: Python syntax compilation, Bash syntax checks, and `git
 
 - Implementation commit `434f85a78f356cd8804c9ebb1638614884ca8f54`, [run 38867232447](https://github.com/nghianguyen150612/iOS-Caffeinate/actions/runs/38867232447): Linux SUCCESS; iOS cross-build FAILED; inspection SKIPPED. Official iPhoneOS26.5 SDK under Xcode 26.6 reported hidden `O_NOFOLLOW`, `flock`/`LOCK_EX`/`LOCK_NB`, and `MSG_DONTWAIT` declarations under strict `_POSIX_C_SOURCE`.
 - Fix: enable `_DARWIN_C_SOURCE` before system headers in CLI and daemon on Apple builds, retaining C11 and the same deployment target. No fallback constants or manually invented API declarations.
+
+## Verified cross-build and Mach-O evidence
+
+Tested implementation commit: **`8534e88716623dbb25d589a3843a29c3fb618a46`**, [Actions run 38867358085](https://github.com/nghianguyen150612/iOS-Caffeinate/actions/runs/38867358085), completed 2026-10-16 07:28:24 UTC.
+
+| Job | Result | Evidence |
+|---|---|---|
+| `linux-protocol` | SUCCESS | 20 tests OK in 9.964s; ungated Linux compile rejected |
+| `ios-cross-build` | SUCCESS | Both binaries compiled/linked; official iPhoneOS 26.5 SDK / Xcode 26.6; Apple clang 21.0.0; symlink and disabled plist checks passed |
+| `ios-artifact-inspection` | SUCCESS | Downloaded the uploaded unsigned binaries on a separate macOS runner; file/lipo/otool/vtool/codesign checks passed; evidence report uploaded |
+
+Actual build target is `arm64-apple-ios12.0`. The compiler's `--version` host target (`arm64-apple-darwin25.6.0`) describes the runner/compiler default, not these artifacts. Both artifacts have `MH_MAGIC_64`, `ARM64 ALL`, `EXECUTE`, `NOUNDEFS DYLDLINK TWOLEVEL PIE`; `LC_BUILD_VERSION platform 2` / vtool `IOS`, `minos 12.0`, SDK `26.5`. No simulator or macOS platform slice is present. Loader is `/usr/lib/dyld`.
+
+- CLI direct dependencies: `/usr/lib/libSystem.B.dylib` only.
+- Daemon direct dependencies: `/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation` and `/usr/lib/libSystem.B.dylib` only.
+- IOKit assertion symbols remain runtime lookups, not unresolved build-time imports. No IOKit, private framework, host SDK, or simulator linkage is used. Deployment compatibility beyond SDK availability checks still needs actual iOS 12 execution.
+- Both binaries have no `LC_CODE_SIGNATURE`; `codesign -d` reports `code object is not signed at all`. This verifies unsigned state; it is not device signing evidence.
+
+Unsigned binary SHA256 values for this tested commit:
+
+```text
+2ffdfda404bb901beec56280e067e17bebe2fbed637e1bb442661c76afb1eb7b  ios-caffeinate
+a60497ea6a7c055ba03f25105e511f0abff6fe722974f00536574e68e6fab74b  ios-caffeinated
+```
+
+Artifact name: `iOS-Caffeinate-ios12-arm64-UNSIGNED-HARDWARE-UNVERIFIED`, ID `12031248138`, zip SHA256 `bafdf73bdb07e8f82dd7d899c0d833075ed0801b3ded58eeeb3ceb61f7ca81c7`. Separate evidence artifact: `iOS-Caffeinate-ios12-arm64-inspection-evidence`. See the [full extracted inspection stdout](evidence/P002-8534e88-inspection.txt), retained in Git so evidence survives Actions artifact expiration.
+
+The cloud workspace's `gh run download` attempt returned HTTP 403 from artifact storage. No binary was downloaded here and no local Mach-O/signing result is claimed. The separate CI inspection job successfully downloaded and inspected the artifact, and its full stdout was retrieved using `gh run view --log`. Obtain the unsigned files through the linked Actions run before hardware testing. Later documentation-only commits do not change this tested implementation; their exact-commit CI result is reported separately in the final delivery report.
 
 ## Hardware evidence record
 
