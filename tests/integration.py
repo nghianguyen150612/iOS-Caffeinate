@@ -346,6 +346,13 @@ class Integration(unittest.TestCase):
         raw_resp = self.raw(b"STATUS\n")
         self.assertTrue(raw_resp.startswith("OK "))
 
+        # Test fail-closed rejection on socket mismatch or lookup failure
+        # In unprivileged test mode, requesting default socket path without root fails:
+        proc = subprocess.run([str(DAEMON), "--socket", "/var/run/ioscaffeinated.sock"],
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("Default socket requires root", proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
