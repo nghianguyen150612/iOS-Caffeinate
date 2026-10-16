@@ -1,7 +1,10 @@
-#define _POSIX_C_SOURCE 200809L
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE 1
+#endif
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
+#define _POSIX_C_SOURCE 200809L
 #include "schedule.h"
 #include <ctype.h>
 #include <errno.h>
@@ -9,8 +12,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #define MAX_FILE_SIZE 65536
