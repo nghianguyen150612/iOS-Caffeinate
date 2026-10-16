@@ -7,12 +7,12 @@
   <key>Disabled</key><true/>
   <key>ProgramArguments</key>
   <array>
-    <string>/var/ioscaffeinate/bin/ioscaffeinated</string>
+    <string>/usr/local/bin/ios-caffeinated</string>
     <string>--foreground</string>
   </array>
   <key>RunAtLoad</key><false/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/var/log/ioscaffeinated.log</string>
-  <key>StandardErrorPath</key><string>/var/log/ioscaffeinated.err</string>
+  <key>StandardOutPath</key><string>/var/log/ioscaffeinate/daemon.log</string>
+  <key>StandardErrorPath</key><string>/var/log/ioscaffeinate/daemon.err</string>
 </dict>
 </plist>

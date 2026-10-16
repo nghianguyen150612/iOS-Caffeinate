@@ -9,8 +9,12 @@ fi
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 CLANG="$(xcrun --sdk iphoneos --find clang)"
 mkdir -p dist
-FLAGS=(-std=c11 -O2 -Wall -Wextra -Werror -target arm64-apple-ios12.0 -isysroot "$SDK")
-"$CLANG" "${FLAGS[@]}" src/daemon.c src/power.c -framework CoreFoundation -o dist/ioscaffeinated
-"$CLANG" "${FLAGS[@]}" src/cli.c -o dist/ioscaffeinate
-file dist/ioscaffeinate dist/ioscaffeinated
+FLAGS=(-std=c11 -O2 -Wall -Wextra -Werror -target arm64-apple-ios12.0 -isysroot "$SDK" -Wl,-no_adhoc_codesign)
+"$CLANG" "${FLAGS[@]}" src/daemon.c src/power.c -framework CoreFoundation -o dist/ios-caffeinated
+"$CLANG" "${FLAGS[@]}" src/cli.c -o dist/ios-caffeinate
+xcrun --sdk iphoneos --show-sdk-version
+"$CLANG" --version
+file dist/ios-caffeinate dist/ios-caffeinated
 printf '%s\n' "Binaries are UNSIGNED; iOS 12 power behavior remains unverified."
+
+ln -sfn ios-caffeinate dist/ic
