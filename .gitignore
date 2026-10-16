@@ -2,3 +2,4 @@ build/
 dist/
 *.deb
 .DS_Store
+__pycache__/
