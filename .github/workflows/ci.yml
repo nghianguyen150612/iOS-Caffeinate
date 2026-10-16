@@ -1,28 +1,58 @@
-name: ioscaffeinate CI
+name: iOS-Caffeinate CI
 on:
   push:
   pull_request:
+permissions:
+  contents: read
 jobs:
   linux-protocol:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build mock and integration test
+      - name: Build explicit C11 mock and run integration tests
         run: |
           ./scripts/build-linux-test.sh
           python3 tests/integration.py
+      - name: Verify Linux backend cannot build without mock gate
+        run: |
+          if cc -std=c11 -c src/power.c -o build/test/ungated.o 2>build/test/ungated.log; then
+            echo 'ERROR: Linux backend built without explicit mock gate'
+            exit 1
+          fi
+          cat build/test/ungated.log
+          grep -q 'No real backend for this OS' build/test/ungated.log
   ios-cross-build:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Cross-compile iOS 12 ARM64 executables
-        run: ./scripts/build-macos.sh
-      - name: Inspect outputs
+      - name: Cross-compile with official iPhoneOS SDK for iOS 12 ARM64
         run: |
-          file dist/ioscaffeinate dist/ioscaffeinated
-          xcrun otool -hv dist/ioscaffeinate dist/ioscaffeinated
+          ./scripts/build-macos.sh
+          test -L dist/ic
+          test "$(readlink dist/ic)" = ios-caffeinate
           plutil -lint packaging/com.ioscaffeinate.daemon.plist
       - uses: actions/upload-artifact@v4
         with:
-          name: ioscaffeinate-ios12-arm64-UNSIGNED
-          path: dist/
+          name: iOS-Caffeinate-ios12-arm64-UNSIGNED-HARDWARE-UNVERIFIED
+          if-no-files-found: error
+          path: |
+            dist/ios-caffeinate
+            dist/ios-caffeinated
+  ios-artifact-inspection:
+    needs: ios-cross-build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-ios12-arm64-UNSIGNED-HARDWARE-UNVERIFIED
+          path: dist
+      - name: Verify Mach-O device platform, ARM64, iOS 12.0, dependencies and unsigned state
+        run: |
+          set -o pipefail
+          python3 scripts/inspect-ios.py | tee dist/inspection.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-ios12-arm64-inspection-evidence
+          if-no-files-found: error
+          path: dist/inspection.txt

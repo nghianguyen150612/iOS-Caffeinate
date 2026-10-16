@@ -1,44 +1,61 @@
-# ioscaffeinate (P001 prototype)
+# iOS-Caffeinate
 
-CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), initially targeting iPad mini 2 (arm64).
+Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P002 audits the prototype, validates the iOS cross-build, and prepares bounded hardware tests. Real-device power and networking behavior remain **PENDING**.
 
-Executables: **ioscaffeinate** (CLI), **ioscaffeinated** (daemon).
+Executables: **ios-caffeinate** (CLI), **ios-caffeinated** (daemon). **ic** is a filesystem symlink to the CLI, never a second executable or shell alias. The socket remains `/var/run/ioscaffeinated.sock`.
 
-## Implemented
+## Manual use
 
-- Local root-only Unix socket: /var/run/ioscaffeinated.sock
-- Commands: probe, start --for DURATION, status, stop
-- Bounded duration: 1 second through 24 hours, automatic expiry
-- Runtime IOKit assertion symbol lookup
-- Linux mock tests; CI iOS ARM64 unsigned cross-build
-- Disabled launchd template (not installed or activated)
+Run as root on the target only after following [the safe hardware procedure](docs/P002-DEVICE-TEST.md). Start `ios-caffeinated --foreground` in one shell, then in another:
 
-## Run (manual, root)
+```sh
+ios-caffeinate probe
+ios-caffeinate status
+ios-caffeinate start --for 5m
+ios-caffeinate status
+ios-caffeinate stop
+```
 
-First launch ioscaffeinated --foreground. In a second root shell run:
+With the symlink in PATH, `ic probe`, `ic status`, `ic start --for 5m`, and `ic stop` run the same CLI. First trials must be bounded to five minutes or less, with physical recovery available. A successful assertion call does not prove Wi-Fi, LAN SSH, or Tailscale survives display lock.
 
-    ioscaffeinate probe
-    ioscaffeinate start --for 5m
-    ioscaffeinate status
-    ioscaffeinate stop
+## Build and tests
 
-## Tests
+Linux tests explicitly compile `IOSCAFFEINATE_TEST_MOCK`; this backend has **NO POWER EFFECT** and is never an iOS fallback:
 
-Linux mock backend (does NOT affect power):
+```sh
+./scripts/build-linux-test.sh
+python3 tests/integration.py
+```
 
-    ./scripts/build-linux-test.sh
-    python3 tests/integration.py
+macOS with Xcode and the official **iPhoneOS** SDK:
 
-macOS with Xcode/iPhoneOS SDK:
+```sh
+./scripts/build-macos.sh
+python3 scripts/inspect-ios.py
+```
 
-    ./scripts/build-macos.sh
+Outputs: `dist/ios-caffeinate`, `dist/ios-caffeinated`, and relative symlink `dist/ic -> ios-caffeinate`. CI uploads the two **UNSIGNED, HARDWARE-UNVERIFIED** binaries and a separate Mach-O inspection report. Recreate `ic` after downloading; artifact archives need not preserve permissions or symlinks. No build step signs, installs, deploys, or activates a service.
 
-Outputs are unsigned. Copy to iPad ONLY after arranging LAN or physical recovery. Sign with ldid on iPad, test the daemon manually in the foreground and use a <=5 minute hold for first validation. Do not enable launchd before proving assertion effects, safe stop and screen-off LAN SSH. API acceptance alone does NOT prove Wi-Fi or Tailscale availability.
+## Planned rootful installation layout
 
-## Unverified / out of scope
+| Component | Path |
+|---|---|
+| CLI | `/usr/local/bin/ios-caffeinate` |
+| Daemon | `/usr/local/bin/ios-caffeinated` |
+| CLI symlink | `/usr/local/bin/ic -> /usr/local/bin/ios-caffeinate` |
+| Manager (planned) | `/var/lib/ioscaffeinate/manager.sh` |
+| Installation state (planned) | `/var/lib/ioscaffeinate/install-state` |
+| Project data | `/var/lib/ioscaffeinate/` |
+| Logs (planned) | `/var/log/ioscaffeinate/` |
+| IPC socket | `/var/run/ioscaffeinated.sock` |
+| LaunchDaemon template | `/Library/LaunchDaemons/com.ioscaffeinate.daemon.plist` |
 
-Actual iOS 12 assertion support, screen-off network availability, and long-term thermal safety are UNVERIFIED. No GUI, tweak injection, Apple daemon modifications, reboot or remote device deployment.
+A `0600` socket sidecar lock (`/var/run/ioscaffeinated.sock.lock`) serializes manual daemon instances. It is left in place to avoid lock inode races. The default endpoint requires root; mock tests use private temporary directories without root.
 
-Permanent server mode, recurrent schedules, --until, timed deep-sleep wake and signed .deb packaging are NOT implemented. True scheduled wake needs hardware/OS evidence; launchd calendar jobs alone are insufficient.
+The launchd template remains disabled and must not be installed, loaded, bootstrapped, or enabled during P002. Manager, installer state, log directories and final `.deb` packaging are future components, not created by P002.
 
-See docs/PLAN.md, docs/ARCHITECTURE.md and docs/P001-HANDOFF.md.
+## Scope and evidence
+
+Commands support bounded holds from 1 second through 24 hours. No indefinite mode, GUI, tweak injection, Apple daemon changes, schedules, `--until`, or automatic installation. P003 is **NOT AUTHORIZED**; `.deb` packaging belongs to P007.
+
+See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P001 handoff](docs/P001-HANDOFF.md), [P002 audit and evidence](docs/P002-VALIDATION.md), and [device test/rollback instructions](docs/P002-DEVICE-TEST.md).
