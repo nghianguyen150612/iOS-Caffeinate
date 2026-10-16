@@ -1,3 +1,7 @@
+/* Darwin hides BSD socket/locking declarations in strict POSIX mode. */
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE 1
+#endif
 #define _POSIX_C_SOURCE 200809L
 #include <errno.h>
 #include <stdint.h>

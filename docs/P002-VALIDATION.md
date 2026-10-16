@@ -44,6 +44,11 @@ Mock coverage: invalid/zero/overflow/>24h durations, 24h acceptance followed by 
 
 Additional local checks: Python syntax compilation, Bash syntax checks, and `git diff --check` passed. Compiling `src/power.c` without the mock definition failed at the expected `#error`, confirming the gate. Running `./scripts/build-macos.sh` on Linux intentionally returned exit 1 with `iPhoneOS SDK required. Run with Xcode on macOS.`; it did not build against a host or unofficial SDK.
 
+## Current-branch CI history
+
+- Implementation commit `434f85a78f356cd8804c9ebb1638614884ca8f54`, [run 38867232447](https://github.com/nghianguyen150612/iOS-Caffeinate/actions/runs/38867232447): Linux SUCCESS; iOS cross-build FAILED; inspection SKIPPED. Official iPhoneOS26.5 SDK under Xcode 26.6 reported hidden `O_NOFOLLOW`, `flock`/`LOCK_EX`/`LOCK_NB`, and `MSG_DONTWAIT` declarations under strict `_POSIX_C_SOURCE`.
+- Fix: enable `_DARWIN_C_SOURCE` before system headers in CLI and daemon on Apple builds, retaining C11 and the same deployment target. No fallback constants or manually invented API declarations.
+
 ## Hardware evidence record
 
 Signing: PENDING. Runtime: PENDING. IOKit load: PENDING. Both symbol lookups: PENDING. Create return code/ID: PENDING. Release return code: PENDING. STOP/expiry/SIGTERM/socket cleanup on iOS: PENDING. Battery/thermal observation: PENDING.
