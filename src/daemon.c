@@ -262,14 +262,18 @@ static void handle_client(int fd) {
     if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) != 0) return;
 
     uid_t peer_uid = (uid_t)-1;
-    if (check_peer_euid(fd, &peer_uid) == 0) {
-        uid_t required_uid = (strcmp(socket_path, DEFAULT_SOCKET) == 0) ? 0 : geteuid();
-        if (peer_uid != required_uid) {
-            log_msg("WARN", "Rejecting client connection: peer UID %u != required UID %u",
-                    (unsigned)peer_uid, (unsigned)required_uid);
-            respond(fd, "ERR permission denied: unauthorized client UID\n");
-            return;
-        }
+    if (check_peer_euid(fd, &peer_uid) != 0) {
+        log_msg("WARN", "Rejecting client connection: unable to verify peer credentials");
+        respond(fd, "ERR permission denied: unable to verify peer credentials\n");
+        return;
+    }
+
+    uid_t required_uid = (strcmp(socket_path, DEFAULT_SOCKET) == 0) ? 0 : geteuid();
+    if (peer_uid != required_uid) {
+        log_msg("WARN", "Rejecting client connection: peer UID %u != required UID %u",
+                (unsigned)peer_uid, (unsigned)required_uid);
+        respond(fd, "ERR permission denied: unauthorized client UID\n");
+        return;
     }
 
     char command[128];

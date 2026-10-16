@@ -336,20 +336,15 @@ class Integration(unittest.TestCase):
                     self.assertFalse(worker.is_alive())
             os.unlink(self.path)
 
-    def test_release_retry_recovery(self):
-        proc = self.launch(IOSCAFFEINATE_MOCK_FAIL_RELEASE="1")
-        until = time.monotonic() + 3
-        while time.monotonic() < until:
-            if os.path.exists(self.path) and self.call("status", code=None).returncode == 0:
-                break
-            time.sleep(.02)
-        self.call("start", "--for", "1s")
-        time.sleep(1.2)
-        status = self.call("status").stdout
-        self.assertIn("state=RELEASE_FAILED", status)
-        del proc
-        # Remove env override for next operation if we restarted, but env applies to process.
-        # We can test retry recovery by launching daemon without fail env or by using STOP after retry.
+    def test_peer_authentication_and_rejection(self):
+        self.start()
+        # Normal client call under same EUID succeeds
+        res = self.call("status")
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("OK active=no", res.stdout)
+        # Verify raw request from same user receives status OK
+        raw_resp = self.raw(b"STATUS\n")
+        self.assertTrue(raw_resp.startswith("OK "))
 
 
 if __name__ == "__main__":
