@@ -205,7 +205,6 @@ static int json_get_bool(const char *json, const char *key, bool *val) {
 
 int schedule_store_load(schedule_store_t *store, char *err_buf, size_t err_cap) {
     if (!store || !store->state_file_path[0]) return 0;
-    store->count = 0;
 
     struct stat st;
     if (lstat(store->state_file_path, &st) != 0) {
@@ -224,12 +223,17 @@ int schedule_store_load(schedule_store_t *store, char *err_buf, size_t err_cap) 
         return -1;
     }
 
+    if (st.st_uid != geteuid()) {
+        if (err_buf) snprintf(err_buf, err_cap, "schedule file ownership mismatch");
+        return -1;
+    }
+
     if (st.st_size > MAX_FILE_SIZE) {
         if (err_buf) snprintf(err_buf, err_cap, "schedule file exceeds maximum size");
         return -1;
     }
 
-    int fd = open(store->state_file_path, O_RDONLY);
+    int fd = open(store->state_file_path, O_RDONLY | O_NOFOLLOW);
     if (fd < 0) {
         if (err_buf) snprintf(err_buf, err_cap, "open schedule file failed: %s", strerror(errno));
         return -1;
@@ -251,6 +255,10 @@ int schedule_store_load(schedule_store_t *store, char *err_buf, size_t err_cap) 
     }
     buf[n] = '\0';
 
+    schedule_store_t temp;
+    memcpy(&temp, store, sizeof(temp));
+    temp.count = 0;
+
     int version = 0;
     if (json_get_int(buf, "version", &version) != 0 || version != 1) {
         free(buf);
@@ -260,7 +268,7 @@ int schedule_store_load(schedule_store_t *store, char *err_buf, size_t err_cap) 
 
     uint32_t counter = 1;
     if (json_get_uint32(buf, "next_id_counter", &counter) == 0) {
-        store->next_id_counter = counter;
+        temp.next_id_counter = counter;
     }
 
     const char *p = strstr(buf, "\"schedules\"");
@@ -280,13 +288,13 @@ int schedule_store_load(schedule_store_t *store, char *err_buf, size_t err_cap) 
         memcpy(obj_buf, obj_start, obj_len);
         obj_buf[obj_len] = '\0';
 
-        if (store->count >= MAX_SCHEDULES) {
+        if (temp.count >= MAX_SCHEDULES) {
             free(buf);
             if (err_buf) snprintf(err_buf, err_cap, "schedule state exceeds maximum schedule capacity");
             return -1;
         }
 
-        schedule_t *item = &store->items[store->count];
+        schedule_t *item = &temp.items[temp.count];
         memset(item, 0, sizeof(*item));
 
         if (json_get_string(obj_buf, "id", item->id, sizeof(item->id)) != 0) {
@@ -294,8 +302,8 @@ int schedule_store_load(schedule_store_t *store, char *err_buf, size_t err_cap) 
         }
 
         bool duplicate = false;
-        for (size_t i = 0; i < store->count; ++i) {
-            if (strcmp(store->items[i].id, item->id) == 0) { duplicate = true; break; }
+        for (size_t i = 0; i < temp.count; ++i) {
+            if (strcmp(temp.items[i].id, item->id) == 0) { duplicate = true; break; }
         }
         if (duplicate) {
             free(buf);
@@ -323,11 +331,12 @@ int schedule_store_load(schedule_store_t *store, char *err_buf, size_t err_cap) 
             p = obj_end + 1; continue;
         }
 
-        store->count++;
+        temp.count++;
         p = obj_end + 1;
     }
 
     free(buf);
+    memcpy(store, &temp, sizeof(*store));
     return 0;
 }
 
@@ -343,6 +352,10 @@ int schedule_store_save(const schedule_store_t *store, char *err_buf, size_t err
         if (lstat(dir_path, &st_dir) == 0) {
             if (S_ISLNK(st_dir.st_mode)) {
                 if (err_buf) snprintf(err_buf, err_cap, "refusing symlink directory: %s", dir_path);
+                return -1;
+            }
+            if (st_dir.st_uid != geteuid()) {
+                if (err_buf) snprintf(err_buf, err_cap, "directory ownership mismatch: %s", dir_path);
                 return -1;
             }
         }
@@ -412,11 +425,14 @@ int schedule_store_add(schedule_store_t *store, schedule_t *sched, char *err_buf
         return -1;
     }
 
+    schedule_store_t temp;
+    memcpy(&temp, store, sizeof(temp));
+
     if (!sched->id[0]) {
-        snprintf(sched->id, sizeof(sched->id), "sched-%u", store->next_id_counter++);
+        snprintf(sched->id, sizeof(sched->id), "sched-%u", temp.next_id_counter++);
     } else {
-        for (size_t i = 0; i < store->count; ++i) {
-            if (strcmp(store->items[i].id, sched->id) == 0) {
+        for (size_t i = 0; i < temp.count; ++i) {
+            if (strcmp(temp.items[i].id, sched->id) == 0) {
                 if (err_buf) snprintf(err_buf, err_cap, "schedule ID '%s' already exists", sched->id);
                 return -1;
             }
@@ -439,9 +455,14 @@ int schedule_store_add(schedule_store_t *store, schedule_t *sched, char *err_buf
     }
 
     sched->enabled = true;
-    store->items[store->count++] = *sched;
+    temp.items[temp.count++] = *sched;
 
-    return schedule_store_save(store, err_buf, err_cap);
+    if (schedule_store_save(&temp, err_buf, err_cap) != 0) {
+        return -1;
+    }
+
+    memcpy(store, &temp, sizeof(*store));
+    return 0;
 }
 
 int schedule_store_remove(schedule_store_t *store, const char *id, char *err_buf, size_t err_cap) {
@@ -455,12 +476,20 @@ int schedule_store_remove(schedule_store_t *store, const char *id, char *err_buf
         return -1;
     }
 
-    for (size_t i = (size_t)index; i + 1 < store->count; ++i) {
-        store->items[i] = store->items[i + 1];
-    }
-    store->count--;
+    schedule_store_t temp;
+    memcpy(&temp, store, sizeof(temp));
 
-    return schedule_store_save(store, err_buf, err_cap);
+    for (size_t i = (size_t)index; i + 1 < temp.count; ++i) {
+        temp.items[i] = temp.items[i + 1];
+    }
+    temp.count--;
+
+    if (schedule_store_save(&temp, err_buf, err_cap) != 0) {
+        return -1;
+    }
+
+    memcpy(store, &temp, sizeof(*store));
+    return 0;
 }
 
 static void get_next_recurring_occurrence(const schedule_t *sched, time_t now_wall, time_t *next_start_out, time_t *current_window_start_out) {
@@ -583,7 +612,7 @@ void schedule_store_evaluate(schedule_store_t *store,
 
 void schedule_mark_fired(schedule_store_t *store, int index, time_t occurrence_start) {
     if (!store || index < 0 || (size_t)index >= store->count) return;
-    store->items[index].last_fired_time = occurrence_start;
+    store->items[index].last_fired_time = occurrence_start + store->items[index].duration;
     char err[256];
     schedule_store_save(store, err, sizeof(err));
 }

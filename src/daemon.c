@@ -378,7 +378,7 @@ static void handle_client(int fd) {
         else if (clear_hold(error, sizeof(error)) != 0) reply_error(fd, "release", error);
         else respond(fd, "OK active=no release_rc=0x00000000\n");
     } else if (strcmp(command, "SCHEDULE LIST") == 0) {
-        char out[2048] = "OK schedules=";
+        char out[16384] = "OK schedules=";
         char item_str[256];
         snprintf(out + strlen(out), sizeof(out) - strlen(out), "%zu\n", sched_store.count);
         for (size_t i = 0; i < sched_store.count; ++i) {

@@ -207,7 +207,7 @@ int main(int argc, char **argv) {
         to_send -= (size_t)n;
         out += n;
     }
-    char response[4096] = {0};
+    char response[16384] = {0};
     size_t used = 0;
     struct timespec started, current;
     if (clock_gettime(CLOCK_MONOTONIC, &started) != 0) {
@@ -228,20 +228,16 @@ int main(int argc, char **argv) {
             break;
         }
         size_t end = used + (size_t)n;
+        bool is_sched_list = (strncmp(response, "OK schedules=", 13) == 0);
         for (size_t j = used; j < end; ++j) {
-            if ((unsigned char)response[j] < 32 || (unsigned char)response[j] > 126) {
-                if (response[j] != '\n') goto incomplete;
+            if (response[j] == '\n') {
+                if (!is_sched_list && j + 1 != end) goto incomplete;
+            } else if ((unsigned char)response[j] < 32 || (unsigned char)response[j] > 126) {
+                goto incomplete;
             }
         }
         used = end;
-        if (used > 0 && response[used - 1] == '\n') {
-            size_t newline_count = 0;
-            for (size_t k = 0; k < used; ++k) {
-                if (response[k] == '\n') newline_count++;
-            }
-            if (newline_count > 1 && strncmp(response, "OK schedules=", 13) != 0) {
-                goto incomplete;
-            }
+        if (!is_sched_list && used > 0 && response[used - 1] == '\n') {
             response[used] = 0;
             close(fd);
             fputs(response, strncmp(response, "OK ", 3) == 0 ? stdout : stderr);
@@ -250,6 +246,12 @@ int main(int argc, char **argv) {
         if (used == sizeof(response) - 1) break;
     }
 incomplete:
+    if (used > 0 && response[used - 1] == '\n') {
+        response[used] = 0;
+        close(fd);
+        fputs(response, strncmp(response, "OK ", 3) == 0 ? stdout : stderr);
+        return strncmp(response, "OK ", 3) == 0 ? 0 : 1;
+    }
     fprintf(stderr, "Daemon did not send a complete valid reply\n");
     close(fd);
     return 1;

@@ -28,5 +28,6 @@ During each iteration of the daemon `poll()` loop:
 ## Restart Recovery & Conflict Policy
 
 - **Restart Recovery**: When the daemon starts or restarts, it reloads `schedules.json`. If a scheduled occurrence started in the past but its duration is still active, the daemon acquires an assertion for the remaining duration (`start_time + duration - now`).
+- **Occurrence Reactivation Prevention**: When a schedule triggers or when a manual `STOP` is invoked during an active scheduled window, `last_fired_time` is recorded as `occurrence_start + duration`, preventing immediate re-activation within the same window.
 - **Missed Occurrences**: Occurrences whose end time passed while the daemon was offline are logged and skipped. They are never replayed.
 - **One-Assertion Policy**: Only one native IOPMAssertion is active at any time. Manual holds (`start --for`) take immediate precedence; overlapping schedule triggers are ignored while a hold is active.

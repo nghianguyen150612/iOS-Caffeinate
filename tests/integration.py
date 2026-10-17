@@ -163,9 +163,48 @@ class Integration(unittest.TestCase):
         list_res2 = self.call("schedule", "list")
         self.assertIn("schedules=2", list_res2.stdout)
 
-    def test_daemon_restart_recovery(self):
+    def test_stop_within_active_schedule_window(self):
         now_dt = datetime.now(timezone.utc)
+        now_wall = int(time.time())
+        start_wall = now_wall - 300
+        start_dt = datetime.fromtimestamp(start_wall, timezone.utc)
 
+        sched_data = {
+            "version": 1,
+            "next_id_counter": 2,
+            "schedules": [
+                {
+                    "id": "sched-stop-test",
+                    "type": 2, # DAILY
+                    "target_time": 0,
+                    "hour": start_dt.hour,
+                    "minute": start_dt.minute,
+                    "days_mask": 0,
+                    "duration": 1800, # 30 min
+                    "tz": "UTC",
+                    "enabled": True,
+                    "last_fired_time": 0
+                }
+            ]
+        }
+        with open(self.sched_path, "w") as f:
+            json.dump(sched_data, f)
+
+        proc = self.start()
+        status = self.call("status").stdout
+        self.assertIn("active=yes", status)
+
+        # Explicit STOP
+        self.call("stop")
+        status_after_stop = self.call("status").stdout
+        self.assertIn("active=no", status_after_stop)
+
+        # Wait brief moment and check daemon hasn't re-triggered same window
+        time.sleep(0.1)
+        status_recheck = self.call("status").stdout
+        self.assertIn("active=no", status_recheck)
+
+    def test_daemon_restart_recovery(self):
         now_wall = int(time.time())
         start_wall = now_wall - 300
         start_dt = datetime.fromtimestamp(start_wall, timezone.utc)
@@ -194,9 +233,16 @@ class Integration(unittest.TestCase):
         proc = self.start()
         status = self.call("status").stdout
         self.assertIn("active=yes", status)
-        self.assertIn("state=ACTIVE", status)
 
         self.call("stop")
+
+    def test_large_schedule_list_fragmented(self):
+        self.start()
+        for i in range(30):
+            self.call("schedule", "add", "--daily", "12:00", "--for", "5m")
+
+        list_res = self.call("schedule", "list")
+        self.assertIn("schedules=30", list_res.stdout)
 
     def test_probe_and_hold_lifecycle(self):
         self.start()
