@@ -9,10 +9,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Build explicit C11 mock and run integration tests
         run: |
           ./scripts/build-linux-test.sh
-          python3 tests/integration.py
+          python3 tests/integration.py 2>&1 | tee build/test/integration-report.txt
       - name: Verify Linux backend cannot build without mock gate
         run: |
           if cc -std=c11 -c src/power.c -o build/test/ungated.o 2>build/test/ungated.log; then
@@ -21,10 +23,17 @@ jobs:
           fi
           cat build/test/ungated.log
           grep -q 'No real backend for this OS' build/test/ungated.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-linux-regression-evidence
+          if-no-files-found: error
+          path: build/test/integration-report.txt
   ios-cross-build:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Cross-compile with official iPhoneOS SDK for iOS 12 ARM64
         run: |
           ./scripts/build-macos.sh
@@ -40,11 +49,14 @@ jobs:
             dist/ios-caffeinate
             dist/ios-caffeinated
             dist/SHA256SUMS
+            dist/build-info.json
   ios-artifact-inspection:
     needs: ios-cross-build
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/download-artifact@v4
         with:
           name: iOS-Caffeinate-ios12-arm64-UNSIGNED-HARDWARE-UNVERIFIED
@@ -60,10 +72,12 @@ jobs:
           if-no-files-found: error
           path: dist/inspection.txt
   ios-rootful-package:
-    needs: [linux-protocol, ios-artifact-inspection]
+    needs: [linux-protocol, ios-cross-build, ios-artifact-inspection]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/download-artifact@v4
         with:
           name: iOS-Caffeinate-ios12-arm64-UNSIGNED-HARDWARE-UNVERIFIED
@@ -72,13 +86,19 @@ jobs:
         with:
           name: iOS-Caffeinate-ios12-arm64-inspection-evidence
           path: evidence
+      - uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-linux-regression-evidence
+          path: dist/linux-evidence
       - name: Verify upstream Mach-O inspection evidence and artifact hashes
         run: |
           test -s evidence/inspection.txt
           grep -q 'PASS: both unsigned iOS 12.0 ARM64 device executables inspected' evidence/inspection.txt
           (cd dist && sha256sum -c SHA256SUMS)
+      - name: Prepare package evidence directory
+        run: mkdir -p dist/package
       - name: Run deterministic package regression tests
-        run: python3 -m unittest discover -s tests/packaging -v
+        run: python3 -m unittest discover -s tests/packaging -v 2>&1 | tee dist/package/packaging-tests.txt
       - name: Build unsigned rootful Debian package
         run: ./scripts/package-rootful.sh --input-dir dist --output-dir dist/package
       - name: Inspect package, scripts, paths, checksums, and extracted payload
@@ -98,3 +118,45 @@ jobs:
             dist/package/*.files.sha256
             dist/package/*.manifest.txt
             dist/package/validation.txt
+            dist/package/packaging-tests.txt
+
+  p008-release-attestation:
+    if: github.ref == 'refs/heads/release/p008-v01-integration' || (github.event_name == 'pull_request' && github.head_ref == 'release/p008-v01-integration')
+    needs: [linux-protocol, ios-cross-build, ios-artifact-inspection, ios-rootful-package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-ios12-arm64-UNSIGNED-HARDWARE-UNVERIFIED
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-ios12-arm64-inspection-evidence
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-linux-regression-evidence
+          path: dist/linux-evidence
+      - uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-rootful-iphoneos-arm-UNSIGNED-DEVICE-UNVERIFIED
+          path: dist/package
+      - name: Generate exact-source release candidate manifest and readiness attestation
+        env:
+          P008_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          NEEDS_LINUX_PROTOCOL_RESULT: ${{ needs.linux-protocol.result }}
+          NEEDS_IOS_CROSS_BUILD_RESULT: ${{ needs.ios-cross-build.result }}
+          NEEDS_IOS_ARTIFACT_INSPECTION_RESULT: ${{ needs.ios-artifact-inspection.result }}
+          NEEDS_IOS_ROOTFUL_PACKAGE_RESULT: ${{ needs.ios-rootful-package.result }}
+        run: python3 scripts/generate_p008_attestation.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P008-v0.1-cloud-attestation
+          if-no-files-found: error
+          path: |
+            dist/package/release-candidate.json
+            dist/package/P008-CI-ATTESTATION.md
+            dist/package/P008-RELEASE-READINESS.md

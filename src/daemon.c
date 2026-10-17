@@ -47,6 +47,7 @@ static daemon_state_t daemon_state = DAEMON_STATE_IDLE;
 static bool clock_failed;
 static uint32_t held_id;
 static double deadline, retry_at;
+static double schedule_retry_at;
 static double daemon_started_at;
 static time_t last_acquire_epoch;
 static time_t last_release_epoch;
@@ -218,6 +219,20 @@ static void check_and_trigger_schedules(void) {
     schedule_store_evaluate(&sched_store, now_wall, &active_idx, &active_remaining, &next_idx, &next_start);
 
     if (active_idx >= 0 && active_remaining > 0) {
+        if (schedule_retry_at > now()) return;
+        time_t occurrence_start = now_wall -
+            (time_t)(sched_store.items[active_idx].duration - active_remaining);
+        time_t previous_fired = sched_store.items[active_idx].last_fired_time;
+        char persist_error[256] = {0};
+        if (schedule_mark_fired(&sched_store, active_idx, occurrence_start,
+                                persist_error, sizeof(persist_error)) != 0) {
+            recent_errors++;
+            log_msg("ERROR", "Refusing scheduled assertion for %s: cannot persist occurrence state: %s",
+                    sched_store.items[active_idx].id, persist_error);
+            schedule_retry_at = now() + 1.0;
+            return;
+        }
+
         daemon_state = DAEMON_STATE_ACQUIRING;
         char error[256] = {0};
         if (power_acquire(&held_id, error, sizeof(error)) != 0) {
@@ -226,6 +241,17 @@ static void check_and_trigger_schedules(void) {
             log_msg("ERROR", "Failed to acquire scheduled hold for schedule %s: %s",
                     sched_store.items[active_idx].id, error);
             held_id = 0;
+            /* Preserve the previous retry behavior only when its rollback is durable. */
+            sched_store.items[active_idx].last_fired_time = previous_fired;
+            if (schedule_store_save(&sched_store, persist_error, sizeof(persist_error)) != 0) {
+                sched_store.items[active_idx].last_fired_time = occurrence_start +
+                    sched_store.items[active_idx].duration;
+                log_msg("ERROR", "Could not persist scheduled acquisition rollback; suppressing this occurrence: %s",
+                        persist_error);
+                schedule_retry_at = 0;
+            } else {
+                schedule_retry_at = now() + 1.0;
+            }
             return;
         }
         daemon_state = DAEMON_STATE_ACTIVE;
@@ -233,8 +259,8 @@ static void check_and_trigger_schedules(void) {
         last_acquire_epoch = time(NULL);
         release_attempts = 0;
         hold_is_trial = false;
+        schedule_retry_at = 0;
         current_active_sched_idx = active_idx;
-        schedule_mark_fired(&sched_store, active_idx, now_wall - (sched_store.items[active_idx].duration - active_remaining));
         log_msg("INFO", "Triggered schedule %s: acquired assertion %u for remaining %u seconds",
                 sched_store.items[active_idx].id, held_id, active_remaining);
     }
@@ -649,6 +675,10 @@ int main(int argc, char **argv) {
     if (*socket_path != '/' || strlen(socket_path) >= sizeof(((struct sockaddr_un *)0)->sun_path)) {
         fprintf(stderr, "Socket path must be absolute and fit sockaddr_un\n"); return 2;
     }
+    if (schedule_file_path &&
+        (*schedule_file_path != '/' || strlen(schedule_file_path) >= sizeof(sched_store.state_file_path))) {
+        fprintf(stderr, "Schedule state path must be absolute and fit the supported path bound\n"); return 2;
+    }
     if (strcmp(socket_path, DEFAULT_SOCKET) == 0 && geteuid() != 0) {
         fprintf(stderr, "Default socket requires root; use a private --socket directory for tests\n"); return 1;
     }
@@ -718,7 +748,13 @@ int main(int argc, char **argv) {
             schedule_store_evaluate(&sched_store, now_w, &act_i, &act_rem, &nxt_i, &nxt_start);
 
             if (act_i >= 0 && act_rem > 0) {
-                timeout_ms = 0;
+                if (schedule_retry_at <= t_now) {
+                    timeout_ms = 0;
+                } else {
+                    int ms = (int)((schedule_retry_at - t_now) * 1000.0);
+                    if (ms < 1) ms = 1;
+                    if (timeout_ms < 0 || ms < timeout_ms) timeout_ms = ms;
+                }
             } else if (nxt_i >= 0 && nxt_start > now_w) {
                 long long diff_sec = (long long)(nxt_start - now_w);
                 if (diff_sec > 0) {

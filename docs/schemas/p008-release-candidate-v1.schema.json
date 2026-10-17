@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nghianguyen150612/iOS-Caffeinate/blob/main/docs/schemas/p008-release-candidate-v1.schema.json",
+  "title": "iOS-Caffeinate P008 release-candidate manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "product",
+    "package_version",
+    "source",
+    "build",
+    "artifacts",
+    "signing_status",
+    "ci_validation_status",
+    "ci_jobs",
+    "test_counts",
+    "hardware_validation_status",
+    "outstanding_safety_gates",
+    "release_authorization_status"
+  ],
+  "properties": {
+    "manifest_version": { "const": 1 },
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "iOS-Caffeinate" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" }
+      }
+    },
+    "package_version": { "const": "0.1.0-1" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit_sha", "integration_baseline_sha"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "integration_baseline_sha": { "const": "c8512508a80be5fc09d0c62b2e26877717af23df" }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workflow_name",
+        "workflow_id",
+        "workflow_url",
+        "toolchain",
+        "target_platform",
+        "device_executable_architecture",
+        "minimum_ios_version"
+      ],
+      "properties": {
+        "workflow_name": { "type": "string", "minLength": 1 },
+        "workflow_id": { "type": "string", "pattern": "^[0-9]+$" },
+        "workflow_url": { "type": "string", "pattern": "^https://" },
+        "toolchain": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["xcode", "sdk", "clang"],
+          "properties": {
+            "xcode": { "type": "string", "minLength": 1 },
+            "sdk": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "version", "path"],
+              "properties": {
+                "name": { "const": "iPhoneOS" },
+                "version": { "type": "string", "minLength": 1 },
+                "path": { "type": "string", "minLength": 1 }
+              }
+            },
+            "clang": { "type": "string", "minLength": 1 }
+          }
+        },
+        "target_platform": { "type": "string", "minLength": 1 },
+        "device_executable_architecture": { "const": "arm64-apple-ios12.0" },
+        "minimum_ios_version": { "const": "12.0" }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cli", "daemon", "debian_package"],
+      "properties": {
+        "cli": { "$ref": "#/$defs/binary" },
+        "daemon": { "$ref": "#/$defs/binary" },
+        "debian_package": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "sha256", "architecture"],
+          "properties": {
+            "name": { "type": "string", "pattern": "^ioscaffeinate_0\\.1\\.0-1_iphoneos-arm_.*\\.deb$" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "architecture": { "const": "iphoneos-arm" }
+          }
+        }
+      }
+    },
+    "signing_status": { "const": "UNSIGNED / DEVICE-UNVERIFIED" },
+    "ci_validation_status": { "enum": ["PASS", "FAIL", "PENDING"] },
+    "ci_jobs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["linux-protocol", "ios-cross-build", "ios-artifact-inspection", "ios-rootful-package"],
+      "properties": {
+        "linux-protocol": { "$ref": "#/$defs/status" },
+        "ios-cross-build": { "$ref": "#/$defs/status" },
+        "ios-artifact-inspection": { "$ref": "#/$defs/status" },
+        "ios-rootful-package": { "$ref": "#/$defs/status" }
+      }
+    },
+    "test_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["linux_integration", "packaging"],
+      "properties": {
+        "linux_integration": { "type": "integer", "minimum": 0 },
+        "packaging": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "hardware_validation_status": { "enum": ["PASS", "FAIL", "PENDING", "BLOCKED"] },
+    "outstanding_safety_gates": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "release_authorization_status": { "enum": ["NOT_AUTHORIZED", "AUTHORIZED"] }
+  },
+  "$defs": {
+    "binary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "status": { "enum": ["PASS", "FAIL", "PENDING", "BLOCKED", "NOT_APPLICABLE"] }
+  }
+}

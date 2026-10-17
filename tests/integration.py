@@ -89,6 +89,43 @@ class Integration(unittest.TestCase):
                 result += part
             return result.decode()
 
+    def test_integrated_p001_p007_cli_contract_smoke(self):
+        self.start()
+        alias = CLI.parent / "ic"
+
+        self.assertIn("Usage:", self.call("help", exe=alias).stdout)
+        self.assertIn("probe=acquire_release", self.call("probe", exe=alias).stdout)
+        self.assertIn("active=no", self.call("status", exe=alias).stdout)
+
+        self.call("start", "--for", "1m", exe=alias)
+        self.assertIn("active=yes", self.call("status", exe=alias).stdout)
+        until = (datetime.now(timezone.utc) + timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        self.call("stop", exe=alias)
+        self.call("start", "--until", until, exe=alias)
+        self.assertIn("active=yes", self.call("status", exe=alias).stdout)
+        self.call("stop", exe=alias)
+
+        added = self.call("schedule", "add", "--daily", "22:00", "--for", "30m", exe=alias)
+        schedule_id = added.stdout.split("id=", 1)[1].strip()
+        self.assertIn("type=daily", self.call("schedule", "list", exe=alias).stdout)
+        self.call("schedule", "remove", schedule_id, exe=alias)
+
+        wake = self.call("wake", "status", exe=alias)
+        self.assertIn("scheduled_wake=unverified", wake.stdout)
+        self.assertIn("wake_guarantee=no", wake.stdout)
+
+        server_options = ["--server-config", self.server_config_path,
+                          "--schedule-state", self.sched_path, "server"]
+        server_status = self.call(*server_options, "status", exe=alias)
+        server_doctor = self.call(*server_options, "doctor", exe=alias)
+        server_plan = self.call(*server_options, "plan", exe=alias)
+        self.assertIn("configured_policy=DISABLED", server_status.stdout)
+        self.assertIn("readiness=BLOCKED", server_doctor.stdout)
+        self.assertIn("unattended_authorized=no", server_plan.stdout)
+        self.call(*server_options, "trial", "start", "--for", "1s", exe=alias)
+        self.call(*server_options, "trial", "stop", exe=alias)
+        self.assertIn("active=no", self.call("status", exe=alias).stdout)
+
     def test_canonical_names_and_alias(self):
         self.start()
         self.assertTrue(DAEMON.is_file())
@@ -115,6 +152,7 @@ class Integration(unittest.TestCase):
                  "  ]\n"
                  "}\n")
         Path(self.sched_path).write_text(state)
+        os.chmod(self.sched_path, 0o600)
 
         # The report is local: it succeeds before a daemon or socket exists.
         report = self.call("wake", "status")
@@ -424,6 +462,9 @@ class Integration(unittest.TestCase):
         self.call("start", "--until", future_iso_25h, code=2)
         self.call("start", "--until", "not-a-date", code=2)
         self.call("start", "--until", "2026-13-01T12:00:00Z", code=2)
+        self.call("start", "--until", "2026-02-31T12:00:00Z", code=2)
+        self.call("start", "--until", "2025-02-29T12:00:00Z", code=2)
+        self.call("start", "--until", "2026-01-01T12:00:60Z", code=2)
         self.call("start", "--until", "2026-10-18T12:00:00", code=2)
 
         res = self.call("start", "--until", future_iso_ok)
@@ -431,6 +472,7 @@ class Integration(unittest.TestCase):
         self.call("stop")
 
         self.call("schedule", "add", "--weekly", "invalidday", "--at", "10:00", "--for", "5m", code=2)
+        self.call("schedule", "add", "--at", "2026-02-31T12:00:00Z", "--for", "5m", code=2)
         self.call("schedule", "add", "--daily", "25:00", "--for", "5m", code=2)
         self.call("schedule", "add", "--daily", "10:60", "--for", "5m", code=2)
         self.call("schedule", "add", "--daily", "10:00", code=2)
@@ -470,6 +512,124 @@ class Integration(unittest.TestCase):
         list_res2 = self.call("schedule", "list")
         self.assertIn("schedules=2", list_res2.stdout)
 
+    def test_schedule_rejects_unsafe_timezone_before_writing_json(self):
+        self.start()
+        result = self.call("schedule", "add", "--daily", "22:00", "--for", "30m",
+                           "--tz", 'UTC"invalid', code=1)
+        self.assertIn("invalid or unsafe values", result.stderr)
+        self.assertFalse(Path(self.sched_path).exists())
+
+    def test_corrupt_or_replaced_schedule_state_fails_closed(self):
+        valid = json.dumps({
+            "version": 1,
+            "next_id_counter": 2,
+            "schedules": [{
+                "id": "sched-preserve",
+                "type": 2,
+                "target_time": 0,
+                "hour": 22,
+                "minute": 0,
+                "days_mask": 0,
+                "duration": 1800,
+                "tz": "UTC",
+                "enabled": True,
+                "last_fired_time": 0,
+            }],
+        })
+        overflow_data = json.loads(valid)
+        overflow_data["schedules"][0].update({
+            "type": 1,
+            "target_time": 9223372036854775807,
+            "hour": 0,
+            "minute": 0,
+            "days_mask": 0,
+        })
+        malformed = '{"version":1,"next_id_counter":2}'
+        incomplete_record = '{"version":1,"next_id_counter":2,"schedules":[{"id":"sched-x"}]}'
+        for contents in (malformed, incomplete_record, json.dumps(overflow_data)):
+            with self.subTest(contents=contents):
+                Path(self.sched_path).write_text(contents)
+                os.chmod(self.sched_path, 0o600)
+                proc = self.launch()
+                self.assertEqual(proc.wait(timeout=3), 1)
+                self.assertIn("Failed to load schedules", proc.stderr.read())
+                self.assertEqual(Path(self.sched_path).read_text(), contents)
+
+        target = Path(self.temp.name) / "schedule-target.json"
+        target.write_text(valid)
+        os.chmod(target, 0o600)
+        Path(self.sched_path).unlink()
+        Path(self.sched_path).symlink_to(target)
+        proc = self.launch()
+        self.assertEqual(proc.wait(timeout=3), 1)
+        self.assertTrue(Path(self.sched_path).is_symlink())
+        self.assertEqual(target.read_text(), valid)
+        Path(self.sched_path).unlink()
+
+        target.write_text(valid)
+        os.chmod(target, 0o600)
+        os.link(target, self.sched_path)
+        proc = self.launch()
+        self.assertEqual(proc.wait(timeout=3), 1)
+        self.assertEqual(Path(self.sched_path).read_text(), valid)
+        self.assertEqual(os.stat(target).st_nlink, 2)
+
+        linked_parent = Path(self.temp.name) / "linked-parent"
+        linked_parent.symlink_to(self.temp.name)
+        linked_state_path = linked_parent / "linked-schedules.json"
+        proc = subprocess.run(
+            [str(DAEMON), "--socket", str(Path(self.temp.name) / "linked.sock"),
+             "--schedules", str(linked_state_path)],
+            capture_output=True, text=True, timeout=3,
+        )
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("Failed to load schedules", proc.stderr)
+
+    def test_schedule_write_failure_blocks_assertion_and_is_visible(self):
+        now_wall = int(time.time())
+        start_dt = datetime.fromtimestamp(now_wall - 300, timezone.utc)
+        sched_data = {
+            "version": 1,
+            "next_id_counter": 2,
+            "schedules": [{
+                "id": "sched-write-failure",
+                "type": 2,
+                "target_time": 0,
+                "hour": start_dt.hour,
+                "minute": start_dt.minute,
+                "days_mask": 0,
+                "duration": 1800,
+                "tz": "UTC",
+                "enabled": True,
+                "last_fired_time": 0,
+            }],
+        }
+        Path(self.sched_path).write_text(json.dumps(sched_data))
+        os.chmod(self.sched_path, 0o600)
+
+        proc = self.start(IOSCAFFEINATE_MOCK_FAIL_SCHEDULE_SAVE="1")
+        status = self.call("status").stdout
+        self.assertIn("active=no", status)
+        self.assertIn("state=IDLE", status)
+        self.call("stop")
+        self.assertEqual(json.loads(Path(self.sched_path).read_text())["schedules"][0]["last_fired_time"], 0)
+        proc.terminate()
+        self.assertEqual(proc.wait(timeout=3), 0)
+
+        self.start(IOSCAFFEINATE_MOCK_FAIL_SCHEDULE_SAVE="1")
+        self.assertIn("active=no", self.call("status").stdout)
+
+    def test_schedule_state_path_must_be_absolute_and_bounded(self):
+        for path in ("", "relative/schedules.json", "/" + "x" * 300):
+            with self.subTest(path=path[:24]):
+                result = subprocess.run(
+                    [str(DAEMON), "--socket", str(Path(self.temp.name) / "invalid.sock"),
+                     "--schedules", path],
+                    capture_output=True, text=True, timeout=3,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("Schedule state path", result.stderr)
+
     def test_stop_within_active_schedule_window(self):
         now_dt = datetime.now(timezone.utc)
         now_wall = int(time.time())
@@ -496,6 +656,7 @@ class Integration(unittest.TestCase):
         }
         with open(self.sched_path, "w") as f:
             json.dump(sched_data, f)
+        os.chmod(self.sched_path, 0o600)
 
         proc = self.start()
         status = self.call("status").stdout
@@ -536,6 +697,7 @@ class Integration(unittest.TestCase):
         }
         with open(self.sched_path, "w") as f:
             json.dump(sched_data, f)
+        os.chmod(self.sched_path, 0o600)
 
         proc = self.start()
         status = self.call("status").stdout

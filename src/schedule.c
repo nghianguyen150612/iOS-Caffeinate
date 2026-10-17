@@ -9,6 +9,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,7 +49,7 @@ time_t parse_iso8601(const char *str) {
     }
 
     if (year < 1970 || month < 1 || month > 12 || day < 1 || day > 31 ||
-        hour < 0 || hour > 23 || min < 0 || min > 59 || sec < 0 || sec > 60) {
+        hour < 0 || hour > 23 || min < 0 || min > 59 || sec < 0 || sec > 59) {
         return (time_t)-1;
     }
 
@@ -90,6 +91,12 @@ time_t parse_iso8601(const char *str) {
 
     time_t t = timegm(&tm_utc);
     if (t == (time_t)-1) return (time_t)-1;
+    struct tm normalized;
+    if (!gmtime_r(&t, &normalized) || normalized.tm_year != year - 1900 ||
+        normalized.tm_mon != month - 1 || normalized.tm_mday != day ||
+        normalized.tm_hour != hour || normalized.tm_min != min || normalized.tm_sec != sec) {
+        return (time_t)-1;
+    }
 
     if (tz_sign == '+' || tz_sign == '-') {
         int offset_sec = tz_hour * 3600 + tz_min * 60;
@@ -143,229 +150,436 @@ void schedule_store_init(schedule_store_t *store, const char *file_path) {
     store->next_id_counter = 1;
 }
 
-static const char *json_find_key(const char *json, const char *key) {
-    char pattern[128];
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    const char *p = strstr(json, pattern);
-    if (!p) return NULL;
-    p += strlen(pattern);
-    while (*p && (isspace((unsigned char)*p) || *p == ':')) p++;
-    return p;
+static void json_skip_whitespace(const char **cursor) {
+    while (isspace((unsigned char)**cursor)) (*cursor)++;
 }
 
-static int json_get_string(const char *json, const char *key, char *out, size_t cap) {
-    const char *p = json_find_key(json, key);
-    if (!p || *p != '"') return -1;
-    p++;
-    size_t len = 0;
-    while (*p && *p != '"' && len + 1 < cap) {
-        out[len++] = *p++;
+static int json_expect_char(const char **cursor, char expected) {
+    json_skip_whitespace(cursor);
+    if (**cursor != expected) return -1;
+    (*cursor)++;
+    return 0;
+}
+
+static int json_expect_key(const char **cursor, const char *expected) {
+    json_skip_whitespace(cursor);
+    if (**cursor != '"') return -1;
+    (*cursor)++;
+    size_t length = strlen(expected);
+    if (strncmp(*cursor, expected, length) != 0 || (*cursor)[length] != '"') return -1;
+    *cursor += length + 1;
+    if (json_expect_char(cursor, ':') != 0) return -1;
+    return 0;
+}
+
+static int json_parse_string(const char **cursor, char *out, size_t cap) {
+    if (cap == 0 || json_expect_char(cursor, '"') != 0) return -1;
+    size_t length = 0;
+    while (**cursor && **cursor != '"') {
+        unsigned char c = (unsigned char)*(*cursor)++;
+        if (c < 0x20 || c > 0x7e || c == '\\' || length + 1 >= cap) return -1;
+        out[length++] = (char)c;
     }
-    out[len] = '\0';
-    return (*p == '"') ? 0 : -1;
-}
-
-static int json_get_int(const char *json, const char *key, int *val) {
-    const char *p = json_find_key(json, key);
-    if (!p) return -1;
-    char *end = NULL;
-    long l = strtol(p, &end, 10);
-    if (end == p) return -1;
-    *val = (int)l;
+    if (json_expect_char(cursor, '"') != 0) return -1;
+    out[length] = '\0';
     return 0;
 }
 
-static int json_get_uint32(const char *json, const char *key, uint32_t *val) {
-    const char *p = json_find_key(json, key);
-    if (!p) return -1;
+static int json_parse_int64(const char **cursor, int64_t *value) {
+    json_skip_whitespace(cursor);
+    if (!(**cursor == '-' || (**cursor >= '0' && **cursor <= '9')) ||
+        (**cursor == '-' && ((*cursor)[1] < '0' || (*cursor)[1] > '9'))) return -1;
+    const char *start = *cursor;
+    errno = 0;
     char *end = NULL;
-    unsigned long l = strtoul(p, &end, 10);
-    if (end == p) return -1;
-    *val = (uint32_t)l;
+    long long parsed = strtoll(*cursor, &end, 10);
+    if (errno || end == *cursor) return -1;
+    const char *digits = *start == '-' ? start + 1 : start;
+    if (*digits == '0' && end > digits + 1) return -1;
+    *value = (int64_t)parsed;
+    *cursor = end;
     return 0;
 }
 
-static int json_get_time(const char *json, const char *key, time_t *val) {
-    const char *p = json_find_key(json, key);
-    if (!p) return -1;
+static int json_parse_uint32(const char **cursor, uint32_t *value) {
+    json_skip_whitespace(cursor);
+    if (**cursor < '0' || **cursor > '9') return -1;
+    const char *start = *cursor;
+    errno = 0;
     char *end = NULL;
-    long long l = strtoll(p, &end, 10);
-    if (end == p) return -1;
-    *val = (time_t)l;
+    unsigned long long parsed = strtoull(*cursor, &end, 10);
+    if (errno || end == *cursor || parsed > UINT32_MAX) return -1;
+    if (*start == '0' && end > start + 1) return -1;
+    *value = (uint32_t)parsed;
+    *cursor = end;
     return 0;
 }
 
-static int json_get_bool(const char *json, const char *key, bool *val) {
-    const char *p = json_find_key(json, key);
-    if (!p) return -1;
-    if (strncmp(p, "true", 4) == 0) { *val = true; return 0; }
-    if (strncmp(p, "false", 5) == 0) { *val = false; return 0; }
+static int json_parse_int(const char **cursor, int *value) {
+    int64_t parsed = 0;
+    if (json_parse_int64(cursor, &parsed) != 0 || parsed < INT_MIN || parsed > INT_MAX) return -1;
+    *value = (int)parsed;
+    return 0;
+}
+
+static int json_parse_time(const char **cursor, time_t *value) {
+    int64_t parsed = 0;
+    if (json_parse_int64(cursor, &parsed) != 0) return -1;
+    *value = (time_t)parsed;
+    return (int64_t)*value == parsed ? 0 : -1;
+}
+
+static int json_parse_bool(const char **cursor, bool *value) {
+    json_skip_whitespace(cursor);
+    if (strncmp(*cursor, "true", 4) == 0) {
+        *value = true;
+        *cursor += 4;
+        return 0;
+    }
+    if (strncmp(*cursor, "false", 5) == 0) {
+        *value = false;
+        *cursor += 5;
+        return 0;
+    }
     return -1;
 }
 
+static int valid_schedule_text(const schedule_t *item) {
+    if (!item->id[0]) return 0;
+    for (const unsigned char *p = (const unsigned char *)item->id; *p; ++p) {
+        if (!( (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+               (*p >= '0' && *p <= '9') || *p == '_' || *p == '-')) return 0;
+    }
+    size_t tz_len = strlen(item->tz);
+    if (tz_len > 0 && (item->tz[0] == '/' || item->tz[tz_len - 1] == '/')) return 0;
+    for (const unsigned char *p = (const unsigned char *)item->tz; *p; ++p) {
+        if (!( (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+               (*p >= '0' && *p <= '9') || *p == '_' || *p == '+' ||
+               *p == '-' || *p == '.' || *p == '/')) return 0;
+    }
+    if (strstr(item->tz, "..") != NULL) return 0;
+    const char *component = item->tz;
+    while (*component) {
+        const char *slash = strchr(component, '/');
+        size_t length = slash ? (size_t)(slash - component) : strlen(component);
+        if (length == 0 || (length == 1 && component[0] == '.')) return 0;
+        component = slash ? slash + 1 : component + length;
+    }
+    return true;
+}
+
+static int valid_schedule(const schedule_t *item) {
+    if (!valid_schedule_text(item) || item->duration < 1 || item->duration > 86400 ||
+        item->last_fired_time < 0) return 0;
+    if (item->type == SCHED_TYPE_ONETIME)
+        return item->target_time >= 0 && item->target_time <= (time_t)(INT64_MAX - item->duration) &&
+               item->hour == 0 && item->minute == 0 && item->days_mask == 0;
+    if (item->type == SCHED_TYPE_DAILY)
+        return item->target_time == 0 && item->hour >= 0 && item->hour <= 23 &&
+               item->minute >= 0 && item->minute <= 59 && item->days_mask == 0;
+    if (item->type == SCHED_TYPE_WEEKLY)
+        return item->target_time == 0 && item->hour >= 0 && item->hour <= 23 &&
+               item->minute >= 0 && item->minute <= 59 && item->days_mask > 0 &&
+               item->days_mask <= 127;
+    return 0;
+}
+
+static int trusted_state_directory(const struct stat *st, int final_parent) {
+    if (!S_ISDIR(st->st_mode) || (st->st_uid != geteuid() && st->st_uid != 0)) return 0;
+    mode_t writable = st->st_mode & (S_IWGRP | S_IWOTH);
+    if (!writable) return 1;
+    if (final_parent) return 0;
+    return st->st_uid == 0 && (st->st_mode & S_ISVTX) != 0;
+}
+
+/* Pin every parent component by descriptor so custom state paths cannot
+ * redirect a privileged daemon through a symlink or replaced directory. */
+static int open_state_parent(const char *path, char *basename, size_t basename_cap) {
+    if (!path || path[0] != '/' || strlen(path) >= 256 || basename_cap == 0) return -1;
+    char copy[256];
+    snprintf(copy, sizeof(copy), "%s", path);
+    size_t length = strlen(copy);
+    if (length < 2 || copy[length - 1] == '/') return -1;
+
+    int dir_fd = open("/", O_RDONLY | O_DIRECTORY);
+    if (dir_fd < 0) return -1;
+    char *component = copy + 1;
+    for (;;) {
+        char *slash = strchr(component, '/');
+        if (!slash) {
+            if (!*component || strcmp(component, ".") == 0 || strcmp(component, "..") == 0 ||
+                snprintf(basename, basename_cap, "%s", component) >= (int)basename_cap) {
+                close(dir_fd);
+                return -1;
+            }
+            struct stat st;
+            if (fstat(dir_fd, &st) != 0 || !trusted_state_directory(&st, 1)) {
+                close(dir_fd);
+                return -1;
+            }
+            return dir_fd;
+        }
+        *slash = '\0';
+        if (!*component || strcmp(component, ".") == 0 || strcmp(component, "..") == 0) {
+            close(dir_fd);
+            return -1;
+        }
+        int next_fd = openat(dir_fd, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+        if (next_fd < 0) {
+            close(dir_fd);
+            return -1;
+        }
+        struct stat st;
+        if (fstat(next_fd, &st) != 0 || !trusted_state_directory(&st, 0)) {
+            close(next_fd);
+            close(dir_fd);
+            return -1;
+        }
+        close(dir_fd);
+        dir_fd = next_fd;
+        component = slash + 1;
+    }
+}
+
 int schedule_store_load(schedule_store_t *store, char *err_buf, size_t err_cap) {
-    if (!store || !store->state_file_path[0]) return 0;
+    if (!store || !store->state_file_path[0] || store->state_file_path[0] != '/') {
+        if (err_buf) snprintf(err_buf, err_cap, "schedule state path must be absolute and non-empty");
+        return -1;
+    }
+
+    char basename[256];
+    int dir_fd = open_state_parent(store->state_file_path, basename, sizeof(basename));
+    if (dir_fd < 0) {
+        if (err_buf) snprintf(err_buf, err_cap, "schedule state parent is unsafe or inaccessible");
+        return -1;
+    }
 
     struct stat st;
-    if (lstat(store->state_file_path, &st) != 0) {
-        if (errno == ENOENT) return 0;
-        if (err_buf) snprintf(err_buf, err_cap, "lstat schedule file failed: %s", strerror(errno));
+    if (fstatat(dir_fd, basename, &st, AT_SYMLINK_NOFOLLOW) != 0) {
+        int saved = errno;
+        close(dir_fd);
+        if (saved == ENOENT) return 0;
+        if (err_buf) snprintf(err_buf, err_cap, "inspect schedule file failed: %s", strerror(saved));
         return -1;
     }
 
-    if (S_ISLNK(st.st_mode)) {
-        if (err_buf) snprintf(err_buf, err_cap, "refusing symlink schedule file: %s", store->state_file_path);
-        return -1;
-    }
-
-    if (!S_ISREG(st.st_mode)) {
+    if (!S_ISREG(st.st_mode) || st.st_nlink != 1 || (st.st_mode & 0777) != 0600) {
+        close(dir_fd);
         if (err_buf) snprintf(err_buf, err_cap, "schedule file is not a regular file");
         return -1;
     }
 
     if (st.st_uid != geteuid()) {
+        close(dir_fd);
         if (err_buf) snprintf(err_buf, err_cap, "schedule file ownership mismatch");
         return -1;
     }
 
-    if (st.st_size > MAX_FILE_SIZE) {
+    if (st.st_size < 0 || st.st_size > MAX_FILE_SIZE) {
+        close(dir_fd);
         if (err_buf) snprintf(err_buf, err_cap, "schedule file exceeds maximum size");
         return -1;
     }
 
-    int fd = open(store->state_file_path, O_RDONLY | O_NOFOLLOW);
+    int fd = openat(dir_fd, basename, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0) {
+        close(dir_fd);
         if (err_buf) snprintf(err_buf, err_cap, "open schedule file failed: %s", strerror(errno));
         return -1;
     }
 
-    char *buf = malloc((size_t)st.st_size + 1);
+    struct stat opened;
+    if (fstat(fd, &opened) != 0 || !S_ISREG(opened.st_mode) || opened.st_nlink != 1 ||
+        opened.st_uid != geteuid() || (opened.st_mode & 0777) != 0600 ||
+        opened.st_dev != st.st_dev || opened.st_ino != st.st_ino ||
+        opened.st_size != st.st_size || opened.st_size < 0 || opened.st_size > MAX_FILE_SIZE) {
+        close(fd);
+        close(dir_fd);
+        if (err_buf) snprintf(err_buf, err_cap, "schedule file changed or became unsafe while opening");
+        return -1;
+    }
+
+    size_t file_size = (size_t)st.st_size;
+    char *buf = malloc(file_size + 1);
     if (!buf) {
         close(fd);
+        close(dir_fd);
         if (err_buf) snprintf(err_buf, err_cap, "out of memory");
         return -1;
     }
 
-    ssize_t n = read(fd, buf, (size_t)st.st_size);
+    size_t used = 0;
+    while (used < file_size) {
+        ssize_t n = read(fd, buf + used, file_size - used);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        used += (size_t)n;
+    }
+    struct stat after_read;
+    int stable = used == file_size && fstat(fd, &after_read) == 0 &&
+                 S_ISREG(after_read.st_mode) && after_read.st_nlink == 1 &&
+                 after_read.st_uid == geteuid() && (after_read.st_mode & 0777) == 0600 &&
+                 after_read.st_dev == opened.st_dev &&
+                 after_read.st_ino == opened.st_ino && after_read.st_size == (off_t)used;
     close(fd);
-    if (n != st.st_size) {
+    close(dir_fd);
+    if (!stable || memchr(buf, '\0', used) != NULL) {
         free(buf);
-        if (err_buf) snprintf(err_buf, err_cap, "read schedule file failed");
+        if (err_buf) snprintf(err_buf, err_cap, "schedule file changed or could not be read completely");
         return -1;
     }
-    buf[n] = '\0';
+    buf[used] = '\0';
 
     schedule_store_t temp;
     memcpy(&temp, store, sizeof(temp));
     temp.count = 0;
 
     int version = 0;
-    if (json_get_int(buf, "version", &version) != 0 || version != 1) {
-        free(buf);
-        if (err_buf) snprintf(err_buf, err_cap, "invalid or unsupported schema version");
-        return -1;
-    }
+    uint32_t counter = 0;
+    const char *p = buf;
+    if (json_expect_char(&p, '{') != 0 || json_expect_key(&p, "version") != 0 ||
+        json_parse_int(&p, &version) != 0 || version != 1 || json_expect_char(&p, ',') != 0 ||
+        json_expect_key(&p, "next_id_counter") != 0 || json_parse_uint32(&p, &counter) != 0 ||
+        counter == 0 || json_expect_char(&p, ',') != 0 ||
+        json_expect_key(&p, "schedules") != 0 || json_expect_char(&p, '[') != 0) goto invalid_state;
+    temp.next_id_counter = counter;
 
-    uint32_t counter = 1;
-    if (json_get_uint32(buf, "next_id_counter", &counter) == 0) {
-        temp.next_id_counter = counter;
-    }
+    for (;;) {
+        json_skip_whitespace(&p);
+        if (*p == ']') { p++; break; }
+        if (json_expect_char(&p, '{') != 0) goto invalid_state;
 
-    const char *p = strstr(buf, "\"schedules\"");
-    if (!p) { free(buf); return 0; }
-    p = strchr(p, '[');
-    if (!p) { free(buf); return 0; }
-
-    while (*p && *p != ']') {
-        const char *obj_start = strchr(p, '{');
-        if (!obj_start) break;
-        const char *obj_end = strchr(obj_start, '}');
-        if (!obj_end) break;
-
-        size_t obj_len = (size_t)(obj_end - obj_start + 1);
-        char obj_buf[1024];
-        if (obj_len >= sizeof(obj_buf)) { p = obj_end + 1; continue; }
-        memcpy(obj_buf, obj_start, obj_len);
-        obj_buf[obj_len] = '\0';
-
-        if (temp.count >= MAX_SCHEDULES) {
-            free(buf);
-            if (err_buf) snprintf(err_buf, err_cap, "schedule state exceeds maximum schedule capacity");
-            return -1;
-        }
+        if (temp.count >= MAX_SCHEDULES) goto invalid_capacity;
 
         schedule_t *item = &temp.items[temp.count];
         memset(item, 0, sizeof(*item));
-
-        if (json_get_string(obj_buf, "id", item->id, sizeof(item->id)) != 0) {
-            p = obj_end + 1; continue;
+        int type_val = 0;
+        int mask = 0;
+        if (json_expect_key(&p, "id") != 0 || json_parse_string(&p, item->id, sizeof(item->id)) != 0 ||
+            json_expect_char(&p, ',') != 0 || json_expect_key(&p, "type") != 0 ||
+            json_parse_int(&p, &type_val) != 0 || type_val < 1 || type_val > 3 ||
+            json_expect_char(&p, ',') != 0 || json_expect_key(&p, "target_time") != 0 ||
+            json_parse_time(&p, &item->target_time) != 0 || json_expect_char(&p, ',') != 0 ||
+            json_expect_key(&p, "hour") != 0 || json_parse_int(&p, &item->hour) != 0 ||
+            json_expect_char(&p, ',') != 0 || json_expect_key(&p, "minute") != 0 ||
+            json_parse_int(&p, &item->minute) != 0 || json_expect_char(&p, ',') != 0 ||
+            json_expect_key(&p, "days_mask") != 0 || json_parse_int(&p, &mask) != 0 ||
+            mask < 0 || mask > 127 || json_expect_char(&p, ',') != 0 ||
+            json_expect_key(&p, "duration") != 0 || json_parse_uint32(&p, &item->duration) != 0 ||
+            json_expect_char(&p, ',') != 0 || json_expect_key(&p, "tz") != 0 ||
+            json_parse_string(&p, item->tz, sizeof(item->tz)) != 0 ||
+            json_expect_char(&p, ',') != 0 || json_expect_key(&p, "enabled") != 0 ||
+            json_parse_bool(&p, &item->enabled) != 0 || json_expect_char(&p, ',') != 0 ||
+            json_expect_key(&p, "last_fired_time") != 0 ||
+            json_parse_time(&p, &item->last_fired_time) != 0 || json_expect_char(&p, '}') != 0) {
+            goto invalid_state;
         }
+        item->type = (sched_type_t)type_val;
+        item->days_mask = (uint8_t)mask;
+        if (!valid_schedule(item)) goto invalid_state;
 
         bool duplicate = false;
         for (size_t i = 0; i < temp.count; ++i) {
             if (strcmp(temp.items[i].id, item->id) == 0) { duplicate = true; break; }
         }
         if (duplicate) {
-            free(buf);
             if (err_buf) snprintf(err_buf, err_cap, "duplicate schedule ID in state file: %s", item->id);
+            free(buf);
             return -1;
         }
 
-        int type_val = 0;
-        if (json_get_int(obj_buf, "type", &type_val) != 0 || type_val < 1 || type_val > 3) {
-            p = obj_end + 1; continue;
-        }
-        item->type = (sched_type_t)type_val;
-
-        json_get_time(obj_buf, "target_time", &item->target_time);
-        json_get_int(obj_buf, "hour", &item->hour);
-        json_get_int(obj_buf, "minute", &item->minute);
-        int mask = 0;
-        if (json_get_int(obj_buf, "days_mask", &mask) == 0) item->days_mask = (uint8_t)mask;
-        json_get_uint32(obj_buf, "duration", &item->duration);
-        json_get_string(obj_buf, "tz", item->tz, sizeof(item->tz));
-        json_get_bool(obj_buf, "enabled", &item->enabled);
-        json_get_time(obj_buf, "last_fired_time", &item->last_fired_time);
-
-        if (item->duration < 1 || item->duration > 86400) {
-            p = obj_end + 1; continue;
-        }
-
         temp.count++;
-        p = obj_end + 1;
+        json_skip_whitespace(&p);
+        if (*p == ',') {
+            p++;
+            json_skip_whitespace(&p);
+            if (*p == ']') goto invalid_state;
+            continue;
+        }
+        if (*p == ']') { p++; break; }
+        goto invalid_state;
     }
+
+    if (json_expect_char(&p, '}') != 0) goto invalid_state;
+    json_skip_whitespace(&p);
+    if (*p != '\0') goto invalid_state;
 
     free(buf);
     memcpy(store, &temp, sizeof(*store));
     return 0;
+
+invalid_capacity:
+    free(buf);
+    if (err_buf) snprintf(err_buf, err_cap, "schedule state exceeds maximum schedule capacity");
+    return -1;
+invalid_state:
+    free(buf);
+    if (err_buf) snprintf(err_buf, err_cap, "malformed or unsafe schedule-state document");
+    return -1;
 }
 
 int schedule_store_save(const schedule_store_t *store, char *err_buf, size_t err_cap) {
-    if (!store || !store->state_file_path[0]) return 0;
+    if (!store || !store->state_file_path[0] || store->state_file_path[0] != '/') {
+        if (err_buf) snprintf(err_buf, err_cap, "schedule state path must be absolute and non-empty");
+        return -1;
+    }
 
-    char dir_path[256];
-    snprintf(dir_path, sizeof(dir_path), "%s", store->state_file_path);
-    char *last_slash = strrchr(dir_path, '/');
-    if (last_slash && last_slash != dir_path) {
-        *last_slash = '\0';
-        struct stat st_dir;
-        if (lstat(dir_path, &st_dir) == 0) {
-            if (S_ISLNK(st_dir.st_mode)) {
-                if (err_buf) snprintf(err_buf, err_cap, "refusing symlink directory: %s", dir_path);
-                return -1;
-            }
-            if (st_dir.st_uid != geteuid()) {
-                if (err_buf) snprintf(err_buf, err_cap, "directory ownership mismatch: %s", dir_path);
-                return -1;
-            }
+#ifdef IOSCAFFEINATE_TEST_MOCK
+    if (getenv("IOSCAFFEINATE_MOCK_FAIL_SCHEDULE_SAVE")) {
+        if (err_buf) snprintf(err_buf, err_cap, "mock schedule-state write failure");
+        errno = EIO;
+        return -1;
+    }
+#endif
+
+    if (store->count > MAX_SCHEDULES) {
+        if (err_buf) snprintf(err_buf, err_cap, "schedule count exceeds maximum capacity");
+        return -1;
+    }
+    for (size_t i = 0; i < store->count; ++i) {
+        if (!valid_schedule(&store->items[i])) {
+            if (err_buf) snprintf(err_buf, err_cap, "refusing to persist invalid schedule fields");
+            return -1;
         }
     }
 
-    char tmp_path[320];
-    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%d", store->state_file_path, getpid());
+    char basename[256];
+    int dir_fd = open_state_parent(store->state_file_path, basename, sizeof(basename));
+    if (dir_fd < 0) {
+        if (err_buf) snprintf(err_buf, err_cap, "schedule state parent is unsafe or inaccessible");
+        return -1;
+    }
+    if (strlen(basename) > 200) {
+        close(dir_fd);
+        if (err_buf) snprintf(err_buf, err_cap, "schedule state filename exceeds the safe bound");
+        return -1;
+    }
 
-    int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
+    struct stat existing;
+    if (fstatat(dir_fd, basename, &existing, AT_SYMLINK_NOFOLLOW) == 0) {
+        if (!S_ISREG(existing.st_mode) || existing.st_uid != geteuid() ||
+            existing.st_nlink != 1 || (existing.st_mode & 0777) != 0600) {
+            close(dir_fd);
+            if (err_buf) snprintf(err_buf, err_cap, "refusing to replace an unsafe schedule-state file");
+            return -1;
+        }
+    } else if (errno != ENOENT) {
+        int saved = errno;
+        close(dir_fd);
+        if (err_buf) snprintf(err_buf, err_cap, "inspect schedule-state destination failed: %s", strerror(saved));
+        return -1;
+    }
+
+    char tmp_name[256];
+    if (snprintf(tmp_name, sizeof(tmp_name), "%s.tmp.%ld", basename, (long)getpid()) >= (int)sizeof(tmp_name)) {
+        close(dir_fd);
+        if (err_buf) snprintf(err_buf, err_cap, "temporary schedule-state filename exceeds the safe bound");
+        return -1;
+    }
+
+    int fd = openat(dir_fd, tmp_name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
     if (fd < 0) {
+        close(dir_fd);
         if (err_buf) snprintf(err_buf, err_cap, "failed to create temp schedule file: %s", strerror(errno));
         return -1;
     }
@@ -373,7 +587,8 @@ int schedule_store_save(const schedule_store_t *store, char *err_buf, size_t err
     FILE *f = fdopen(fd, "w");
     if (!f) {
         close(fd);
-        unlink(tmp_path);
+        unlinkat(dir_fd, tmp_name, 0);
+        close(dir_fd);
         if (err_buf) snprintf(err_buf, err_cap, "fdopen temp schedule file failed");
         return -1;
     }
@@ -402,19 +617,28 @@ int schedule_store_save(const schedule_store_t *store, char *err_buf, size_t err
 
     if (fflush(f) != 0 || fsync(fileno(f)) != 0) {
         fclose(f);
-        unlink(tmp_path);
+        unlinkat(dir_fd, tmp_name, 0);
+        close(dir_fd);
         if (err_buf) snprintf(err_buf, err_cap, "flush/sync temp schedule file failed");
         return -1;
     }
 
-    fclose(f);
-
-    if (rename(tmp_path, store->state_file_path) != 0) {
-        unlink(tmp_path);
-        if (err_buf) snprintf(err_buf, err_cap, "rename temp schedule file failed: %s", strerror(errno));
+    if (fclose(f) != 0) {
+        unlinkat(dir_fd, tmp_name, 0);
+        close(dir_fd);
+        if (err_buf) snprintf(err_buf, err_cap, "close temp schedule file failed");
         return -1;
     }
 
+    if (renameat(dir_fd, tmp_name, dir_fd, basename) != 0) {
+        int saved = errno;
+        unlinkat(dir_fd, tmp_name, 0);
+        close(dir_fd);
+        if (err_buf) snprintf(err_buf, err_cap, "rename temp schedule file failed: %s", strerror(saved));
+        return -1;
+    }
+
+    close(dir_fd);
     return 0;
 }
 
@@ -429,6 +653,10 @@ int schedule_store_add(schedule_store_t *store, schedule_t *sched, char *err_buf
     memcpy(&temp, store, sizeof(temp));
 
     if (!sched->id[0]) {
+        if (temp.next_id_counter == 0 || temp.next_id_counter == UINT32_MAX) {
+            if (err_buf) snprintf(err_buf, err_cap, "schedule ID counter is exhausted");
+            return -1;
+        }
         snprintf(sched->id, sizeof(sched->id), "sched-%u", temp.next_id_counter++);
     } else {
         for (size_t i = 0; i < temp.count; ++i) {
@@ -439,8 +667,9 @@ int schedule_store_add(schedule_store_t *store, schedule_t *sched, char *err_buf
         }
     }
 
-    if (sched->duration < 1 || sched->duration > 86400) {
-        if (err_buf) snprintf(err_buf, err_cap, "duration must be between 1 and 86400 seconds");
+    sched->enabled = true;
+    if (!valid_schedule(sched)) {
+        if (err_buf) snprintf(err_buf, err_cap, "schedule fields contain invalid or unsafe values");
         return -1;
     }
 
@@ -454,7 +683,6 @@ int schedule_store_add(schedule_store_t *store, schedule_t *sched, char *err_buf
         else set_tz_env(NULL);
     }
 
-    sched->enabled = true;
     temp.items[temp.count++] = *sched;
 
     if (schedule_store_save(&temp, err_buf, err_cap) != 0) {
@@ -610,9 +838,18 @@ void schedule_store_evaluate(schedule_store_t *store,
     if (next_start) *next_start = earliest_next;
 }
 
-void schedule_mark_fired(schedule_store_t *store, int index, time_t occurrence_start) {
-    if (!store || index < 0 || (size_t)index >= store->count) return;
+int schedule_mark_fired(schedule_store_t *store, int index, time_t occurrence_start,
+                        char *err_buf, size_t err_cap) {
+    if (!store || index < 0 || (size_t)index >= store->count) {
+        if (err_buf) snprintf(err_buf, err_cap, "invalid schedule index");
+        return -1;
+    }
+
+    time_t previous = store->items[index].last_fired_time;
     store->items[index].last_fired_time = occurrence_start + store->items[index].duration;
-    char err[256];
-    schedule_store_save(store, err, sizeof(err));
+    if (schedule_store_save(store, err_buf, err_cap) != 0) {
+        store->items[index].last_fired_time = previous;
+        return -1;
+    }
+    return 0;
 }

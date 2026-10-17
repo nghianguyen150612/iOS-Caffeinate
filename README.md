@@ -1,6 +1,6 @@
 # iOS-Caffeinate
 
-Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides the daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds a read-only scheduled-wake capability report. P006 adds read-only server diagnostics, explicit bounded trials, health observations, readiness gates, and an external connectivity evidence schema. P007 adds rootful Debian packaging and safety checks. Real-device assertion, schedule, sleep, package installation, and networking behavior remain **PENDING** because the iPad is unavailable.
+Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides the daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds a read-only scheduled-wake capability report. P006 adds read-only server diagnostics, explicit bounded trials, health observations, readiness gates, and an external connectivity evidence schema. P007 adds rootful Debian packaging and safety checks. P008 integrates and audits P001–P007 and prepares a v0.1 cloud candidate. Real-device execution, signature acceptance, assertion lifecycle, package installation, and networking remain **PENDING** because the iPad is unavailable. Version 0.1 has not shipped.
 
 Executables: **ios-caffeinate** (CLI), **ios-caffeinated** (daemon). **ic** is a filesystem symlink to the CLI, never a second executable or shell alias. The socket remains `/var/run/ioscaffeinated.sock`.
 
@@ -59,7 +59,7 @@ macOS with Xcode and the official **iPhoneOS** SDK:
 python3 scripts/inspect-ios.py
 ```
 
-Outputs: `dist/ios-caffeinate`, `dist/ios-caffeinated`, relative symlink `dist/ic -> ios-caffeinate`, and `dist/SHA256SUMS`. CI uploads the **UNSIGNED, HARDWARE-UNVERIFIED** binaries, inspection report, and rootful `.deb` with checksums. The default build does not sign, install, deploy, or activate a service. The package builder can run an explicitly requested local `ldid -S` stage; see [P007 packaging](docs/P007-PACKAGING.md).
+Outputs: `dist/ios-caffeinate`, `dist/ios-caffeinated`, relative symlink `dist/ic -> ios-caffeinate`, and `dist/SHA256SUMS`. CI also records the Xcode, iPhoneOS SDK, and Clang identifiers used for the build. The P008 workflow uploads **UNSIGNED, HARDWARE-UNVERIFIED** binaries, the inspection report, rootful `.deb`, checksums, and a run-specific release-candidate manifest and readiness attestation. The default build does not sign, install, deploy, or activate a service. The package builder can run an explicitly requested local `ldid -S` stage; see [P007 packaging](docs/P007-PACKAGING.md).
 
 ## Rootful package
 
@@ -85,8 +85,14 @@ A `0600` socket sidecar lock (`/var/run/ioscaffeinated.sock.lock`) serializes ma
 
 The project launchd template remains disabled (`Disabled=true`, `RunAtLoad=false`) and is staged outside the active LaunchDaemons directory. P007 does not load, enable, or start a persistent service. Package lifecycle scripts only reject unsafe file collisions and a present default daemon endpoint; they do not stop processes or modify user data.
 
+## P008 v0.1 cloud candidate
+
+P008 audits the integrated source and package, requires the Linux protocol, official iPhoneOS SDK cross-build, artifact-inspection, and rootful-package jobs, and generates a manifest from that workflow run's actual hashes. The manifest reports its exact source SHA, toolchain, workflow ID, and package checksum. The generated release-readiness matrix keeps hardware gates separate from cloud validation. See [P008 integration](docs/P008-INTEGRATION.md), [validation](docs/P008-VALIDATION.md), [release readiness](docs/P008-RELEASE-READINESS.md), [device acceptance plan](docs/P008-DEVICE-ACCEPTANCE.md), and [backlog](docs/P008-BACKLOG.md).
+
+Passing cloud jobs establish a reviewable engineering candidate only. They do not authorize a production release, device installation, automatic daemon activation, an indefinite hold, or a public release. Scheduled wake remains unverified.
+
 ## Scope and evidence
 
 Timed holds and scheduled awake windows are bounded to 24 hours. P004 schedule evaluation requires the daemon to be running; it does not wake a suspended system. There is no indefinite mode, GUI, tweak injection, Apple daemon change, scheduled-wake command, or automatic installation. P005 makes no 24/7 unattended reliability claim. P006 provides engineering and diagnostics only; all hardware gates remain pending. P007 cloud packaging engineering is implemented, but device validation remains pending. Package success does not authorize unattended operation.
 
-See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P007 package contract](docs/P007-PACKAGING.md), [P007 validation](docs/P007-VALIDATION.md), [P007 deferred device procedure](docs/P007-DEVICE-TEST.md), [P007 rollback](docs/P007-ROLLBACK.md), [P006 server-mode design](docs/P006-SERVER-MODE.md), [P006 validation](docs/P006-VALIDATION.md), [deferred P006 device tests](docs/P006-DEVICE-TEST.md), [P005 feasibility report](docs/P005-WAKE-FEASIBILITY.md), [P005 validation](docs/P005-VALIDATION.md), [deferred P005 device tests](docs/P005-DEVICE-TEST.md), [P004 schedule details](docs/P004-SCHEDULING.md), and earlier [device recovery instructions](docs/P003-DEVICE-TEST.md).
+See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P008 integration and evidence](docs/P008-INTEGRATION.md), [P007 package contract](docs/P007-PACKAGING.md), [P007 validation](docs/P007-VALIDATION.md), [P007 deferred device procedure](docs/P007-DEVICE-TEST.md), [P007 rollback](docs/P007-ROLLBACK.md), [P006 server-mode design](docs/P006-SERVER-MODE.md), [P006 validation](docs/P006-VALIDATION.md), [deferred P006 device tests](docs/P006-DEVICE-TEST.md), [P005 feasibility report](docs/P005-WAKE-FEASIBILITY.md), [P005 validation](docs/P005-VALIDATION.md), [deferred P005 device tests](docs/P005-DEVICE-TEST.md), [P004 schedule details](docs/P004-SCHEDULING.md), and earlier [device recovery instructions](docs/P003-DEVICE-TEST.md).
