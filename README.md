@@ -1,6 +1,6 @@
 # iOS-Caffeinate
 
-Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides the daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds a read-only scheduled-wake capability report. Real-device assertion, schedule, sleep, and networking behavior remain **PENDING** because the iPad is unavailable.
+Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides the daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds a read-only scheduled-wake capability report. P006 adds read-only server diagnostics, explicit bounded trials, health observations, readiness gates, and an external connectivity evidence schema. Real-device assertion, schedule, sleep, and networking behavior remain **PENDING** because the iPad is unavailable.
 
 Executables: **ios-caffeinate** (CLI), **ios-caffeinated** (daemon). **ic** is a filesystem symlink to the CLI, never a second executable or shell alias. The socket remains `/var/run/ioscaffeinated.sock`.
 
@@ -24,6 +24,23 @@ ios-caffeinate stop
 ```
 
 With the symlink in PATH, `ic probe`, `ic status`, `ic start --for 5m`, schedule commands, and `ic stop` run the same CLI. First hardware trials must be bounded to five minutes or less, with physical recovery available. A successful assertion call does not prove Wi-Fi, LAN SSH, Tailscale, or scheduled wake.
+
+P006 server diagnostics are read-only and do not acquire assertions or probe networks:
+
+```sh
+ic server status
+ic server doctor
+ic server plan
+```
+
+An explicit server trial is capped at five minutes and is intended for the future physical validation procedure only:
+
+```sh
+ic server trial start --for 1m
+ic server trial stop
+```
+
+P006 does not authorize unattended operation. The default server policy is `DISABLED`; missing, corrupt, or unsafe configuration fails closed. Hardware gates remain pending. Read [server-mode behavior](docs/P006-SERVER-MODE.md) and the [deferred device procedure](docs/P006-DEVICE-TEST.md) before any future iPad trial.
 
 ## Build and tests
 
@@ -63,6 +80,6 @@ The project launchd template remains disabled (`Disabled=true`); P005 does not i
 
 ## Scope and evidence
 
-Timed holds and scheduled awake windows are bounded to 24 hours. P004 schedule evaluation requires the daemon to be running; it does not wake a suspended system. There is no indefinite mode, GUI, tweak injection, Apple daemon change, scheduled-wake command, or automatic installation. P005 makes no 24/7 unattended reliability claim. P006 is not authorized; its next step is a readiness assessment only. `.deb` packaging remains future work.
+Timed holds and scheduled awake windows are bounded to 24 hours. P004 schedule evaluation requires the daemon to be running; it does not wake a suspended system. There is no indefinite mode, GUI, tweak injection, Apple daemon change, scheduled-wake command, or automatic installation. P005 makes no 24/7 unattended reliability claim. P006 provides engineering and diagnostics only; all hardware gates remain pending and P007 is not authorized. `.deb` packaging remains future work.
 
-See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P005 feasibility report](docs/P005-WAKE-FEASIBILITY.md), [P005 validation](docs/P005-VALIDATION.md), [deferred P005 device tests](docs/P005-DEVICE-TEST.md), [P004 schedule details](docs/P004-SCHEDULING.md), and earlier [device recovery instructions](docs/P003-DEVICE-TEST.md).
+See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P006 server-mode design](docs/P006-SERVER-MODE.md), [P006 validation](docs/P006-VALIDATION.md), [deferred P006 device tests](docs/P006-DEVICE-TEST.md), [P005 feasibility report](docs/P005-WAKE-FEASIBILITY.md), [P005 validation](docs/P005-VALIDATION.md), [deferred P005 device tests](docs/P005-DEVICE-TEST.md), [P004 schedule details](docs/P004-SCHEDULING.md), and earlier [device recovery instructions](docs/P003-DEVICE-TEST.md).
