@@ -9,6 +9,8 @@ Components:
 2. `ios-caffeinated`: Daemon service managing power assertions and client IPC.
 3. `ic`: Relative symlink to `ios-caffeinate`.
 4. `ic wake status`: Local, read-only capability report; does not use daemon IPC.
+5. `ic server status|doctor|plan`: Read-only policy, health, and readiness diagnostics.
+6. `ic server trial`: Explicit, single-owner, bounded assertion trial capped at 300 seconds.
 
 ## Daemon Lifecycle & Assertion State Machine
 
@@ -57,6 +59,18 @@ Log levels used: `INFO`, `WARN`, `ERROR`.
 
 1. `IOKit_RUNTIME_UNVERIFIED` (Apple iOS): Dynamically resolves `IOPMAssertionCreateWithName` and `IOPMAssertionRelease` from `/System/Library/Frameworks/IOKit.framework/IOKit`.
 2. `MOCK_NO_POWER_EFFECT` (Linux test mock): Gated behind `-DIOSCAFFEINATE_TEST_MOCK`. Supports fault injection via environment variables (`IOSCAFFEINATE_MOCK_FAIL_ACQUIRE`, `IOSCAFFEINATE_MOCK_FAIL_RELEASE`) for deterministic lifecycle testing.
+
+## P006 Server Policy, Health, and Recovery
+
+The optional `/var/lib/ioscaffeinate/server-mode.json` file has schema version 1 and accepts only `disabled` or `observe_only`. It is read-only in P006; missing, malformed, symlinked, incorrectly owned, linked, oversized, or non-0600 files fail closed. `observe_only` enables diagnostics only. It cannot enable an unattended assertion.
+
+Configured policy is distinct from runtime trial state and current daemon assertion state. The default policy is `DISABLED`; runtime hardware readiness is `BLOCKED` while any of ten hardware evidence gates are pending. All Linux mock and CI results remain source/build evidence only. The CLI reports current daemon-owned assertion information separately from OS power state; OS state and cleanup by a previous process remain `UNVERIFIED`.
+
+Health observations include daemon uptime, assertion lifecycle, acquisition and release timestamps, last release error, schedule activity, and recent error count. Battery, charging, thermal, LAN, and Tailscale measurements report `UNAVAILABLE` until supplied by supported read-only sources or an independent observer. No sensors or networks are polled by the daemon.
+
+Server trials share the existing P004 assertion owner. They require an explicit CLI request, expire after at most 300 seconds, support STOP and SIGTERM cleanup, and never resume after STOP or restart. Automatic release retry is capped at three attempts; persistent failure remains visible as `RELEASE_FAILED` while the daemon runs. Process death can prevent cleanup, and a restarted daemon does not infer that a prior assertion was released.
+
+The connectivity evidence contract lives in `docs/schemas/connectivity-evidence-v1.schema.json`. LAN and Tailscale records are independent and include their own connection, authenticated SSH, latency, time, and screen-lock observations. Daemon status cannot establish reachability. The bundled launchd template remains disabled and is not activated in P006.
 
 ## Timed Awake, Scheduled Awake, and Scheduled Wake
 

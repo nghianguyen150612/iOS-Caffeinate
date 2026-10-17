@@ -29,6 +29,8 @@
 
 #define DEFAULT_SOCKET "/var/run/ioscaffeinated.sock"
 #define MAX_DURATION_SECONDS 86400
+#define MAX_SERVER_TRIAL_SECONDS 300
+#define MAX_RELEASE_ATTEMPTS 3
 
 typedef enum {
     DAEMON_STATE_IDLE = 0,
@@ -36,7 +38,8 @@ typedef enum {
     DAEMON_STATE_ACTIVE,
     DAEMON_STATE_RELEASING,
     DAEMON_STATE_RELEASE_FAILED,
-    DAEMON_STATE_SHUTTING_DOWN
+    DAEMON_STATE_SHUTTING_DOWN,
+    DAEMON_STATE_BLOCKED
 } daemon_state_t;
 
 static volatile sig_atomic_t keep_running = 1;
@@ -44,6 +47,18 @@ static daemon_state_t daemon_state = DAEMON_STATE_IDLE;
 static bool clock_failed;
 static uint32_t held_id;
 static double deadline, retry_at;
+static double daemon_started_at;
+static time_t last_acquire_epoch;
+static time_t last_release_epoch;
+static char last_release_error[128] = "none";
+static unsigned recent_errors;
+static unsigned release_attempts;
+static bool hold_is_trial;
+static bool trial_stop_seen;
+static bool trial_expired;
+static const char *trial_state = "INACTIVE";
+static bool state_invariant_reported;
+static bool state_invariant_failed;
 static const char *socket_path = DEFAULT_SOCKET;
 static const char *schedule_file_path = NULL;
 
@@ -58,6 +73,7 @@ static const char *daemon_state_name(daemon_state_t s) {
         case DAEMON_STATE_RELEASING: return "RELEASING";
         case DAEMON_STATE_RELEASE_FAILED: return "RELEASE_FAILED";
         case DAEMON_STATE_SHUTTING_DOWN: return "SHUTTING_DOWN";
+        case DAEMON_STATE_BLOCKED: return "BLOCKED";
     }
     return "UNKNOWN";
 }
@@ -102,23 +118,74 @@ static bool is_holding(void) {
 
 static bool is_release_pending(void) {
     return daemon_state == DAEMON_STATE_RELEASING ||
-           daemon_state == DAEMON_STATE_RELEASE_FAILED;
+           daemon_state == DAEMON_STATE_RELEASE_FAILED ||
+           daemon_state == DAEMON_STATE_BLOCKED;
+}
+
+static void copy_error_token(char *out, size_t cap, const char *error) {
+    size_t used = 0;
+    if (cap == 0) return;
+    while (error && *error && used + 1 < cap) {
+        unsigned char c = (unsigned char)*error++;
+        out[used++] = ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                       (c >= '0' && c <= '9') || c == '.' || c == '-') ? (char)c : '_';
+    }
+    out[used] = '\0';
+    if (used == 0) snprintf(out, cap, "unknown");
+}
+
+static bool can_acquire(void) {
+    return held_id == 0 && daemon_state == DAEMON_STATE_IDLE && !is_release_pending();
+}
+
+static void validate_runtime_state(void) {
+    bool valid = true;
+    if (daemon_state == DAEMON_STATE_IDLE && held_id != 0) valid = false;
+    if ((daemon_state == DAEMON_STATE_ACTIVE || daemon_state == DAEMON_STATE_RELEASING ||
+         daemon_state == DAEMON_STATE_RELEASE_FAILED) && held_id == 0) valid = false;
+    if (daemon_state == DAEMON_STATE_ACQUIRING && held_id != 0) valid = false;
+    if (valid) return;
+    if (!state_invariant_reported) {
+        state_invariant_reported = true;
+        state_invariant_failed = true;
+        recent_errors++;
+        log_msg("ERROR", "Assertion ownership/state invariant failed; blocking new acquisitions");
+    }
+    copy_error_token(last_release_error, sizeof(last_release_error), "state invariant failure");
+    if (held_id != 0) {
+        daemon_state = DAEMON_STATE_RELEASE_FAILED;
+        retry_at = 0;
+    } else {
+        daemon_state = DAEMON_STATE_BLOCKED;
+    }
 }
 
 static int clear_hold(char *error, size_t cap) {
     if (held_id == 0) return 0;
+    bool releasing_trial = hold_is_trial;
     daemon_state = DAEMON_STATE_RELEASING;
+    release_attempts++;
     if (power_release(held_id, error, cap) != 0) {
         daemon_state = DAEMON_STATE_RELEASE_FAILED;
-        retry_at = now() + 1.0;
+        recent_errors++;
+        copy_error_token(last_release_error, sizeof(last_release_error), error);
+        if (releasing_trial) trial_state = "RELEASE_FAILED";
+        retry_at = release_attempts < MAX_RELEASE_ATTEMPTS ? now() + 1.0 : 0;
         log_msg("ERROR", "Releasing assertion %u failed: %s; %s", held_id, error, power_diagnostics());
         return -1;
     }
     log_msg("INFO", "Released assertion %u; %s", held_id, power_diagnostics());
+    last_release_epoch = time(NULL);
+    if (releasing_trial) {
+        if (trial_expired) trial_state = "EXPIRED";
+        else if (trial_stop_seen) trial_state = "STOPPED";
+        else trial_state = "RELEASED";
+    }
     daemon_state = DAEMON_STATE_IDLE;
     held_id = 0;
     deadline = 0;
     retry_at = 0;
+    hold_is_trial = false;
     current_active_sched_idx = -1;
     return 0;
 }
@@ -129,8 +196,9 @@ static void expire_if_due(void) {
         if (daemon_state == DAEMON_STATE_ACTIVE && t >= deadline) {
             char error[256];
             log_msg("INFO", "Assertion %u deadline reached; expiring hold", held_id);
+            if (hold_is_trial) trial_expired = true;
             (void)clear_hold(error, sizeof(error));
-        } else if (daemon_state == DAEMON_STATE_RELEASE_FAILED && t >= retry_at) {
+        } else if (daemon_state == DAEMON_STATE_RELEASE_FAILED && retry_at > 0 && t >= retry_at) {
             char error[256];
             log_msg("WARN", "Retrying release for assertion %u", held_id);
             (void)clear_hold(error, sizeof(error));
@@ -139,7 +207,7 @@ static void expire_if_due(void) {
 }
 
 static void check_and_trigger_schedules(void) {
-    if (is_holding() || is_release_pending()) return;
+    if (!can_acquire()) return;
 
     time_t now_wall = time(NULL);
     int active_idx = -1;
@@ -154,6 +222,7 @@ static void check_and_trigger_schedules(void) {
         char error[256] = {0};
         if (power_acquire(&held_id, error, sizeof(error)) != 0) {
             daemon_state = DAEMON_STATE_IDLE;
+            recent_errors++;
             log_msg("ERROR", "Failed to acquire scheduled hold for schedule %s: %s",
                     sched_store.items[active_idx].id, error);
             held_id = 0;
@@ -161,6 +230,9 @@ static void check_and_trigger_schedules(void) {
         }
         daemon_state = DAEMON_STATE_ACTIVE;
         deadline = now() + (double)active_remaining;
+        last_acquire_epoch = time(NULL);
+        release_attempts = 0;
+        hold_is_trial = false;
         current_active_sched_idx = active_idx;
         schedule_mark_fired(&sched_store, active_idx, now_wall - (sched_store.items[active_idx].duration - active_remaining));
         log_msg("INFO", "Triggered schedule %s: acquired assertion %u for remaining %u seconds",
@@ -319,6 +391,40 @@ static void handle_client(int fd) {
                  sched_store.count,
                  power_backend_name(), power_diagnostics());
         respond(fd, out);
+#ifdef IOSCAFFEINATE_TEST_MOCK
+    } else if (strcmp(command, "TEST INVALID STATE") == 0) {
+        /* Fault injection is present only in explicitly gated Linux mocks. */
+        daemon_state = DAEMON_STATE_ACTIVE;
+        held_id = 0;
+        respond(fd, "OK fault_injected=yes\n");
+#endif
+    } else if (strcmp(command, "SERVER STATUS") == 0) {
+        char out[2048];
+        char acquire_epoch[32], release_epoch[32];
+        double elapsed = daemon_started_at > 0 ? now() - daemon_started_at : 0;
+        double left = (daemon_state == DAEMON_STATE_ACTIVE) ? deadline - now() : 0;
+        unsigned remaining = left > 0 ? (unsigned)left + 1 : 0;
+        const char *source = !is_holding() ? "none" : hold_is_trial ? "server_trial" :
+                             current_active_sched_idx >= 0 ? "scheduled_awake" : "bounded_hold";
+        const char *schedule_active = current_active_sched_idx >= 0 ? "yes" : "no";
+        if (last_acquire_epoch > 0)
+            snprintf(acquire_epoch, sizeof(acquire_epoch), "%lld", (long long)last_acquire_epoch);
+        else snprintf(acquire_epoch, sizeof(acquire_epoch), "UNAVAILABLE");
+        if (last_release_epoch > 0)
+            snprintf(release_epoch, sizeof(release_epoch), "%lld", (long long)last_release_epoch);
+        else snprintf(release_epoch, sizeof(release_epoch), "UNAVAILABLE");
+        snprintf(out, sizeof(out),
+                 "OK SERVER protocol=1 uptime_seconds=%u state=%s state_invariant=%s active=%s assertion_owned=%s assertion_id=%u source=%s trial=%s trial_state=%s trial_stop_seen=%s remaining_seconds=%u release_pending=%s release_attempts=%u last_acquire_epoch=%s last_release_epoch=%s last_release_error=%s schedule_count=%zu schedule_active=%s recent_errors=%u backend=%s backend_verification=UNVERIFIED backend_diagnostics=%s\n",
+                 elapsed > 0 ? (unsigned)elapsed : 0, daemon_state_name(daemon_state),
+                 state_invariant_failed ? "ERROR" : "OK",
+                 is_holding() ? "yes" : "no", is_holding() ? "1" : "0", held_id,
+                 source, hold_is_trial && is_holding() ? "yes" : "no",
+                 trial_state, trial_stop_seen ? "yes" : "no", remaining,
+                 is_release_pending() ? "yes" : "no", release_attempts,
+                 acquire_epoch, release_epoch, last_release_error,
+                 sched_store.count, schedule_active, recent_errors,
+                 power_backend_name(), power_diagnostics());
+        respond(fd, out);
     } else if (strcmp(command, "PROBE") == 0) {
         if (is_holding()) {
             respond(fd, "ERR already active; stop before probing\n");
@@ -328,12 +434,16 @@ static void handle_client(int fd) {
         char error[256] = {0};
         if (power_acquire(&held_id, error, sizeof(error)) != 0) {
             daemon_state = DAEMON_STATE_IDLE;
+            recent_errors++;
             reply_error(fd, "acquire", error);
             held_id = 0;
             return;
         }
         daemon_state = DAEMON_STATE_ACTIVE;
         deadline = now();
+        last_acquire_epoch = time(NULL);
+        release_attempts = 0;
+        hold_is_trial = false;
         uint32_t probe_id = held_id;
         if (clear_hold(error, sizeof(error)) != 0) {
             reply_error(fd, "release", error);
@@ -343,6 +453,54 @@ static void handle_client(int fd) {
         snprintf(out, sizeof(out), "OK probe=acquire_release assertion_id=%u backend=%s type=PreventUserIdleSystemSleep %s\n",
                  probe_id, power_backend_name(), power_diagnostics());
         respond(fd, out);
+    } else if (strncmp(command, "TRIAL START ", 12) == 0) {
+        const char *value = command + 12;
+        if (*value < '0' || *value > '9') { respond(fd, "ERR invalid trial duration\n"); return; }
+        errno = 0;
+        char *end = NULL;
+        unsigned long long duration = strtoull(value, &end, 10);
+        if (errno || *end || duration == 0 || duration > MAX_SERVER_TRIAL_SECONDS) {
+            respond(fd, "ERR server trial duration must be 1..300 seconds\n"); return;
+        }
+        if (!can_acquire()) {
+            respond(fd, "ERR assertion owner is busy; stop the current hold before a trial\n");
+            return;
+        }
+        daemon_state = DAEMON_STATE_ACQUIRING;
+        char error[256] = {0};
+        if (power_acquire(&held_id, error, sizeof(error)) != 0) {
+            daemon_state = DAEMON_STATE_IDLE;
+            recent_errors++;
+            held_id = 0;
+            reply_error(fd, "trial acquire", error);
+            return;
+        }
+        daemon_state = DAEMON_STATE_ACTIVE;
+        deadline = now() + (double)duration;
+        current_active_sched_idx = -1;
+        last_acquire_epoch = time(NULL);
+        release_attempts = 0;
+        hold_is_trial = true;
+        trial_stop_seen = false;
+        trial_expired = false;
+        trial_state = "ACTIVE";
+        log_msg("INFO", "Acquired explicit server trial assertion %u for %llu seconds; %s",
+                held_id, duration, power_diagnostics());
+        char out[1024];
+        snprintf(out, sizeof(out), "OK trial=active duration_seconds=%llu assertion_id=%u backend=%s %s\n",
+                 duration, held_id, power_backend_name(), power_diagnostics());
+        respond(fd, out);
+    } else if (strcmp(command, "TRIAL STOP") == 0) {
+        if (!hold_is_trial || !is_holding()) {
+            respond(fd, "OK trial=inactive already_stopped=yes\n");
+            return;
+        }
+        char error[256] = {0};
+        trial_stop_seen = true;
+        trial_expired = false;
+        trial_state = "STOPPED";
+        if (clear_hold(error, sizeof(error)) != 0) reply_error(fd, "trial release", error);
+        else respond(fd, "OK trial=stopped active=no release_rc=0x00000000\n");
     } else if (strncmp(command, "START ", 6) == 0) {
         const char *value = command + 6;
         if (*value < '0' || *value > '9') { respond(fd, "ERR invalid duration\n"); return; }
@@ -360,6 +518,7 @@ static void handle_client(int fd) {
         char error[256] = {0};
         if (power_acquire(&held_id, error, sizeof(error)) != 0) {
             daemon_state = DAEMON_STATE_IDLE;
+            recent_errors++;
             reply_error(fd, "acquire", error);
             held_id = 0;
             return;
@@ -367,6 +526,9 @@ static void handle_client(int fd) {
         daemon_state = DAEMON_STATE_ACTIVE;
         deadline = now() + (double)duration;
         current_active_sched_idx = -1;
+        last_acquire_epoch = time(NULL);
+        release_attempts = 0;
+        hold_is_trial = false;
         log_msg("INFO", "Acquired assertion %u for %llu seconds; %s", held_id, duration, power_diagnostics());
         char out[1024];
         snprintf(out, sizeof(out), "OK active=yes duration_seconds=%llu assertion_id=%u backend=%s %s\n",
@@ -375,8 +537,15 @@ static void handle_client(int fd) {
     } else if (strcmp(command, "STOP") == 0) {
         char error[256] = {0};
         if (!is_holding()) respond(fd, "OK already_stopped=yes\n");
-        else if (clear_hold(error, sizeof(error)) != 0) reply_error(fd, "release", error);
-        else respond(fd, "OK active=no release_rc=0x00000000\n");
+        else {
+            if (hold_is_trial) {
+                trial_stop_seen = true;
+                trial_expired = false;
+                trial_state = "STOPPED";
+            }
+            if (clear_hold(error, sizeof(error)) != 0) reply_error(fd, "release", error);
+            else respond(fd, "OK active=no release_rc=0x00000000\n");
+        }
     } else if (strcmp(command, "SCHEDULE LIST") == 0) {
         char out[16384] = "OK schedules=";
         char item_str[256];
@@ -496,6 +665,7 @@ int main(int argc, char **argv) {
     sigemptyset(&sa.sa_mask);
     if (sigaction(SIGTERM, &sa, NULL) != 0 || sigaction(SIGINT, &sa, NULL) != 0 ||
         signal(SIGPIPE, SIG_IGN) == SIG_ERR) { perror("signal setup"); return 1; }
+    daemon_started_at = now();
     umask(0077);
     int lock_fd = lock_socket_path(socket_path);
     if (lock_fd < 0) return 1;
@@ -522,24 +692,25 @@ int main(int argc, char **argv) {
     check_and_trigger_schedules();
 
     while (keep_running) {
+        validate_runtime_state();
         expire_if_due();
         check_and_trigger_schedules();
 
-        int timeout_ms = 1000;
+        int timeout_ms = sched_store.count > 0 ? 1000 : -1;
         double t_now = now();
         if (daemon_state == DAEMON_STATE_ACTIVE && deadline > t_now) {
             double left = deadline - t_now;
             int ms = (int)(left * 1000.0);
             if (ms < 0) ms = 0;
-            if (ms < timeout_ms) timeout_ms = ms;
+            timeout_ms = ms;
         } else if (daemon_state == DAEMON_STATE_RELEASE_FAILED && retry_at > t_now) {
             double left = retry_at - t_now;
             int ms = (int)(left * 1000.0);
             if (ms < 0) ms = 0;
-            if (ms < timeout_ms) timeout_ms = ms;
+            timeout_ms = ms;
         }
 
-        if (!is_holding() && !is_release_pending()) {
+        if (sched_store.count > 0 && !is_holding() && !is_release_pending()) {
             time_t now_w = time(NULL);
             int act_i = -1, nxt_i = -1;
             uint32_t act_rem = 0;
@@ -550,9 +721,10 @@ int main(int argc, char **argv) {
                 timeout_ms = 0;
             } else if (nxt_i >= 0 && nxt_start > now_w) {
                 long long diff_sec = (long long)(nxt_start - now_w);
-                if (diff_sec > 0 && diff_sec < 86400) {
-                    int ms = (int)(diff_sec * 1000);
-                    if (ms < timeout_ms) timeout_ms = ms;
+                if (diff_sec > 0) {
+                    /* Keep P004's one-second schedule recheck bound. */
+                    int ms = diff_sec < 60 ? (int)(diff_sec * 1000) : 1000;
+                    if (timeout_ms < 0 || ms < timeout_ms) timeout_ms = ms;
                 }
             }
         }

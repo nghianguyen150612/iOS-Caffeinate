@@ -25,6 +25,7 @@ class Integration(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = str(Path(self.temp.name) / "test.sock")
         self.sched_path = str(Path(self.temp.name) / "schedules.json")
+        self.server_config_path = str(Path(self.temp.name) / "server-mode.json")
         self.processes = []
         self.addCleanup(self.shutdown)
 
@@ -60,6 +61,16 @@ class Integration(unittest.TestCase):
         if code is not None:
             self.assertEqual(result.returncode, code, (args, result.stdout, result.stderr))
         return result
+
+    def server_call(self, *args, code=0):
+        return self.call("--server-config", self.server_config_path,
+                         "--schedule-state", self.sched_path, "server", *args, code=code)
+
+    def write_server_config(self, text, path=None, mode=0o600):
+        target = Path(path or self.server_config_path)
+        target.write_text(text)
+        os.chmod(target, mode)
+        return target
 
     def raw(self, data):
         with socket.socket(socket.AF_UNIX) as client:
@@ -143,6 +154,251 @@ class Integration(unittest.TestCase):
         self.call("wake", code=2)
         self.call("wake", "set", "2026-10-18T12:00:00Z", code=2)
         self.call("wake", "status", "extra", code=2)
+
+    def test_server_diagnostics_are_read_only_and_default_disabled(self):
+        self.start(IOSCAFFEINATE_MOCK_FAIL_ACQUIRE="1")
+        future_iso = (datetime.now(timezone.utc) + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        self.call("schedule", "add", "--at", future_iso, "--for", "1m")
+        schedule_before = Path(self.sched_path).read_bytes()
+
+        status = self.server_call("status")
+        self.assertIn("configured_policy=DISABLED", status.stdout)
+        self.assertIn("server_mode_enabled=no", status.stdout)
+        self.assertIn("daemon_availability=AVAILABLE", status.stdout)
+        self.assertIn("daemon_protocol_compatibility=COMPATIBLE", status.stdout)
+        self.assertIn("assertion_ownership=NONE", status.stdout)
+        self.assertIn("backend_verification=UNVERIFIED", status.stdout)
+        self.assertIn("build_capability=MOCK_ONLY", status.stdout)
+        self.assertIn("scheduled_wake_support=UNVERIFIED", status.stdout)
+        self.assertIn("os_power_state=UNVERIFIED", status.stdout)
+        self.assertIn("prior_process_cleanup=UNVERIFIED", status.stdout)
+        self.assertIn("unattended_mode_authorized=no", status.stdout)
+        self.assertIn("daemon_recent_errors=0", status.stdout)
+        self.assertIn("health.last_assertion_acquisition=UNAVAILABLE", status.stdout)
+        self.assertIn("health.battery_level=UNAVAILABLE", status.stdout)
+        self.assertIn("battery_level=UNAVAILABLE", status.stdout)
+        self.assertIn("health.thermal_state=UNAVAILABLE", status.stdout)
+        self.assertIn("thermal_state=UNAVAILABLE", status.stdout)
+        self.assertIn("health.lan_connectivity=UNAVAILABLE", status.stdout)
+        self.assertIn("lan_reachability=UNAVAILABLE", status.stdout)
+        self.assertIn("health.tailscale_connectivity=UNAVAILABLE", status.stdout)
+        self.assertIn("tailscale_reachability=UNAVAILABLE", status.stdout)
+        self.assertIn("active=no", self.call("status").stdout)
+
+        doctor = self.server_call("doctor")
+        self.assertIn("check.cli_daemon_protocol=COMPATIBLE", doctor.stdout)
+        self.assertIn("check.daemon_state=IDLE", doctor.stdout)
+        self.assertIn("check.automatic_startup=UNKNOWN", doctor.stdout)
+        self.assertIn("check.launchd_template=DISABLED", doctor.stdout)
+        self.assertIn("check.battery_telemetry=UNAVAILABLE", doctor.stdout)
+        self.assertIn("check.thermal_telemetry=UNAVAILABLE", doctor.stdout)
+        self.assertIn("readiness=BLOCKED", doctor.stdout)
+
+        plan = self.server_call("plan")
+        self.assertIn("unattended_authorized=no", plan.stdout)
+        self.assertIn("automatic_apply=no", plan.stdout)
+        self.assertEqual(sum(line.startswith("gate.") for line in plan.stdout.splitlines()), 10)
+        self.assertIn("gate.screen_locked_lan_verified=PENDING", plan.stdout)
+        self.assertIn("gate.screen_locked_tailscale_verified=PENDING", plan.stdout)
+        self.assertEqual(Path(self.sched_path).read_bytes(), schedule_before)
+        self.assertFalse(Path(self.server_config_path).exists())
+
+    def test_server_daemon_unavailable_is_not_backend_failure(self):
+        status = self.server_call("status")
+        self.assertIn("daemon_availability=UNAVAILABLE", status.stdout)
+        self.assertIn("daemon_protocol_compatibility=UNAVAILABLE", status.stdout)
+        self.assertIn("assertion_ownership=UNKNOWN", status.stdout)
+        self.assertIn("backend_identity=MOCK_NO_POWER_EFFECT", status.stdout)
+        self.assertIn("backend_verification=UNVERIFIED", status.stdout)
+        doctor = self.server_call("doctor")
+        self.assertIn("check.daemon_availability=UNAVAILABLE", doctor.stdout)
+
+    def test_server_diagnostics_distinguish_old_daemon_protocol(self):
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(self.path)
+        os.chmod(self.path, 0o600)
+        listener.listen(1)
+
+        def old_protocol_server():
+            client, _ = listener.accept()
+            with client:
+                client.recv(128)
+                client.sendall(b"ERR unknown command\n")
+            listener.close()
+
+        thread = threading.Thread(target=old_protocol_server)
+        thread.start()
+        status = self.server_call("status")
+        thread.join(timeout=2)
+        self.assertIn("daemon_availability=AVAILABLE", status.stdout)
+        self.assertIn("daemon_protocol_compatibility=INCOMPATIBLE", status.stdout)
+        self.assertIn("assertion_ownership=UNKNOWN", status.stdout)
+
+    def test_server_configuration_schema_fails_closed(self):
+        valid = self.write_server_config('{"version":1,"policy":"observe_only"}\n')
+        status = self.server_call("status")
+        self.assertIn("configured_policy=OBSERVE_ONLY", status.stdout)
+        self.assertIn("server_mode_enabled=yes", status.stdout)
+        self.assertIn("configuration_status=VALID", status.stdout)
+        self.assertIn("unattended_mode_authorized=no", status.stdout)
+
+        valid.write_text('{"version":1,"policy":"observe_only","enabled":true}\n')
+        os.chmod(valid, 0o600)
+        invalid = self.server_call("status")
+        self.assertIn("configured_policy=DISABLED", invalid.stdout)
+        self.assertIn("server_mode_enabled=no", invalid.stdout)
+        self.assertIn("operating_state=BLOCKED", invalid.stdout)
+        self.assertIn("configuration_status=INVALID", invalid.stdout)
+
+        self.write_server_config('{"version":1,"policy":"disabled",}\n')
+        trailing_comma = self.server_call("status")
+        self.assertIn("configuration_status=INVALID", trailing_comma.stdout)
+
+    def test_server_configuration_rejects_symlinks_and_unsafe_modes(self):
+        config = self.write_server_config('{"version":1,"policy":"observe_only"}\n')
+        os.chmod(config, 0o644)
+        unsafe_mode = self.server_call("status")
+        self.assertIn("configuration_status=UNSAFE", unsafe_mode.stdout)
+        self.assertIn("server_mode_enabled=no", unsafe_mode.stdout)
+
+        os.chmod(config, 0o600)
+        linked_config = Path(self.temp.name) / "config-link.json"
+        linked_config.symlink_to(config)
+        symlink = self.call("--server-config", str(linked_config), "--schedule-state", self.sched_path,
+                            "server", "status")
+        self.assertIn("configuration_status=UNSAFE", symlink.stdout)
+        self.assertIn("server_mode_enabled=no", symlink.stdout)
+
+        linked_parent = Path(self.temp.name) / "linked-parent"
+        linked_parent.symlink_to(self.temp.name)
+        parent_config = linked_parent / "parent-config.json"
+        parent_symlink = self.call("--server-config", str(parent_config), "--schedule-state", self.sched_path,
+                                   "server", "status")
+        self.assertIn("configuration_status=UNSAFE", parent_symlink.stdout)
+
+        hardlink = Path(self.temp.name) / "hardlink.json"
+        os.link(config, hardlink)
+        hardlink_report = self.call("--server-config", str(hardlink), "--schedule-state", self.sched_path,
+                                    "server", "status")
+        self.assertIn("configuration_status=UNSAFE", hardlink_report.stdout)
+
+    def test_bounded_server_trial_stop_timeout_and_single_owner(self):
+        self.start()
+        self.server_call("trial", "start", "--for", "301s", code=2)
+        started = self.server_call("trial", "start", "--for", "5m")
+        self.assertIn("trial=active", started.stdout)
+        status = self.server_call("status")
+        self.assertIn("assertion_ownership=OWNED", status.stdout)
+        self.assertIn("assertion_lifecycle=ACTIVE", status.stdout)
+        self.assertIn("trial=yes", status.stdout)
+        self.assertIn("trial_state=ACTIVE", status.stdout)
+        self.call("start", "--for", "1s", code=1)
+
+        stopped = self.server_call("trial", "stop")
+        self.assertIn("trial=stopped", stopped.stdout)
+        status = self.server_call("status")
+        self.assertIn("assertion_ownership=NONE", status.stdout)
+        self.assertIn("trial=no", status.stdout)
+        self.assertIn("trial_state=STOPPED", status.stdout)
+        self.assertIn("trial_stop_seen=yes", status.stdout)
+        self.server_call("trial", "stop")
+        self.assertIn("assertion_ownership=NONE", self.server_call("status").stdout)
+
+        self.server_call("trial", "start", "--for", "1s")
+        until = time.monotonic() + 4
+        while time.monotonic() < until:
+            expired = self.server_call("status")
+            if ("assertion_ownership=NONE" in expired.stdout and "trial=no" in expired.stdout and
+                    "trial_state=EXPIRED" in expired.stdout):
+                break
+            time.sleep(0.05)
+        else:
+            self.fail("bounded server trial did not expire")
+
+    def test_server_trial_backend_error_is_visible(self):
+        self.start(IOSCAFFEINATE_MOCK_FAIL_ACQUIRE="1")
+        failed = self.server_call("trial", "start", "--for", "5s", code=1)
+        self.assertIn("create_rc=0xe00002c7", failed.stderr)
+        status = self.server_call("status")
+        self.assertIn("assertion_ownership=NONE", status.stdout)
+        self.assertIn("daemon_recent_errors=1", status.stdout)
+
+    def test_mock_invalid_state_transition_blocks_new_assertions(self):
+        self.start()
+        self.assertIn("fault_injected=yes", self.raw(b"TEST INVALID STATE\n"))
+        status = self.server_call("status")
+        self.assertIn("assertion_ownership=NONE", status.stdout)
+        self.assertIn("assertion_lifecycle=BLOCKED", status.stdout)
+        self.assertIn("state_invariant=ERROR", status.stdout)
+        self.assertIn("daemon_recent_errors=1", status.stdout)
+        self.server_call("trial", "start", "--for", "1s", code=1)
+
+    def test_server_trial_release_failure_remains_unresolved_and_bounded(self):
+        self.start(IOSCAFFEINATE_MOCK_FAIL_RELEASE="1")
+        self.server_call("trial", "start", "--for", "30s")
+        failed_stop = self.server_call("trial", "stop", code=1)
+        self.assertIn("release_rc=0xe00002bc", failed_stop.stderr)
+        status = self.server_call("status")
+        self.assertIn("assertion_ownership=OWNED", status.stdout)
+        self.assertIn("assertion_lifecycle=RELEASE_FAILED", status.stdout)
+        self.assertIn("trial_state=RELEASE_FAILED", status.stdout)
+        self.assertIn("release_pending=yes", status.stdout)
+        self.assertIn("last_release_error=mock_release_rc_0xe00002bc", status.stdout)
+
+        until = time.monotonic() + 4
+        while time.monotonic() < until:
+            status = self.server_call("status")
+            if "release_attempts=3" in status.stdout:
+                break
+            time.sleep(0.1)
+        else:
+            self.fail("release retry budget was not exhausted")
+        time.sleep(1.1)
+        still_failed = self.server_call("status")
+        self.assertIn("assertion_ownership=OWNED", still_failed.stdout)
+        self.assertIn("release_attempts=3", still_failed.stdout)
+
+    def test_server_trial_sigterm_cleanup(self):
+        self.write_server_config('{"version":1,"policy":"observe_only"}\n')
+        proc = self.start()
+        self.server_call("trial", "start", "--for", "30s")
+        proc.terminate()
+        self.assertEqual(proc.wait(timeout=4), 0)
+        self.assertIn("Released assertion", proc.stderr.read())
+
+    def test_server_restart_does_not_resume_trial(self):
+        self.write_server_config('{"version":1,"policy":"observe_only"}\n')
+        proc = self.start()
+        self.server_call("trial", "start", "--for", "30s")
+        proc.kill()
+        self.assertEqual(proc.wait(timeout=4), -signal.SIGKILL)
+
+        restarted = self.start()
+        self.assertIsNotNone(restarted)
+        status = self.server_call("status")
+        self.assertIn("configured_policy=OBSERVE_ONLY", status.stdout)
+        self.assertIn("assertion_ownership=NONE", status.stdout)
+        self.assertIn("assertion_lifecycle=IDLE", status.stdout)
+        self.assertIn("trial_state=INACTIVE", status.stdout)
+        self.assertIn("unattended_mode_authorized=no", status.stdout)
+
+    def test_connectivity_evidence_schema_keeps_lan_and_tailscale_independent(self):
+        schema_path = ROOT / "docs/schemas/connectivity-evidence-v1.schema.json"
+        schema = json.loads(schema_path.read_text())
+        self.assertEqual(schema["required"], ["version", "lan", "tailscale"])
+        definitions = schema["$defs"]
+        lan_fields = definitions["lan"]["properties"]
+        tailscale_fields = definitions["tailscale"]["properties"]
+        self.assertIn("local_address", lan_fields)
+        self.assertIn("tcp_22_reachable", lan_fields)
+        self.assertNotIn("peer_connected", lan_fields)
+        self.assertIn("tailnet_address", tailscale_fields)
+        self.assertIn("peer_connected", tailscale_fields)
+        self.assertIn("path", tailscale_fields)
+        self.assertNotIn("tcp_22_reachable", tailscale_fields)
+        plist = (ROOT / "packaging/com.ioscaffeinate.daemon.plist").read_text()
+        self.assertIn("<key>Disabled</key><true/>", plist)
+        self.assertIn("<key>RunAtLoad</key><false/>", plist)
 
     def test_duration_validation_and_exit_codes(self):
         self.start()
