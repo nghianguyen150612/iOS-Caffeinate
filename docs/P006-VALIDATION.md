@@ -18,7 +18,7 @@ python3 tests/integration.py
 
 Result: **40 integration tests passed**. Coverage includes disabled default, read-only status/doctor/plan, fail-closed schema and filesystem checks, unavailable daemon versus incompatible daemon protocol, mock backend errors, invalid-state fault injection, no diagnostic assertion acquisition, unchanged schedule state, schedule CRUD, P005 wake status, bounded trial start/stop/expiry, finite release retries, SIGTERM cleanup, restart without trial resumption, IPC malformed-input handling, single-owner enforcement, separate LAN/Tailscale schema, and the disabled launchd template.
 
-The iOS cross-build and Mach-O inspection require the official iPhoneOS SDK on macOS. Exact-commit results are recorded by the [`linux-protocol`, `ios-cross-build`, and `ios-artifact-inspection` checks on the P006 pull request](https://github.com/nghianguyen150612/iOS-Caffeinate/pulls). The final report records the exact feature SHA and workflow-run URLs after those checks finish. Artifacts remain unsigned and hardware-unverified.
+The iOS cross-build and Mach-O inspection require the official iPhoneOS SDK on macOS. Exact-commit results are recorded by the [`linux-protocol`, `ios-cross-build`, and `ios-artifact-inspection` checks on P006 PR #4](https://github.com/nghianguyen150612/iOS-Caffeinate/pull/4). The final report records the exact feature SHA and workflow-run URLs after those checks finish. Artifacts remain unsigned and hardware-unverified.
 
 ## CPU methodology
 
