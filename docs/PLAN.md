@@ -6,7 +6,7 @@
 | P002 | Source audit, canonical names, runtime diagnostics, iOS 12 ARM64 build/inspection, safe hardware and network validation | Cloud/local engineering complete; hardware PENDING; see P002 evidence |
 | P003 | Robust daemon state machine, lifecycle management, Unix IPC peer credential security, efficient deadline event loop, bounded release retries and diagnostics | Cloud/local engineering complete; hardware PENDING; see P003 validation evidence |
 | P004 | --until, persisted one-time/daily/weekly schedules, daemon restart recovery | Implemented on the P004 branch; target assertion and network behavior remain hardware PENDING |
-| P005 | Scheduled-wake feasibility, read-only capability diagnostics, tests, and deferred hardware procedure | Cloud engineering complete; final-commit CI and hardware remain PENDING; scheduled wake UNVERIFIED |
+| P005 | Scheduled-wake feasibility, read-only capability diagnostics, tests, and deferred hardware procedure | Cloud engineering and exact-commit CI complete; hardware PENDING; scheduled wake UNVERIFIED |
 | P006 | Server 24/7 mode, battery/thermal and remote connectivity validation | NOT AUTHORIZED; readiness assessment only |
 | P007 | Rootful .deb packaging, rollback, regression testing | NOT STARTED |
 

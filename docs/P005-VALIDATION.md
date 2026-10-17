@@ -46,6 +46,8 @@ The exact P005 commit must pass all three existing GitHub Actions jobs:
 
 The authoritative final-commit run is linked in the P005 completion report. It must be associated with the final pushed commit SHA, and all three job conclusions must be successful. Cross-compilation and Mach-O inspection do not prove binary execution or IOKit behavior on the iPad.
 
+The implementation commit `e6d0d92e290c1eae4644fd06af7e9d420af602c8` passed both its push workflow and PR workflow, with all three jobs successful in each run: [push CI](https://github.com/nghianguyen150612/iOS-Caffeinate/actions/runs/38998179344), [PR CI](https://github.com/nghianguyen150612/iOS-Caffeinate/actions/runs/38998196026). A following documentation-only commit updates the roadmap status; its exact-commit CI is reported separately in the P005 completion report.
+
 ## Hardware state
 
 - iPad mini 2 A1489 / Apple A7 / iOS 12.5.7: unavailable.
