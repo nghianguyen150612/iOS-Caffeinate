@@ -1,0 +1,67 @@
+#!/bin/sh
+set -eu
+
+PACKAGE='com.ioscaffeinate.cli'
+EXPECTED_ARCH='iphoneos-arm'
+actual_arch=$(dpkg --print-architecture 2>/dev/null || true)
+if [ "$actual_arch" != "$EXPECTED_ARCH" ]; then
+    echo "iOS-Caffeinate: refusing installation: dpkg architecture is '${actual_arch:-unknown}', expected $EXPECTED_ARCH." >&2
+    exit 1
+fi
+
+check_owned_or_absent() {
+    path=$1
+    if [ -e "$path" ] || [ -L "$path" ]; then
+        owner=$(dpkg-query -S "$path" 2>/dev/null || true)
+        case "$owner" in
+            "$PACKAGE: $path") ;;
+            *)
+                echo "iOS-Caffeinate: refusing to overwrite pre-existing unowned path: $path" >&2
+                echo "Move or remove that path yourself after confirming it is unrelated, then retry." >&2
+                exit 1
+                ;;
+        esac
+    fi
+}
+
+check_real_directory() {
+    path=$1
+    if [ -L "$path" ]; then
+        echo "iOS-Caffeinate: refusing symlink at package directory: $path" >&2
+        exit 1
+    fi
+    if [ -e "$path" ] && [ ! -d "$path" ]; then
+        echo "iOS-Caffeinate: refusing non-directory at package directory: $path" >&2
+        exit 1
+    fi
+}
+
+# File paths are checked before dpkg extracts anything. Existing package-owned
+# paths are allowed during upgrades; unowned files and symlinks are preserved.
+for path in \
+    /usr/local/bin/ios-caffeinate \
+    /usr/local/bin/ios-caffeinated \
+    /usr/local/bin/ic \
+    /usr/local/libexec/ioscaffeinate-manager \
+    /usr/share/ioscaffeinate/SHA256SUMS \
+    /usr/share/ioscaffeinate/launchd/com.ioscaffeinate.daemon.plist \
+    /usr/share/doc/ioscaffeinate/README.md
+do
+    check_owned_or_absent "$path"
+done
+
+check_real_directory /var/lib/ioscaffeinate
+check_real_directory /var/log/ioscaffeinate
+check_real_directory /usr/share/ioscaffeinate
+check_real_directory /usr/share/ioscaffeinate/launchd
+check_real_directory /usr/share
+check_real_directory /usr/share/doc
+check_real_directory /usr/local/libexec
+check_real_directory /usr/local
+check_real_directory /usr/local/bin
+check_real_directory /usr/share/doc/ioscaffeinate
+check_real_directory /usr/share/doc/ioscaffeinate/docs
+
+# P007_COLLISION_CHECKS_INSERTION_POINT
+
+exit 0

@@ -11,6 +11,7 @@ Components:
 4. `ic wake status`: Local, read-only capability report; does not use daemon IPC.
 5. `ic server status|doctor|plan`: Read-only policy, health, and readiness diagnostics.
 6. `ic server trial`: Explicit, single-owner, bounded assertion trial capped at 300 seconds.
+7. Rootful Debian package: `com.ioscaffeinate.cli`, architecture `iphoneos-arm`, with ARM64/iOS 12.0 Mach-O executables, a read-only manager, project documentation, and an inert staged launchd template.
 
 ## Daemon Lifecycle & Assertion State Machine
 
@@ -70,7 +71,7 @@ Health observations include daemon uptime, assertion lifecycle, acquisition and 
 
 Server trials share the existing P004 assertion owner. They require an explicit CLI request, expire after at most 300 seconds, support STOP and SIGTERM cleanup, and never resume after STOP or restart. Automatic release retry is capped at three attempts; persistent failure remains visible as `RELEASE_FAILED` while the daemon runs. Process death can prevent cleanup, and a restarted daemon does not infer that a prior assertion was released.
 
-The connectivity evidence contract lives in `docs/schemas/connectivity-evidence-v1.schema.json`. LAN and Tailscale records are independent and include their own connection, authenticated SSH, latency, time, and screen-lock observations. Daemon status cannot establish reachability. The bundled launchd template remains disabled and is not activated in P006.
+The connectivity evidence contract lives in `docs/schemas/connectivity-evidence-v1.schema.json`. LAN and Tailscale records are independent and include their own connection, authenticated SSH, latency, time, and screen-lock observations. Daemon status cannot establish reachability. The bundled launchd template remains disabled and is not activated.
 
 ## Timed Awake, Scheduled Awake, and Scheduled Wake
 
@@ -81,3 +82,13 @@ These are separate capabilities:
 - **Scheduled Wake**: a platform or hardware facility resumes the system at a requested time. P005 has no supported iOS 12 mechanism or command for this capability. It is reported as `unverified`, with `wake_guarantee=no`.
 
 `wake status` is evaluated locally by the CLI and prints the compile-time target/backend identity. It does not resolve IOKit symbols, call an assertion API, acquire/release power, connect to the daemon, or load/modify schedule state. A Linux result identifies `MOCK_NO_POWER_EFFECT` and is never hardware evidence. The report's unavailable runtime probe is deliberate; target wake facilities have not been established by a read-only probe.
+
+## P007 Rootful Package and Lifecycle Boundary
+
+The Debian package architecture (`iphoneos-arm`) is the rootful package-manager convention; the actual executable architecture is thin ARM64 Mach-O targeting iOS 12.0. The two identifiers are validated separately. P007 follows Theos' rootful packaging convention and does not support rootless `iphoneos-arm64`.
+
+The package installs the CLI and daemon in `/usr/local/bin`, `ic` as a relative symlink to the CLI, and the manager in root-owned executable storage at `/usr/local/libexec/ioscaffeinate-manager`. Documentation and SHA-256 manifests are under `/usr/share`; schedules and optional server policy remain in `/var/lib/ioscaffeinate`; logs remain in `/var/log/ioscaffeinate`. No schedule/server-mode fixture is packaged. The launchd plist is inert under `/usr/share/ioscaffeinate/launchd`, not auto-discoverable from `/Library/LaunchDaemons`.
+
+Package scripts reject unowned file collisions before extraction and refuse upgrade/removal while the default daemon socket path exists. They never launch or terminate a process, alter launchd, erase persistent data, or download tools. There are no post-install or post-remove scripts. Ordinary removal leaves non-empty state/log directories and their contents intact. The manager's status, verify, doctor, rollback-check, and uninstall-check commands are read-only.
+
+CI packages the unsigned Mach-O files and labels the `.deb` **UNSIGNED / DEVICE-UNVERIFIED**. A caller may explicitly provide a trusted local `ldid` path for an ad-hoc `ldid -S` stage without entitlements; the package tool checks only for signature presence. Signature verification, jailbreak acceptance, package installation, iOS execution, IOKit assertion behavior, network survival, and continuous operation are separate gates and remain hardware-unverified. See [P007 packaging](P007-PACKAGING.md), [validation](P007-VALIDATION.md), [device procedure](P007-DEVICE-TEST.md), and [rollback](P007-ROLLBACK.md).

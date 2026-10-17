@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    remove|upgrade|deconfigure|failed-upgrade) ;;
+    *) exit 0 ;;
+esac
+
+SOCKET='/var/run/ioscaffeinated.sock'
+if [ -e "$SOCKET" ] || [ -L "$SOCKET" ]; then
+    echo "iOS-Caffeinate: refusing package removal or upgrade while the default daemon endpoint exists: $SOCKET" >&2
+    echo 'Stop the manually started daemon, verify its IOKit assertion was released, and inspect the endpoint before retrying.' >&2
+    echo 'The package script will not remove the endpoint or terminate a process.' >&2
+    exit 1
+fi
+
+# A daemon launched with a custom --socket path cannot be detected safely here.
+# The operator must perform the documented process and assertion checks first.
+exit 0

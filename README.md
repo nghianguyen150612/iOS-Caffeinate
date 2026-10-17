@@ -1,6 +1,6 @@
 # iOS-Caffeinate
 
-Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides the daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds a read-only scheduled-wake capability report. P006 adds read-only server diagnostics, explicit bounded trials, health observations, readiness gates, and an external connectivity evidence schema. Real-device assertion, schedule, sleep, and networking behavior remain **PENDING** because the iPad is unavailable.
+Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides the daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds a read-only scheduled-wake capability report. P006 adds read-only server diagnostics, explicit bounded trials, health observations, readiness gates, and an external connectivity evidence schema. P007 adds rootful Debian packaging and safety checks. Real-device assertion, schedule, sleep, package installation, and networking behavior remain **PENDING** because the iPad is unavailable.
 
 Executables: **ios-caffeinate** (CLI), **ios-caffeinated** (daemon). **ic** is a filesystem symlink to the CLI, never a second executable or shell alias. The socket remains `/var/run/ioscaffeinated.sock`.
 
@@ -49,6 +49,7 @@ Linux tests explicitly compile `IOSCAFFEINATE_TEST_MOCK`; this backend has **NO 
 ```sh
 ./scripts/build-linux-test.sh
 python3 tests/integration.py
+python3 -m unittest discover -s tests/packaging -v
 ```
 
 macOS with Xcode and the official **iPhoneOS** SDK:
@@ -58,28 +59,34 @@ macOS with Xcode and the official **iPhoneOS** SDK:
 python3 scripts/inspect-ios.py
 ```
 
-Outputs: `dist/ios-caffeinate`, `dist/ios-caffeinated`, and relative symlink `dist/ic -> ios-caffeinate`. CI uploads the two **UNSIGNED, HARDWARE-UNVERIFIED** binaries and a separate Mach-O inspection report. Recreate `ic` after downloading; artifact archives need not preserve permissions or symlinks. No build step signs, installs, deploys, or activates a service.
+Outputs: `dist/ios-caffeinate`, `dist/ios-caffeinated`, relative symlink `dist/ic -> ios-caffeinate`, and `dist/SHA256SUMS`. CI uploads the **UNSIGNED, HARDWARE-UNVERIFIED** binaries, inspection report, and rootful `.deb` with checksums. The default build does not sign, install, deploy, or activate a service. The package builder can run an explicitly requested local `ldid -S` stage; see [P007 packaging](docs/P007-PACKAGING.md).
 
-## Planned rootful installation layout
+## Rootful package
+
+P007 defines package `com.ioscaffeinate.cli` version `0.1.0-1`, Debian architecture `iphoneos-arm`, and thin ARM64 iOS 12.0 executables. The package architecture is distinct from the binaries' ARM64 CPU architecture. It carries unsigned binaries in CI, a genuine `ic` symlink, docs, a read-only manager, empty persistent/log directories, and the disabled launchd template staged under `/usr/share/ioscaffeinate/`. It does not activate launchd or seed server/schedule configuration. The manager is installed at `/usr/local/libexec/ioscaffeinate-manager`, outside writable state directories.
+
+Read [P007 packaging](docs/P007-PACKAGING.md), [validation](docs/P007-VALIDATION.md), [deferred device test](docs/P007-DEVICE-TEST.md), and [rollback](docs/P007-ROLLBACK.md) before using an artifact. The CI `.deb` is **UNSIGNED / DEVICE-UNVERIFIED**. Its archive and checksums are cloud evidence only; installation, signature acceptance, execution, assertion behavior, screen-locked connectivity, and 24/7 operation remain pending.
+
+## Rootful installation layout
 
 | Component | Path |
 |---|---|
 | CLI | `/usr/local/bin/ios-caffeinate` |
 | Daemon | `/usr/local/bin/ios-caffeinated` |
 | CLI symlink | `/usr/local/bin/ic -> /usr/local/bin/ios-caffeinate` |
-| Manager (planned) | `/var/lib/ioscaffeinate/manager.sh` |
-| Installation state (planned) | `/var/lib/ioscaffeinate/install-state` |
+| Read-only manager | `/usr/local/libexec/ioscaffeinate-manager` |
 | Project data | `/var/lib/ioscaffeinate/` |
-| Logs (planned) | `/var/log/ioscaffeinate/` |
+| Logs | `/var/log/ioscaffeinate/` |
 | IPC socket | `/var/run/ioscaffeinated.sock` |
-| LaunchDaemon template | `/Library/LaunchDaemons/com.ioscaffeinate.daemon.plist` |
+| Staged launchd template | `/usr/share/ioscaffeinate/launchd/com.ioscaffeinate.daemon.plist` |
+| Future live launchd path | `/Library/LaunchDaemons/com.ioscaffeinate.daemon.plist` (not installed or activated by P007) |
 
 A `0600` socket sidecar lock (`/var/run/ioscaffeinated.sock.lock`) serializes manual daemon instances. It is left in place to avoid lock inode races. The default endpoint requires root and verifies peer credentials (`getpeereid` / `SO_PEERCRED`); mock tests use private temporary directories without root.
 
-The project launchd template remains disabled (`Disabled=true`); P005 does not install or activate a persistent service. Manager, installer state, log directories, and final `.deb` packaging are future components.
+The project launchd template remains disabled (`Disabled=true`, `RunAtLoad=false`) and is staged outside the active LaunchDaemons directory. P007 does not load, enable, or start a persistent service. Package lifecycle scripts only reject unsafe file collisions and a present default daemon endpoint; they do not stop processes or modify user data.
 
 ## Scope and evidence
 
-Timed holds and scheduled awake windows are bounded to 24 hours. P004 schedule evaluation requires the daemon to be running; it does not wake a suspended system. There is no indefinite mode, GUI, tweak injection, Apple daemon change, scheduled-wake command, or automatic installation. P005 makes no 24/7 unattended reliability claim. P006 provides engineering and diagnostics only; all hardware gates remain pending and P007 is not authorized. `.deb` packaging remains future work.
+Timed holds and scheduled awake windows are bounded to 24 hours. P004 schedule evaluation requires the daemon to be running; it does not wake a suspended system. There is no indefinite mode, GUI, tweak injection, Apple daemon change, scheduled-wake command, or automatic installation. P005 makes no 24/7 unattended reliability claim. P006 provides engineering and diagnostics only; all hardware gates remain pending. P007 cloud packaging engineering is implemented, but device validation remains pending. Package success does not authorize unattended operation.
 
-See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P006 server-mode design](docs/P006-SERVER-MODE.md), [P006 validation](docs/P006-VALIDATION.md), [deferred P006 device tests](docs/P006-DEVICE-TEST.md), [P005 feasibility report](docs/P005-WAKE-FEASIBILITY.md), [P005 validation](docs/P005-VALIDATION.md), [deferred P005 device tests](docs/P005-DEVICE-TEST.md), [P004 schedule details](docs/P004-SCHEDULING.md), and earlier [device recovery instructions](docs/P003-DEVICE-TEST.md).
+See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P007 package contract](docs/P007-PACKAGING.md), [P007 validation](docs/P007-VALIDATION.md), [P007 deferred device procedure](docs/P007-DEVICE-TEST.md), [P007 rollback](docs/P007-ROLLBACK.md), [P006 server-mode design](docs/P006-SERVER-MODE.md), [P006 validation](docs/P006-VALIDATION.md), [deferred P006 device tests](docs/P006-DEVICE-TEST.md), [P005 feasibility report](docs/P005-WAKE-FEASIBILITY.md), [P005 validation](docs/P005-VALIDATION.md), [deferred P005 device tests](docs/P005-DEVICE-TEST.md), [P004 schedule details](docs/P004-SCHEDULING.md), and earlier [device recovery instructions](docs/P003-DEVICE-TEST.md).

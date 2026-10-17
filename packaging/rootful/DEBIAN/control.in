@@ -1,0 +1,9 @@
+Package: com.ioscaffeinate.cli
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: iphoneos-arm
+Maintainer: iOS-Caffeinate contributors <ios-caffeinate@users.noreply.github.com>
+Description: Bounded power assertion CLI and daemon for rootful iOS
+ Native C11 command-line client and manually managed daemon for rootful
+ jailbroken iOS 12. The daemon is not started or registered automatically.
