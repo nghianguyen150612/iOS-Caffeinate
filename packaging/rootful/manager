@@ -1,0 +1,286 @@
+#!/bin/sh
+# Read-only package, file, and rollback checks. No lifecycle action is provided.
+set -u
+
+PACKAGE='com.ioscaffeinate.cli'
+CLI='/usr/local/bin/ios-caffeinate'
+DAEMON='/usr/local/bin/ios-caffeinated'
+ALIAS='/usr/local/bin/ic'
+MANAGER='/usr/local/libexec/ioscaffeinate-manager'
+MANIFEST='/usr/share/ioscaffeinate/SHA256SUMS'
+SIGNING_STATE='/usr/share/ioscaffeinate/SIGNING-STATE'
+TEMPLATE='/usr/share/ioscaffeinate/launchd/com.ioscaffeinate.daemon.plist'
+LIVE_PLIST='/Library/LaunchDaemons/com.ioscaffeinate.daemon.plist'
+SOCKET='/var/run/ioscaffeinated.sock'
+FAILURES=0
+
+fail() {
+    echo "FAIL: $*"
+    FAILURES=$((FAILURES + 1))
+}
+
+hash_file() {
+    path=$1
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$path" 2>/dev/null | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$path" 2>/dev/null | awk '{print $1}'
+    else
+        return 1
+    fi
+}
+
+expected_hash() {
+    rel=$1
+    [ -r "$MANIFEST" ] || return 1
+    awk -v wanted="$rel" '$2 == wanted { print $1 }' "$MANIFEST"
+}
+
+check_hash() {
+    path=$1
+    rel=$2
+    if [ ! -f "$path" ]; then
+        fail "checksum target missing: $path"
+        return
+    fi
+    expected=$(expected_hash "$rel" 2>/dev/null || true)
+    if [ -z "$expected" ]; then
+        fail "no packaged SHA-256 entry for $rel"
+        return
+    fi
+    actual=$(hash_file "$path" 2>/dev/null || true)
+    if [ -z "$actual" ]; then
+        fail "SHA-256 tool unavailable for $path"
+    elif [ "$actual" = "$expected" ]; then
+        echo "checksum[$rel]=OK"
+    else
+        fail "SHA-256 mismatch: $path"
+    fi
+}
+
+check_owned() {
+    path=$1
+    if ! command -v dpkg-query >/dev/null 2>&1; then
+        fail "cannot verify package ownership: dpkg-query is unavailable ($path)"
+        return
+    fi
+    owner=$(dpkg-query -S "$path" 2>/dev/null | awk -F ': ' 'NR == 1 {print $1}' || true)
+    if [ "$owner" != "$PACKAGE" ]; then
+        fail "path is not owned by $PACKAGE: $path"
+    else
+        echo "package_ownership[$path]=$owner"
+    fi
+}
+
+check_arm64() {
+    path=$1
+    if [ ! -f "$path" ]; then
+        fail "executable missing: $path"
+        return
+    fi
+    if [ ! -x "$path" ]; then
+        fail "not executable: $path"
+        return
+    fi
+    if ! command -v od >/dev/null 2>&1; then
+        fail "cannot inspect executable architecture: od is unavailable"
+        return
+    fi
+    bytes=$(od -An -tx1 -N12 "$path" 2>/dev/null | tr -d ' \n')
+    case "$bytes" in
+        cffaedfe0c000001*)
+            subtype=${bytes#cffaedfe0c000001}
+            case "$subtype" in
+                020000*) fail "arm64e-only executable is not accepted: $path" ;;
+                *) echo "architecture[$path]=ARM64 Mach-O (subtype $subtype)" ;;
+            esac
+            ;;
+        *) fail "wrong or unrecognized executable architecture: $path" ;;
+    esac
+}
+
+check_owner_mode() {
+    path=$1
+    expected_mode=$2
+    if [ ! -e "$path" ]; then
+        fail "path missing for ownership check: $path"
+        return
+    fi
+    metadata=$(stat -f '%u %Lp' "$path" 2>/dev/null || true)
+    case "$metadata" in
+        '0 '*) ;;
+        *) metadata=$(stat -c '%u %a' "$path" 2>/dev/null || true) ;;
+    esac
+    set -- $metadata
+    owner=${1:-unknown}
+    mode=${2:-unknown}
+    case "$mode" in
+        0*) mode=${mode#0} ;;
+    esac
+    if [ "$owner" != 0 ] || [ "$mode" != "$expected_mode" ]; then
+        fail "expected root:$expected_mode for $path, found $owner:$mode"
+    else
+        echo "ownership_permissions[$path]=root:$mode"
+    fi
+}
+
+check_package_metadata() {
+    if ! command -v dpkg-query >/dev/null 2>&1; then
+        fail 'dpkg-query is unavailable'
+        return
+    fi
+    metadata=$(dpkg-query -W -f='${db:Status-Status}\t${Version}\t${Architecture}' "$PACKAGE" 2>/dev/null || true)
+    if [ -z "$metadata" ]; then
+        fail "package metadata is unavailable for $PACKAGE"
+        return
+    fi
+    echo "package_metadata=$metadata"
+    status=$(printf '%s\n' "$metadata" | awk -F '\t' '{print $1}')
+    arch=$(printf '%s\n' "$metadata" | awk -F '\t' '{print $3}')
+    [ "$status" = installed ] || fail "package is not installed (status: $status)"
+    [ "$arch" = iphoneos-arm ] || fail "package metadata architecture is $arch, expected iphoneos-arm"
+}
+
+check_runtime_and_launchd() {
+    if [ -f "$TEMPLATE" ] && grep -q '<key>Disabled</key><true/>' "$TEMPLATE" && grep -q '<key>RunAtLoad</key><false/>' "$TEMPLATE"; then
+        echo 'launchd_template=STAGED_AND_DISABLED'
+    else
+        fail 'staged launchd template is missing or does not preserve disabled startup'
+    fi
+    if [ -e "$LIVE_PLIST" ] || [ -L "$LIVE_PLIST" ]; then
+        echo "launchd_live_path=PRESENT_REQUIRES_OPERATOR_REVIEW ($LIVE_PLIST)"
+    else
+        echo 'launchd_live_path=ABSENT'
+    fi
+    if [ -S "$SOCKET" ]; then
+        echo 'runtime_daemon_availability=DEFAULT_SOCKET_PRESENT_PROCESS_AND_ASSERTION_UNVERIFIED'
+    elif [ -e "$SOCKET" ] || [ -L "$SOCKET" ]; then
+        echo 'runtime_daemon_availability=DEFAULT_ENDPOINT_UNSAFE_OR_STALE'
+    else
+        echo 'runtime_daemon_availability=DEFAULT_SOCKET_ABSENT_CUSTOM_SOCKET_UNVERIFIED'
+    fi
+    echo 'physical_behavior=UNVERIFIED'
+}
+
+run_checks() {
+    FAILURES=0
+    check_package_metadata
+    actual_arch=$(dpkg --print-architecture 2>/dev/null || true)
+    echo "dpkg_architecture=${actual_arch:-UNKNOWN}"
+    [ "$actual_arch" = iphoneos-arm ] || fail "dpkg architecture is ${actual_arch:-unknown}, expected iphoneos-arm"
+
+    check_arm64 "$CLI"
+    check_arm64 "$DAEMON"
+    check_owned "$CLI"
+    check_owned "$DAEMON"
+    check_owned "$ALIAS"
+    check_owned "$MANAGER"
+    check_owned "$MANIFEST"
+    check_owned "$TEMPLATE"
+    check_owned "$SIGNING_STATE"
+    check_hash "$CLI" 'usr/local/bin/ios-caffeinate'
+    check_hash "$DAEMON" 'usr/local/bin/ios-caffeinated'
+    check_hash "$MANAGER" 'usr/local/libexec/ioscaffeinate-manager'
+    check_hash "$TEMPLATE" 'usr/share/ioscaffeinate/launchd/com.ioscaffeinate.daemon.plist'
+    check_hash "$SIGNING_STATE" 'usr/share/ioscaffeinate/SIGNING-STATE'
+    check_owner_mode "$CLI" 755
+    check_owner_mode "$DAEMON" 755
+    check_owner_mode "$MANAGER" 755
+    check_owner_mode "$TEMPLATE" 644
+    check_owner_mode "$SIGNING_STATE" 644
+    check_owner_mode "$MANIFEST" 644
+    check_owner_mode /var/lib/ioscaffeinate 750
+    check_owner_mode /var/log/ioscaffeinate 750
+    if [ -r "$SIGNING_STATE" ]; then
+        state_line=$(sed -n '1p' "$SIGNING_STATE")
+        echo "signing_state=$state_line"
+    else
+        fail 'signing state file is missing or unreadable'
+    fi
+    if [ -L "$ALIAS" ] && [ "$(readlink "$ALIAS" 2>/dev/null || true)" = 'ios-caffeinate' ]; then
+        echo 'cli_alias=VALID_SYMLINK_TO_PACKAGED_CLI'
+    else
+        fail 'ic is not the expected symlink to ios-caffeinate'
+    fi
+    check_runtime_and_launchd
+    return "$FAILURES"
+}
+
+rollback_check() {
+    if [ "$#" -ne 1 ]; then
+        echo 'Usage: ioscaffeinate-manager rollback-check /absolute/path/to/previous.deb' >&2
+        echo 'A matching .sha256 sidecar must be present. This command never installs or restores a package.' >&2
+        return 2
+    fi
+    deb=$1
+    case "$deb" in
+        /*) ;;
+        *) echo 'rollback_artifact=NOT_VERIFIED (use an absolute package path)' ; return 2 ;;
+    esac
+    sidecar=${deb}.sha256
+    if [ ! -f "$deb" ] || [ -L "$deb" ] || [ ! -r "$sidecar" ] || [ -L "$sidecar" ]; then
+        echo 'rollback_artifact=NOT_VERIFIED (package or matching .sha256 sidecar is missing)'
+        return 1
+    fi
+    if ! command -v dpkg-deb >/dev/null 2>&1; then
+        echo 'rollback_artifact=NOT_VERIFIED (dpkg-deb is unavailable)'
+        return 1
+    fi
+    set -- $(cat "$sidecar")
+    expected=${1:-}
+    sidecar_name=${2:-}
+    actual=$(hash_file "$deb" 2>/dev/null || true)
+    [ "$#" -eq 2 ] && [ "$sidecar_name" = "$(basename "$deb")" ] && [ -n "$expected" ] && [ "$expected" = "$actual" ] || {
+        echo 'rollback_artifact=NOT_VERIFIED (package SHA-256 mismatch or no hash tool)'
+        return 1
+    }
+    name=$(dpkg-deb -f "$deb" Package 2>/dev/null || true)
+    version=$(dpkg-deb -f "$deb" Version 2>/dev/null || true)
+    arch=$(dpkg-deb -f "$deb" Architecture 2>/dev/null || true)
+    [ "$name" = "$PACKAGE" ] && [ "$arch" = iphoneos-arm ] || {
+        echo "rollback_artifact=NOT_VERIFIED (found package=$name architecture=$arch)"
+        return 1
+    }
+    current=$(dpkg-query -W -f='${Version}' "$PACKAGE" 2>/dev/null || true)
+    if [ -n "$current" ] && command -v dpkg >/dev/null 2>&1 && dpkg --compare-versions "$version" lt "$current"; then
+        echo "rollback_artifact=VERIFIED package=$name version=$version sha256=$actual"
+    else
+        echo "rollback_artifact=NOT_VERIFIED (previous version $version is not older than installed version ${current:-unknown})"
+        return 1
+    fi
+    echo 'rollback_action=NOT_PERFORMED; verify service stop, assertion release, file state, and persistent data separately'
+    echo 'rollback_signature=presence_and_device_acceptance_not_checked_by_this_command'
+}
+
+uninstall_check() {
+    run_checks || true
+    if [ -e "$SOCKET" ] || [ -L "$SOCKET" ]; then
+        fail "default daemon endpoint exists at $SOCKET; package removal is unsafe until the operator stops the daemon and confirms assertion release"
+    else
+        echo 'uninstall_default_endpoint=ABSENT'
+    fi
+    echo 'ordinary_remove=dpkg removes package-owned executables, manager, documentation, staged template, and empty package directories'
+    echo 'persistent_data=preserved; schedules.json and server-mode.json are not package payload'
+    echo 'logs=preserved; package removal does not erase operator-generated log files'
+    echo 'launchd=not unloaded, disabled, enabled, or started by package scripts'
+    echo 'uninstall_action=NOT_PERFORMED'
+    return "$FAILURES"
+}
+
+command=${1:-status}
+shift 2>/dev/null || true
+case "$command" in
+    status|verify|doctor)
+        [ "$#" -eq 0 ] || { echo 'This command takes no arguments.' >&2; exit 2; }
+        run_checks
+        ;;
+    rollback-check) rollback_check "$@" ;;
+    uninstall-check)
+        [ "$#" -eq 0 ] || { echo 'This command takes no arguments.' >&2; exit 2; }
+        uninstall_check
+        ;;
+    *)
+        echo 'Usage: ioscaffeinate-manager [status|verify|doctor|rollback-check /path/to/previous.deb|uninstall-check]' >&2
+        exit 2
+        ;;
+esac

@@ -1,0 +1,31 @@
+{
+  "registry_version": 1,
+  "maximum_trial_seconds": 300,
+  "states": ["PENDING", "INSUFFICIENT_EVIDENCE", "REVIEW_REQUIRED", "FAIL", "BLOCKED", "PASS"],
+  "physical_source_classes": ["DEVICE_REPORTED", "EXTERNAL_OBSERVER", "OPERATOR_RECORDED"],
+  "non_physical_source_classes": ["SIMULATED", "MOCK", "CI"],
+  "gates": [
+    {"id": "device_identity_verified", "category": "Device & Installation", "evidence": ["DEVICE_PREFLIGHT:model", "DEVICE_PREFLIGHT:ios_version"], "requires_physical_presence": true},
+    {"id": "ios_runtime_verified", "category": "Device & Installation", "evidence": ["DEVICE_PREFLIGHT:ios_version"], "requires_physical_presence": true},
+    {"id": "package_integrity_verified", "category": "Device & Installation", "evidence": ["PACKAGE_INTEGRITY_CHECK:package_sha256"], "requires_physical_presence": true},
+    {"id": "signature_acceptance_verified", "category": "Device & Installation", "evidence": ["SIGNATURE_ACCEPTANCE:accepted"], "requires_physical_presence": true},
+    {"id": "installation_verified", "category": "Device & Installation", "evidence": ["PACKAGE_INSTALL:success"], "requires_physical_presence": true},
+    {"id": "rollback_verified", "category": "Device & Installation", "evidence": ["ROLLBACK:success", "PACKAGE_REMOVAL:success"], "requires_physical_presence": true},
+    {"id": "iokit_acquire_verified", "category": "Power Assertions", "evidence": ["ASSERTION_ACQUIRE_SUCCESS"], "requires_physical_presence": true},
+    {"id": "iokit_release_verified", "category": "Power Assertions", "evidence": ["ASSERTION_RELEASE:success"], "requires_physical_presence": true},
+    {"id": "bounded_hold_verified", "category": "Power Assertions", "evidence": ["ASSERTION_ACQUIRE_SUCCESS", "ASSERTION_RELEASE:within_authorized_duration"], "requires_physical_presence": true},
+    {"id": "explicit_stop_verified", "category": "Power Assertions", "evidence": ["EXPLICIT_STOP", "ASSERTION_RELEASE:after_stop"], "requires_physical_presence": true},
+    {"id": "natural_expiry_verified", "category": "Power Assertions", "evidence": ["NATURAL_EXPIRY", "ASSERTION_RELEASE:after_expiry"], "requires_physical_presence": true},
+    {"id": "sigterm_cleanup_verified", "category": "Power Assertions", "evidence": ["SIGTERM", "ASSERTION_RELEASE:after_sigterm", "DAEMON_EXIT"], "requires_physical_presence": true},
+    {"id": "screen_locked_lan_verified", "category": "Network", "evidence": ["LAN_OBSERVATION:tcp_22_reachable", "LAN_OBSERVATION:ssh_authenticated", "SCREEN_LOCK"], "requires_physical_presence": true},
+    {"id": "screen_locked_tailscale_verified", "category": "Network", "evidence": ["TAILSCALE_OBSERVATION:peer_connected", "TAILSCALE_OBSERVATION:ssh_authenticated", "SCREEN_LOCK"], "requires_physical_presence": true},
+    {"id": "authenticated_ssh_verified", "category": "Network", "evidence": ["LAN_OBSERVATION:ssh_authenticated or TAILSCALE_OBSERVATION:ssh_authenticated"], "requires_physical_presence": true},
+    {"id": "independent_observer_verified", "category": "Network", "evidence": ["LAN_OBSERVATION or TAILSCALE_OBSERVATION from EXTERNAL_OBSERVER"], "requires_physical_presence": true},
+    {"id": "battery_observation_available", "category": "Operational Safety", "evidence": ["BATTERY_OBSERVATION"], "requires_physical_presence": true},
+    {"id": "thermal_observation_available", "category": "Operational Safety", "evidence": ["THERMAL_OBSERVATION"], "requires_physical_presence": true},
+    {"id": "physical_recovery_confirmed", "category": "Operational Safety", "evidence": ["PHYSICAL_RECOVERY:success"], "requires_physical_presence": true},
+    {"id": "launchd_remains_disabled", "category": "Operational Safety", "evidence": ["DEVICE_PREFLIGHT:launchd_disabled"], "requires_physical_presence": true},
+    {"id": "no_unresolved_assertion", "category": "Operational Safety", "evidence": ["ASSERTION_RELEASE:success", "cleanup:COMPLETE", "unresolved_conditions:empty"], "requires_physical_presence": true},
+    {"id": "scheduled_wake_verified", "category": "Scheduled Wake", "evidence": ["SCHEDULED_WAKE_OBSERVATION:success"], "requires_physical_presence": true}
+  ]
+}

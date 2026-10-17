@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ios-caffeinate.invalid/schemas/connectivity-evidence-v1.schema.json",
+  "title": "iOS-Caffeinate external connectivity evidence",
+  "description": "Operator-supplied observations only. LAN and Tailscale are independent evidence records; local daemon state is not evidence of remote reachability.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "lan", "tailscale"],
+  "properties": {
+    "version": {"const": 1},
+    "lan": {
+      "$ref": "#/$defs/lan"
+    },
+    "tailscale": {
+      "$ref": "#/$defs/tailscale"
+    }
+  },
+  "$defs": {
+    "screenLockStatus": {
+      "type": "string",
+      "enum": ["LOCKED", "UNLOCKED", "UNKNOWN"]
+    },
+    "timestamp": {
+      "oneOf": [
+        {"type": "string", "format": "date-time"},
+        {"type": "null"}
+      ]
+    },
+    "latency": {
+      "oneOf": [
+        {"type": "number", "minimum": 0},
+        {"type": "null"}
+      ]
+    },
+    "optionalAddress": {
+      "oneOf": [
+        {"type": "string", "minLength": 1, "maxLength": 128},
+        {"type": "null"}
+      ]
+    },
+    "optionalBoolean": {
+      "oneOf": [
+        {"type": "boolean"},
+        {"type": "null"}
+      ]
+    },
+    "lan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["local_address", "tcp_22_reachable", "ssh_authenticated", "latency_ms", "timestamp", "screen_lock_status"],
+      "properties": {
+        "local_address": {"$ref": "#/$defs/optionalAddress"},
+        "tcp_22_reachable": {"$ref": "#/$defs/optionalBoolean"},
+        "ssh_authenticated": {"$ref": "#/$defs/optionalBoolean"},
+        "latency_ms": {"$ref": "#/$defs/latency"},
+        "timestamp": {"$ref": "#/$defs/timestamp"},
+        "screen_lock_status": {"$ref": "#/$defs/screenLockStatus"}
+      }
+    },
+    "tailscale": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tailnet_address", "peer_connected", "path", "ssh_authenticated", "latency_ms", "timestamp", "screen_lock_status"],
+      "properties": {
+        "tailnet_address": {"$ref": "#/$defs/optionalAddress"},
+        "peer_connected": {"$ref": "#/$defs/optionalBoolean"},
+        "path": {"type": "string", "enum": ["DIRECT", "RELAY", "UNKNOWN"]},
+        "ssh_authenticated": {"$ref": "#/$defs/optionalBoolean"},
+        "latency_ms": {"$ref": "#/$defs/latency"},
+        "timestamp": {"$ref": "#/$defs/timestamp"},
+        "screen_lock_status": {"$ref": "#/$defs/screenLockStatus"}
+      }
+    }
+  }
+}
