@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ios-caffeinate.invalid/schemas/device-acceptance-v1.schema.json",
+  "title": "iOS-Caffeinate device acceptance evidence session",
+  "description": "Versioned operator/device evidence. Integrity checks do not authenticate physical provenance; hardware gates require a separate human review.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "session_id", "source_commit_sha", "build_run", "device",
+    "evidence_origin", "physical_presence_confirmed", "started_at", "ended_at",
+    "clock", "trial", "observations", "cleanup", "unresolved_conditions",
+    "evidence_files", "review_status"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "session_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "source_commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "build_run": {"$ref": "#/$defs/buildRun"},
+    "device": {"$ref": "#/$defs/device"},
+    "evidence_origin": {"$ref": "#/$defs/sourceClass"},
+    "physical_presence_confirmed": {"type": "boolean"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "ended_at": {"type": "string", "format": "date-time"},
+    "clock": {"$ref": "#/$defs/clock"},
+    "trial": {"$ref": "#/$defs/trial"},
+    "observations": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/observation"}},
+    "connectivity_evidence": {"$ref": "https://ios-caffeinate.invalid/schemas/connectivity-evidence-v1.schema.json"},
+    "cleanup": {"$ref": "#/$defs/cleanup"},
+    "unresolved_conditions": {"type": "array", "maxItems": 1000, "items": {"type": "string", "maxLength": 500}},
+    "evidence_files": {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/evidenceFile"}},
+    "review_status": {"type": "string", "enum": ["PENDING", "REVIEW_REQUIRED", "REVIEWED", "REJECTED"]}
+  },
+  "$defs": {
+    "sourceClass": {"type": "string", "enum": ["SIMULATED", "MOCK", "CI", "DEVICE_REPORTED", "EXTERNAL_OBSERVER", "OPERATOR_RECORDED"]},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "buildRun": {
+      "type": "object", "additionalProperties": false,
+      "required": ["build_id", "package_identifier", "package_version", "package_sha256", "binary_sha256"],
+      "properties": {
+        "build_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "package_identifier": {"type": "string", "minLength": 1, "maxLength": 256},
+        "package_version": {"type": "string", "minLength": 1, "maxLength": 128},
+        "package_sha256": {"$ref": "#/$defs/sha256"},
+        "binary_sha256": {"type": "object", "minProperties": 1, "maxProperties": 32, "additionalProperties": {"$ref": "#/$defs/sha256"}}
+      }
+    },
+    "device": {
+      "type": "object", "additionalProperties": false,
+      "required": ["model", "ios_version", "jailbreak_bootstrap"],
+      "properties": {
+        "model": {"type": ["string", "null"], "maxLength": 128},
+        "ios_version": {"type": ["string", "null"], "maxLength": 64},
+        "jailbreak_bootstrap": {"type": ["string", "null"], "maxLength": 256}
+      }
+    },
+    "clock": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "uncertainty_ms"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1, "maxLength": 256},
+        "uncertainty_ms": {"type": "integer", "minimum": 0, "maximum": 86400000}
+      }
+    },
+    "trial": {
+      "type": "object", "additionalProperties": false,
+      "required": ["trial_id", "authorized_duration_seconds", "attended"],
+      "properties": {
+        "trial_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "authorized_duration_seconds": {"type": "integer", "minimum": 1, "maximum": 300},
+        "attended": {"type": "boolean"}
+      }
+    },
+    "observation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["event_id", "sequence", "event_type", "timestamp", "source", "timebase_id", "uncertainty_ms", "details"],
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "sequence": {"type": "integer", "minimum": 0},
+        "event_type": {"type": "string", "enum": [
+          "DEVICE_PREFLIGHT", "PACKAGE_INTEGRITY_CHECK", "SIGNATURE_ACCEPTANCE", "PACKAGE_INSTALL", "PACKAGE_REMOVAL", "ROLLBACK",
+          "DAEMON_LAUNCH", "ASSERTION_ACQUIRE_ATTEMPT", "ASSERTION_ACQUIRE_SUCCESS", "ASSERTION_ACQUIRE_FAILURE", "HOLD_ACTIVE",
+          "SCREEN_LOCK", "SCREEN_UNLOCK", "LAN_OBSERVATION", "TAILSCALE_OBSERVATION", "EXPLICIT_STOP", "NATURAL_EXPIRY",
+          "ASSERTION_RELEASE", "SIGTERM", "DAEMON_EXIT", "PHYSICAL_RECOVERY", "BATTERY_OBSERVATION", "THERMAL_OBSERVATION",
+          "SCHEDULED_WAKE_OBSERVATION"
+        ]},
+        "timestamp": {"type": "string", "format": "date-time"},
+        "source": {"$ref": "#/$defs/sourceClass"},
+        "timebase_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "uncertainty_ms": {"type": "integer", "minimum": 0, "maximum": 86400000},
+        "details": {"type": "object", "maxProperties": 64}
+      }
+    },
+    "cleanup": {
+      "type": "object", "additionalProperties": false,
+      "required": ["outcome"],
+      "properties": {"outcome": {"type": "string", "enum": ["COMPLETE", "INCOMPLETE", "UNRESOLVED", "UNKNOWN", "NOT_APPLICABLE"]}}
+    },
+    "evidenceFile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["file_id", "path", "size_bytes", "sha256", "media_type"],
+      "properties": {
+        "file_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "path": {"type": "string", "minLength": 1, "maxLength": 512},
+        "size_bytes": {"type": "integer", "minimum": 0},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "media_type": {"type": "string", "enum": ["application/json", "text/plain", "text/csv", "image/jpeg", "image/png", "application/octet-stream"]}
+      }
+    }
+  }
+}

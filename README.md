@@ -1,6 +1,6 @@
 # iOS-Caffeinate
 
-Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides the daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds a read-only scheduled-wake capability report. P006 adds read-only server diagnostics, explicit bounded trials, health observations, readiness gates, and an external connectivity evidence schema. P007 adds rootful Debian packaging and safety checks. P008 integrates and audits P001–P007 and prepares a v0.1 cloud candidate. Real-device execution, signature acceptance, assertion lifecycle, package installation, and networking remain **PENDING** because the iPad is unavailable. Version 0.1 has not shipped.
+Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides the daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds a read-only scheduled-wake capability report. P006 adds read-only server diagnostics, explicit bounded trials, health observations, readiness gates, and an external connectivity evidence schema. P007 adds rootful Debian packaging and safety checks. P008 integrates and audits P001–P007 and prepares a v0.1 cloud candidate. P009 adds offline evidence validation and replay for future supervised hardware tests. Real-device execution, signature acceptance, assertion lifecycle, package installation, and networking remain **PENDING** because the iPad is unavailable. Version 0.1 has not shipped and is not production-ready.
 
 Executables: **ios-caffeinate** (CLI), **ios-caffeinated** (daemon). **ic** is a filesystem symlink to the CLI, never a second executable or shell alias. The socket remains `/var/run/ioscaffeinated.sock`.
 
@@ -91,8 +91,20 @@ P008 audits the integrated source and package, requires the Linux protocol, offi
 
 Passing cloud jobs establish a reviewable engineering candidate only. They do not authorize a production release, device installation, automatic daemon activation, an indefinite hold, or a public release. Scheduled wake remains unverified.
 
+## P009 device acceptance harness
+
+P009 supplies a versioned evidence schema, deterministic manifest builder, offline validator, timeline replay, and gate report. It is fully separate from the production daemon and never contacts the device. Use explicit paths:
+
+```sh
+python3 scripts/p009_evidence.py validate /path/to/evidence
+python3 scripts/p009_evidence.py replay /path/to/evidence --json
+python3 scripts/p009_evidence.py report /path/to/evidence --format json
+```
+
+Mock, simulated, and CI evidence cannot pass hardware gates. Complete physical-origin evidence still requires individual human review. The current project status remains `hardware_acceptance=PENDING`, `unattended_24_7=NOT_VALIDATED`, and `scheduled_wake=UNVERIFIED`; see [P009 readiness](docs/P009-READINESS.md), the [runbook](docs/P009-DEVICE-RUNBOOK.md), and [validation](docs/P009-VALIDATION.md).
+
 ## Scope and evidence
 
 Timed holds and scheduled awake windows are bounded to 24 hours. P004 schedule evaluation requires the daemon to be running; it does not wake a suspended system. There is no indefinite mode, GUI, tweak injection, Apple daemon change, scheduled-wake command, or automatic installation. P005 makes no 24/7 unattended reliability claim. P006 provides engineering and diagnostics only; all hardware gates remain pending. P007 cloud packaging engineering is implemented, but device validation remains pending. Package success does not authorize unattended operation.
 
-See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P008 integration and evidence](docs/P008-INTEGRATION.md), [P007 package contract](docs/P007-PACKAGING.md), [P007 validation](docs/P007-VALIDATION.md), [P007 deferred device procedure](docs/P007-DEVICE-TEST.md), [P007 rollback](docs/P007-ROLLBACK.md), [P006 server-mode design](docs/P006-SERVER-MODE.md), [P006 validation](docs/P006-VALIDATION.md), [deferred P006 device tests](docs/P006-DEVICE-TEST.md), [P005 feasibility report](docs/P005-WAKE-FEASIBILITY.md), [P005 validation](docs/P005-VALIDATION.md), [deferred P005 device tests](docs/P005-DEVICE-TEST.md), [P004 schedule details](docs/P004-SCHEDULING.md), and earlier [device recovery instructions](docs/P003-DEVICE-TEST.md).
+See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P008 integration and evidence](docs/P008-INTEGRATION.md), [P009 evidence format](docs/P009-EVIDENCE-FORMAT.md), [P009 security](docs/P009-SECURITY.md), [P009 validation](docs/P009-VALIDATION.md), [P009 device runbook](docs/P009-DEVICE-RUNBOOK.md), [P007 package contract](docs/P007-PACKAGING.md), [P007 validation](docs/P007-VALIDATION.md), [P007 deferred device procedure](docs/P007-DEVICE-TEST.md), [P007 rollback](docs/P007-ROLLBACK.md), [P006 server-mode design](docs/P006-SERVER-MODE.md), [P006 validation](docs/P006-VALIDATION.md), [deferred P006 device tests](docs/P006-DEVICE-TEST.md), [P005 feasibility report](docs/P005-WAKE-FEASIBILITY.md), [P005 validation](docs/P005-VALIDATION.md), [deferred P005 device tests](docs/P005-DEVICE-TEST.md), [P004 schedule details](docs/P004-SCHEDULING.md), and earlier [device recovery instructions](docs/P003-DEVICE-TEST.md).
