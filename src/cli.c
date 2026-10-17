@@ -4,6 +4,7 @@
 #endif
 #define _POSIX_C_SOURCE 200809L
 #include "schedule.h"
+#include "wake_capability.h"
 #include <errno.h>
 #include <poll.h>
 #include <signal.h>
@@ -33,6 +34,7 @@ static void usage(void) {
          "  ios-caffeinate [--socket /absolute/path.sock] schedule add --weekly <days> --at <HH:MM> --for <duration> [--tz <TZ>]\n"
          "  ios-caffeinate [--socket /absolute/path.sock] schedule list\n"
          "  ios-caffeinate [--socket /absolute/path.sock] schedule remove <schedule-id>\n"
+         "  ios-caffeinate wake status\n"
          "\n"
          "Duration: seconds (s), minutes (m), or hours (h), maximum 24h.\n"
          "Alias: ic (filesystem symlink to ios-caffeinate).\n"
@@ -76,6 +78,18 @@ int main(int argc, char **argv) {
     }
     if (i == argc || strcmp(argv[i], "help") == 0 || strcmp(argv[i], "--help") == 0) {
         usage(); return i + 1 == argc ? 0 : 2;
+    }
+
+    if (strcmp(argv[i], "wake") == 0) {
+        if (i + 2 != argc || strcmp(argv[i + 1], "status") != 0) {
+            usage();
+            return 2;
+        }
+        if (wake_capability_write(stdout) != 0) {
+            perror("write wake capability status");
+            return 1;
+        }
+        return 0;
     }
 
     char command[512] = {0};
