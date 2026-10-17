@@ -1,0 +1,33 @@
+{
+  "fixture_set": "P009 offline synthetic only",
+  "cases": [
+    "valid_simulated_bounded_trial",
+    "missing_assertion_release",
+    "explicit_stop",
+    "natural_expiry",
+    "release_failure",
+    "recovered_release_failure",
+    "invalid_signature_evidence",
+    "missing_signature_evidence",
+    "locked_screen_lan_success",
+    "locked_screen_lan_failure",
+    "tailscale_failure_despite_lan_success",
+    "tailscale_relay_path",
+    "missing_operator_confirmation",
+    "missing_battery_observation",
+    "missing_thermal_observation",
+    "device_clock_discrepancy",
+    "overlong_trial",
+    "network_after_unlock",
+    "invalid_event_ordering",
+    "invalid_hashes",
+    "corrupted_json",
+    "path_traversal",
+    "oversized_evidence",
+    "missing_recovery",
+    "sigterm_cleanup",
+    "restart_during_trial",
+    "unavailable_daemon",
+    "incomplete_rollback"
+  ]
+}

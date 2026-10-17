@@ -24,3 +24,5 @@ Every future test requires direct physical recovery access, an independent secon
 - [P007 package inspection procedure](P007-DEVICE-TEST.md) and [rollback prerequisites](P007-ROLLBACK.md)
 
 Scheduled wake remains **UNVERIFIED** and has no command or physical test that can be inferred from a successful assertion trial. A successful short test does not authorize indefinite operation or a 24/7 hold.
+
+For the P009 evidence package, offline replay, integrity checks, and per-gate human review, see the [P009 acceptance harness](P009-ACCEPTANCE-HARNESS.md) and [future device runbook](P009-DEVICE-RUNBOOK.md). These tools do not change the pending status above.

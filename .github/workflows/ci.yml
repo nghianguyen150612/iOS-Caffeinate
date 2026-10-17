@@ -120,6 +120,56 @@ jobs:
             dist/package/validation.txt
             dist/package/packaging-tests.txt
 
+  p009-evidence-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Run P009 schema, fixture, replay, safety, and file-security tests
+        run: |
+          set -o pipefail
+          mkdir -p build/p009
+          python3 -m unittest discover -s tests -p 'test_p009_evidence.py' -v 2>&1 | tee build/p009/p009-tests.txt
+      - name: Validate fixture and produce deterministic offline reports
+        run: |
+          set -euo pipefail
+          mkdir -p build/p009
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "tests")
+          from p009_fixtures import build_fixture
+          build_fixture(Path("build/p009/simulated-session"), "valid_simulated_bounded_trial")
+          PY
+          python3 scripts/p009_evidence.py validate build/p009/simulated-session --json > build/p009/validation.json
+          python3 scripts/p009_evidence.py replay build/p009/simulated-session --json > build/p009/replay.json
+          python3 scripts/p009_evidence.py report build/p009/simulated-session --format json > build/p009/readiness.json
+          python3 scripts/p009_evidence.py report build/p009/simulated-session > build/p009/readiness.md
+          python3 scripts/p009_evidence.py report build/p009/simulated-session --format json > build/p009/readiness-repeat.json
+          cmp build/p009/readiness.json build/p009/readiness-repeat.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("build/p009/readiness.json").read_text())
+          assert report["decision"]["hardware_acceptance"] == "PENDING"
+          assert report["decision"]["unattended_24_7"] == "NOT_VALIDATED"
+          assert report["decision"]["scheduled_wake"] == "UNVERIFIED"
+          assert report["decision"]["unattended_operation_authorized"] is False
+          PY
+          git rev-parse HEAD > build/p009/source-commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P009-offline-evidence
+          if-no-files-found: error
+          path: |
+            build/p009/p009-tests.txt
+            build/p009/validation.json
+            build/p009/replay.json
+            build/p009/readiness.json
+            build/p009/readiness.md
+            build/p009/source-commit.txt
+
   p008-release-attestation:
     if: github.ref == 'refs/heads/release/p008-v01-integration' || (github.event_name == 'pull_request' && github.head_ref == 'release/p008-v01-integration')
     needs: [linux-protocol, ios-cross-build, ios-artifact-inspection, ios-rootful-package]

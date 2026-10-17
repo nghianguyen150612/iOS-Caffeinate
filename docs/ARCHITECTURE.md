@@ -98,3 +98,9 @@ CI packages the unsigned Mach-O files and labels the `.deb` **UNSIGNED / DEVICE-
 ## P008 Integration Evidence
 
 P008 uses `c8512508a80be5fc09d0c62b2e26877717af23df` as the P007 integration baseline. Its CI preserves the four source/build/package jobs and adds a dependent evidence job. That job emits the version 1 release-candidate manifest, exact-SHA CI attestation, checksums, and release-readiness matrix from the artifacts actually built and inspected in the same workflow run. The manifest records its exact source SHA, toolchain, workflow ID, and package checksum. It never marks hardware gates passed. Cloud CI cannot authorize release or device installation.
+
+## P009 Offline Device Acceptance
+
+The Python standard-library tool in `scripts/p009_evidence.py` is an offline companion, not part of the C CLI or daemon. It checks a versioned session against the acceptance and P006 connectivity schemas, verifies deterministic evidence-manifest hashes and safe package paths, reconstructs event order within declared timebases, and evaluates independent LAN/Tailscale and safety gates. It does not open network sockets, collect device state, install/sign packages, or activate launchd.
+
+Input source classes separate `SIMULATED`, `MOCK`, and `CI` records from `DEVICE_REPORTED`, `EXTERNAL_OBSERVER`, and `OPERATOR_RECORDED` observations. Complete physical-origin evidence is still `REVIEW_REQUIRED`; the session's own review-status field cannot pass a gate. An interactive per-gate human review can produce a reviewed report but no signature or proof of provenance. Hashes detect mismatches only. Hardware acceptance remains PENDING until a real supervised iPad session is collected and reviewed. Unattended operation is never authorized by the report, and scheduled wake remains independent of scheduled awake.
