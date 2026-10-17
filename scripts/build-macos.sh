@@ -18,3 +18,4 @@ file dist/ios-caffeinate dist/ios-caffeinated
 printf '%s\n' "Binaries are UNSIGNED; iOS 12 power behavior remains unverified."
 
 ln -sfn ios-caffeinate dist/ic
+(cd dist && shasum -a 256 ios-caffeinate ios-caffeinated > SHA256SUMS)
