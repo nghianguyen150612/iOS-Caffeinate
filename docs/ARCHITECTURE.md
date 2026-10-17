@@ -46,7 +46,7 @@ Key state invariants:
   - Default socket path requires root access (UID 0). Private socket paths for unprivileged tests enforce match against the daemon process EUID.
 - Protocol framing:
   - ASCII newline-terminated frames.
-  - Maximum 127 byte command frame.
+  - Maximum 510-byte command payload plus its newline terminator.
   - Non-blocking socket I/O with 1-second timeout per client read/write to prevent slow-client blocking.
 
 ## Structured Logging
@@ -83,6 +83,8 @@ These are separate capabilities:
 
 `wake status` is evaluated locally by the CLI and prints the compile-time target/backend identity. It does not resolve IOKit symbols, call an assertion API, acquire/release power, connect to the daemon, or load/modify schedule state. A Linux result identifies `MOCK_NO_POWER_EFFECT` and is never hardware evidence. The report's unavailable runtime probe is deliberate; target wake facilities have not been established by a read-only probe.
 
+Schedule state is loaded only from an absolute, bounded path and a private regular file owned by the daemon user with mode `0600`. The daemon pins each parent directory without following symlinks, rejects hard links and file replacement during load, and rejects malformed or unsafe schedule records instead of silently dropping them. Schedule writes use a private exclusive temporary file, flush and sync its contents, then rename it into place. Before a scheduled assertion is acquired, the occurrence marker must be written successfully; a failed write blocks that acquisition. If assertion acquisition then fails, the daemon restores the prior marker only when the rollback write succeeds.
+
 ## P007 Rootful Package and Lifecycle Boundary
 
 The Debian package architecture (`iphoneos-arm`) is the rootful package-manager convention; the actual executable architecture is thin ARM64 Mach-O targeting iOS 12.0. The two identifiers are validated separately. P007 follows Theos' rootful packaging convention and does not support rootless `iphoneos-arm64`.
@@ -92,3 +94,13 @@ The package installs the CLI and daemon in `/usr/local/bin`, `ic` as a relative 
 Package scripts reject unowned file collisions before extraction and refuse upgrade/removal while the default daemon socket path exists. They never launch or terminate a process, alter launchd, erase persistent data, or download tools. There are no post-install or post-remove scripts. Ordinary removal leaves non-empty state/log directories and their contents intact. The manager's status, verify, doctor, rollback-check, and uninstall-check commands are read-only.
 
 CI packages the unsigned Mach-O files and labels the `.deb` **UNSIGNED / DEVICE-UNVERIFIED**. A caller may explicitly provide a trusted local `ldid` path for an ad-hoc `ldid -S` stage without entitlements; the package tool checks only for signature presence. Signature verification, jailbreak acceptance, package installation, iOS execution, IOKit assertion behavior, network survival, and continuous operation are separate gates and remain hardware-unverified. See [P007 packaging](P007-PACKAGING.md), [validation](P007-VALIDATION.md), [device procedure](P007-DEVICE-TEST.md), and [rollback](P007-ROLLBACK.md).
+
+## P008 Integration Evidence
+
+P008 uses `c8512508a80be5fc09d0c62b2e26877717af23df` as the P007 integration baseline. Its CI preserves the four source/build/package jobs and adds a dependent evidence job. That job emits the version 1 release-candidate manifest, exact-SHA CI attestation, checksums, and release-readiness matrix from the artifacts actually built and inspected in the same workflow run. The manifest records its exact source SHA, toolchain, workflow ID, and package checksum. It never marks hardware gates passed. Cloud CI cannot authorize release or device installation.
+
+## P009 Offline Device Acceptance
+
+The Python standard-library tool in `scripts/p009_evidence.py` is an offline companion, not part of the C CLI or daemon. It checks a versioned session against the acceptance and P006 connectivity schemas, verifies deterministic evidence-manifest hashes and safe package paths, reconstructs event order within declared timebases, and evaluates independent LAN/Tailscale and safety gates. It does not open network sockets, collect device state, install/sign packages, or activate launchd.
+
+Input source classes separate `SIMULATED`, `MOCK`, and `CI` records from `DEVICE_REPORTED`, `EXTERNAL_OBSERVER`, and `OPERATOR_RECORDED` observations. Complete physical-origin evidence is still `REVIEW_REQUIRED`; the session's own review-status field cannot pass a gate. An interactive per-gate human review can produce a reviewed report but no signature or proof of provenance. Hashes detect mismatches only. Hardware acceptance remains PENDING until a real supervised iPad session is collected and reviewed. Unattended operation is never authorized by the report, and scheduled wake remains independent of scheduled awake.

@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "session_id": "replace-with-a-unique-session-id",
+  "source_commit_sha": "0000000000000000000000000000000000000000",
+  "build_run": {
+    "build_id": "replace-with-build-or-workflow-id",
+    "package_identifier": "com.ioscaffeinate.cli",
+    "package_version": "replace-with-package-version",
+    "package_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "binary_sha256": {
+      "ios-caffeinate": "0000000000000000000000000000000000000000000000000000000000000000",
+      "ios-caffeinated": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "device": {
+    "model": null,
+    "ios_version": null,
+    "jailbreak_bootstrap": null
+  },
+  "evidence_origin": "OPERATOR_RECORDED",
+  "physical_presence_confirmed": false,
+  "started_at": "2026-01-01T00:00:00Z",
+  "ended_at": "2026-01-01T00:00:00Z",
+  "clock": {
+    "source": "replace-with-clock-source",
+    "uncertainty_ms": 1000
+  },
+  "trial": {
+    "trial_id": "replace-with-trial-id",
+    "authorized_duration_seconds": 30,
+    "attended": true
+  },
+  "observations": [],
+  "cleanup": {
+    "outcome": "UNKNOWN"
+  },
+  "unresolved_conditions": [],
+  "evidence_files": [],
+  "review_status": "PENDING"
+}

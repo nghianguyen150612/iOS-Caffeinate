@@ -31,11 +31,13 @@ P004 introduces timed keep-awake scheduling and persistent state management to i
    - Calendar matching uses wall clock time (`time(NULL)`).
    - Live assertion expiration uses monotonic deadlines (`CLOCK_MONOTONIC`).
 
-## Linux Mock Test Evidence
+## P004 Snapshot Evidence
+
+The 24-test count below is the historical P004 snapshot from the time this milestone was implemented. It is not the current integration-suite size; P008 records the full integrated regression count and exact-source CI evidence.
 
 ```text
 Ran 24 tests in 11.350s
 
 OK
 ```
-All 24 unit/integration tests passed.
+All 24 unit/integration tests passed in that historical P004 snapshot. See [P008 validation](P008-VALIDATION.md) for the current integrated regression results.

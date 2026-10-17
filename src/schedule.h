@@ -67,7 +67,8 @@ void schedule_store_evaluate(schedule_store_t *store,
                              time_t *next_start);
 
 /* Mark schedule occurrence as fired */
-void schedule_mark_fired(schedule_store_t *store, int index, time_t occurrence_start);
+int schedule_mark_fired(schedule_store_t *store, int index, time_t occurrence_start,
+                        char *err_buf, size_t err_cap);
 
 /* Helper to parse weekday string e.g. "mon,wed,fri" to bitmask */
 int parse_weekly_days(const char *str, uint8_t *mask_out);
