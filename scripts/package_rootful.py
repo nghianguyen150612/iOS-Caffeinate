@@ -277,7 +277,7 @@ def main() -> int:
         env = os.environ.copy()
         env["SOURCE_DATE_EPOCH"] = str(epoch)
         subprocess.run(
-            ["dpkg-deb", "--build", "--root-owner-group", "--compression=xz", "--uniform-compression", str(stage), str(output)],
+            ["dpkg-deb", "--build", "--root-owner-group", "-Zxz", "-z9", "--uniform-compression", str(stage), str(output)],
             check=True, env=env,
         )
 
