@@ -93,6 +93,57 @@ class Integration(unittest.TestCase):
         self.call("start", "--for", "5m", exe=alias)
         self.call("stop", exe=alias)
 
+    def test_wake_status_is_read_only_and_unverified(self):
+        state = ("{\n"
+                 "  \"version\": 1,\n"
+                 "  \"next_id_counter\": 2,\n"
+                 "  \"schedules\": [\n"
+                 "    {\"id\": \"future\", \"type\": 1, \"target_time\": 4102444800, "
+                 "\"hour\": 0, \"minute\": 0, \"days_mask\": 0, \"duration\": 60, "
+                 "\"tz\": \"UTC\", \"enabled\": true, \"last_fired_time\": 0}\n"
+                 "  ]\n"
+                 "}\n")
+        Path(self.sched_path).write_text(state)
+
+        # The report is local: it succeeds before a daemon or socket exists.
+        report = self.call("wake", "status")
+        self.assertFalse(os.path.exists(self.path))
+        fields = dict(line.split("=", 1) for line in report.stdout.splitlines())
+        self.assertEqual(list(fields), [
+            "platform", "backend", "platform_identity", "timed_awake",
+            "timed_awake_backend", "scheduled_awake", "scheduled_awake_backend",
+            "scheduled_wake", "scheduled_wake_validated", "hardware_validation",
+            "runtime_wake_probe", "read_only_evidence", "wake_guarantee", "limitations",
+        ])
+        self.assertEqual(fields["platform"], "linux")
+        self.assertEqual(fields["backend"], "MOCK_NO_POWER_EFFECT")
+        self.assertEqual(fields["platform_identity"], "compile_time_target")
+        self.assertEqual(fields["timed_awake"], "implemented")
+        self.assertEqual(fields["timed_awake_backend"], "unverified")
+        self.assertEqual(fields["scheduled_awake"], "implemented")
+        self.assertEqual(fields["scheduled_awake_backend"], "unverified")
+        self.assertEqual(fields["scheduled_wake"], "unverified")
+        self.assertEqual(fields["scheduled_wake_validated"], "no")
+        self.assertEqual(fields["hardware_validation"], "pending")
+        self.assertEqual(fields["runtime_wake_probe"], "unavailable")
+        self.assertEqual(fields["read_only_evidence"], "none")
+        self.assertEqual(fields["wake_guarantee"], "no")
+        self.assertIn("assertion_is_not_wake_alarm", fields["limitations"])
+        self.assertEqual(Path(self.sched_path).read_text(), state)
+
+        # Querying with a live, idle daemon still causes no assertion and does
+        # not rewrite its persisted P004 schedule state.
+        self.start(IOSCAFFEINATE_MOCK_FAIL_ACQUIRE="1")
+        self.assertIn("active=no", self.call("status").stdout)
+        self.call("wake", "status")
+        self.assertIn("active=no", self.call("status").stdout)
+        self.assertEqual(Path(self.sched_path).read_text(), state)
+
+    def test_wake_status_argument_errors(self):
+        self.call("wake", code=2)
+        self.call("wake", "set", "2026-10-18T12:00:00Z", code=2)
+        self.call("wake", "status", "extra", code=2)
+
     def test_duration_validation_and_exit_codes(self):
         self.start()
         for value in ("", "0", "0s", "0h", "86401", "1441m", "25h", "-1m", "+1s",

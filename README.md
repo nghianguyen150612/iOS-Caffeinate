@@ -1,22 +1,29 @@
 # iOS-Caffeinate
 
-Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 implements a robust daemon lifecycle, state machine, Unix IPC security with peer credential verification, efficient poll event loops, and bounded release retries. Real-device power and networking behavior remain **PENDING** due to physical device unavailability.
+Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides the daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds a read-only scheduled-wake capability report. Real-device assertion, schedule, sleep, and networking behavior remain **PENDING** because the iPad is unavailable.
 
 Executables: **ios-caffeinate** (CLI), **ios-caffeinated** (daemon). **ic** is a filesystem symlink to the CLI, never a second executable or shell alias. The socket remains `/var/run/ioscaffeinated.sock`.
 
 ## Manual use
 
-Run as root on the target only after following [the safe hardware procedure](docs/P003-DEVICE-TEST.md). Start `ios-caffeinated --foreground` in one shell, then in another:
+The following report is local and does not require the daemon or alter power state:
+
+```sh
+ic wake status
+```
+
+It reports `scheduled_wake=unverified` and `wake_guarantee=no`. It never sets an alarm. Run P004 power commands on the target only after following [the P004 hardware procedure](docs/P004-DEVICE-TEST.md):
 
 ```sh
 ios-caffeinate probe
 ios-caffeinate status
 ios-caffeinate start --for 5m
+ios-caffeinate schedule list
 ios-caffeinate status
 ios-caffeinate stop
 ```
 
-With the symlink in PATH, `ic probe`, `ic status`, `ic start --for 5m`, and `ic stop` run the same CLI. First trials must be bounded to five minutes or less, with physical recovery available. A successful assertion call does not prove Wi-Fi, LAN SSH, or Tailscale survives display lock.
+With the symlink in PATH, `ic probe`, `ic status`, `ic start --for 5m`, schedule commands, and `ic stop` run the same CLI. First hardware trials must be bounded to five minutes or less, with physical recovery available. A successful assertion call does not prove Wi-Fi, LAN SSH, Tailscale, or scheduled wake.
 
 ## Build and tests
 
@@ -52,10 +59,10 @@ Outputs: `dist/ios-caffeinate`, `dist/ios-caffeinated`, and relative symlink `di
 
 A `0600` socket sidecar lock (`/var/run/ioscaffeinated.sock.lock`) serializes manual daemon instances. It is left in place to avoid lock inode races. The default endpoint requires root and verifies peer credentials (`getpeereid` / `SO_PEERCRED`); mock tests use private temporary directories without root.
 
-The launchd template remains disabled (`Disabled=true`) and must not be installed, loaded, bootstrapped, or enabled during P003. Manager, installer state, log directories and final `.deb` packaging are future components, not created by P003.
+The project launchd template remains disabled (`Disabled=true`); P005 does not install or activate a persistent service. Manager, installer state, log directories, and final `.deb` packaging are future components.
 
 ## Scope and evidence
 
-Commands support bounded holds from 1 second through 24 hours. No indefinite mode, GUI, tweak injection, Apple daemon changes, schedules, `--until`, or automatic installation. P004 is **NOT AUTHORIZED**; `.deb` packaging belongs to P007.
+Timed holds and scheduled awake windows are bounded to 24 hours. P004 schedule evaluation requires the daemon to be running; it does not wake a suspended system. There is no indefinite mode, GUI, tweak injection, Apple daemon change, scheduled-wake command, or automatic installation. P005 makes no 24/7 unattended reliability claim. P006 is not authorized; its next step is a readiness assessment only. `.deb` packaging remains future work.
 
-See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P002 validation](docs/P002-VALIDATION.md), [P003 cloud validation](docs/P003-VALIDATION.md), and [device test/rollback instructions](docs/P003-DEVICE-TEST.md).
+See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P005 feasibility report](docs/P005-WAKE-FEASIBILITY.md), [P005 validation](docs/P005-VALIDATION.md), [deferred P005 device tests](docs/P005-DEVICE-TEST.md), [P004 schedule details](docs/P004-SCHEDULING.md), and earlier [device recovery instructions](docs/P003-DEVICE-TEST.md).

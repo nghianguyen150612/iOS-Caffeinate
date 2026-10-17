@@ -18,7 +18,7 @@ Physical hardware tests for timed awake schedules and restart recovery remain **
 3. **Daemon Restart Recovery**:
    - Kill `ios-caffeinated` during active scheduled window, restart daemon, and verify it recovers remaining assertion duration.
 4. **Scheduled Deep-Sleep Wake**:
-   - **NOT CLAIMED / NOT IMPLEMENTED IN P004**. Scheduled wake from system deep sleep requires RTC hardware timer setup, which is out of scope for P004 and deferred to P005-P007.
+   - **NOT CLAIMED / NOT IMPLEMENTED IN P004**. Whether a usable platform or hardware wake mechanism exists on the iOS 12 target is unknown; P005 records the source-level feasibility findings and leaves device validation pending.
 
 ## Recovery & Safety Instructions
 
