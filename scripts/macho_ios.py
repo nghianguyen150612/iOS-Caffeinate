@@ -146,7 +146,7 @@ def validate_ios12_arm64(
 
 
 def validate_signed_source_identity(source: str | Path, signed: str | Path) -> None:
-    """Prove the signer changed only the Mach-O signature command and blob."""
+    """Prove the signer changed only reserved signature metadata and the blob."""
     source_bytes = Path(source).read_bytes()
     signed_bytes = bytearray(Path(signed).read_bytes())
     info = inspect_macho(signed)
@@ -158,12 +158,28 @@ def validate_signed_source_identity(source: str | Path, signed: str | Path) -> N
     command_offset = info.code_signature_command_offset
     if ncmds < 1 or sizeofcmds < 16 or command_offset != header_size + sizeofcmds - 16:
         raise ValueError("code-signature command is not the final 16-byte load command")
+    source_ncmds = struct.unpack_from("<I", source_bytes, 16)[0]
+    source_sizeofcmds = struct.unpack_from("<I", source_bytes, 20)[0]
+    if ncmds != source_ncmds + 1 or sizeofcmds != source_sizeofcmds + 16:
+        raise ValueError("signer changed more than one Mach-O load command")
+    if command_offset != header_size + source_sizeofcmds:
+        raise ValueError("code-signature command was not appended after the exact source load commands")
+    if command_offset + 16 > len(source_bytes) or any(source_bytes[command_offset:command_offset + 16]):
+        raise ValueError("source Mach-O has no zero-filled reserved space for LC_CODE_SIGNATURE")
     if info.code_signature_data_offset is None or info.code_signature_data_size is None or info.code_signature_data_size == 0:
         raise ValueError("signed output has no inspectable signature blob")
     data_offset = info.code_signature_data_offset
     data_size = info.code_signature_data_size
     if data_offset < command_offset + 16:
         raise ValueError("code-signature blob overlaps Mach-O load commands")
+    data_end = data_offset + data_size
+    if data_end > len(signed_bytes):
+        raise ValueError("code-signature blob is truncated")
+    if len(signed_bytes) < len(source_bytes):
+        raise ValueError("signer truncated the unsigned source executable")
+    overlap_end = min(data_end, len(source_bytes))
+    if data_offset < overlap_end and any(source_bytes[data_offset:overlap_end]):
+        raise ValueError("code-signature blob overwrites non-zero unsigned source bytes")
 
     def linkedit_segments(data: bytes | bytearray) -> list[tuple[int, int, int, int]]:
         count, command_bytes = struct.unpack_from("<II", data, 16)
@@ -185,15 +201,9 @@ def validate_signed_source_identity(source: str | Path, signed: str | Path) -> N
 
     original_linkedit = linkedit_segments(source_bytes)
     signed_linkedit = linkedit_segments(signed_bytes)
-    if len(original_linkedit) != len(signed_linkedit):
-        raise ValueError("signer changed the __LINKEDIT segment count")
-    adjusted_signature_offset = data_offset - 16
-    if adjusted_signature_offset < len(source_bytes):
-        raise ValueError("code-signature blob overlaps unsigned source bytes")
-    if any(signed_bytes[len(source_bytes):adjusted_signature_offset]):
-        raise ValueError("unexpected non-zero data precedes the code-signature blob")
-    if adjusted_signature_offset + data_size > len(signed_bytes):
-        raise ValueError("code-signature blob is truncated after removing its load command")
+    if len(original_linkedit) != 1 or len(signed_linkedit) != 1:
+        raise ValueError("source and signed Mach-O must each contain one __LINKEDIT segment")
+    allowed_ranges = [(16, 24), (command_offset, command_offset + 16), (data_offset, data_end)]
     for original, changed in zip(original_linkedit, signed_linkedit):
         original_offset, original_vmsize, original_fileoff, original_filesize = original
         changed_offset, changed_vmsize, changed_fileoff, changed_filesize = changed
@@ -203,11 +213,25 @@ def validate_signed_source_identity(source: str | Path, signed: str | Path) -> N
             raise ValueError("signed __LINKEDIT segment has invalid bounds")
         if changed_fileoff + changed_filesize < data_offset + data_size:
             raise ValueError("signed __LINKEDIT segment does not contain its code-signature blob")
-        struct.pack_into("<Q", signed_bytes, changed_offset + 32, original_vmsize)
-        struct.pack_into("<Q", signed_bytes, changed_offset + 48, original_filesize)
-    del signed_bytes[command_offset:command_offset + 16]
-    del signed_bytes[len(source_bytes):adjusted_signature_offset + data_size]
-    struct.pack_into("<I", signed_bytes, 16, ncmds - 1)
-    struct.pack_into("<I", signed_bytes, 20, sizeofcmds - 16)
-    if bytes(signed_bytes) != source_bytes:
+        allowed_ranges.extend(((changed_offset + 32, changed_offset + 40), (changed_offset + 48, changed_offset + 56)))
+
+    allowed_ranges.sort()
+    cursor = 0
+    for start, end in allowed_ranges:
+        start = min(start, len(source_bytes))
+        end = min(end, len(source_bytes))
+        if end <= cursor:
+            continue
+        if start > cursor and signed_bytes[cursor:start] != source_bytes[cursor:start]:
+            raise ValueError("signed executable is not a signature-only transformation of the exact source artifact")
+        cursor = max(cursor, end)
+    if cursor < len(source_bytes) and signed_bytes[cursor:len(source_bytes)] != source_bytes[cursor:]:
         raise ValueError("signed executable is not a signature-only transformation of the exact source artifact")
+
+    # ldid appends the blob after __LINKEDIT. Permit only zero alignment bytes
+    # between the source and blob, and zero padding after the blob.
+    for offset in range(len(source_bytes), len(signed_bytes)):
+        if data_offset <= offset < data_end:
+            continue
+        if signed_bytes[offset] != 0:
+            raise ValueError("unexpected non-zero bytes outside the code-signature blob")

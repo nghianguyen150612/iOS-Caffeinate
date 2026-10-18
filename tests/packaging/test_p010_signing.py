@@ -58,29 +58,27 @@ if args[0].startswith("-S"):
         print("wrong entitlement argument", file=sys.stderr)
         sys.exit(8)
     path = pathlib.Path(args[1])
-    data = path.read_bytes()
+    data = bytearray(path.read_bytes())
     if os.environ.get("P010_TEST_MUTATE_SOURCE") == "1":
-        altered = bytearray(data)
-        altered[-1] ^= 1
-        data = bytes(altered)
+        data[-1] ^= 1
     ncmds = struct.unpack_from("<I", data, 16)[0]
     sizeofcmds = struct.unpack_from("<I", data, 20)[0]
     end = 32 + sizeofcmds
-    linkedit_size = len(data) + 16 + len(PROFILE)
+    linkedit_size = len(data) + len(PROFILE)
     offset = 32
     for _ in range(ncmds):
         command, size = struct.unpack_from("<II", data, offset)
         if command == 0x19 and data[offset + 8:offset + 24].split(b"\x00", 1)[0] == b"__LINKEDIT":
-            altered = bytearray(data)
-            struct.pack_into("<Q", altered, offset + 32, linkedit_size)
-            struct.pack_into("<Q", altered, offset + 48, linkedit_size)
-            data = bytes(altered)
+            struct.pack_into("<Q", data, offset + 32, linkedit_size)
+            struct.pack_into("<Q", data, offset + 48, linkedit_size)
         offset += size
-    signature = struct.pack("<IIII", 0x1d, 16, len(data) + 16, len(PROFILE))
-    header = bytearray(data[:32])
-    struct.pack_into("<I", header, 16, ncmds + 1)
-    struct.pack_into("<I", header, 20, sizeofcmds + 16)
-    path.write_bytes(bytes(header) + data[32:end] + signature + data[end:] + PROFILE)
+    if end + 16 > len(data) or any(data[end:end + 16]):
+        print("no zero-filled load-command padding", file=sys.stderr)
+        sys.exit(7)
+    struct.pack_into("<IIII", data, end, 0x1d, 16, len(data), len(PROFILE))
+    struct.pack_into("<I", data, 16, ncmds + 1)
+    struct.pack_into("<I", data, 20, sizeofcmds + 16)
+    path.write_bytes(data + PROFILE)
     sys.exit(0)
 sys.exit(4)
 '''
