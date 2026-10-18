@@ -1,4 +1,6 @@
-# P008 — Validation Evidence
+# P008 — Validation Evidence Snapshot
+
+This report describes the P008 source and artifact gates. Its statement that no device test had run was accurate at P008 and is superseded by the operator-reported observations in [P010 hardware findings](P010-HARDWARE-FINDINGS.md). Those later results do not change P008's historical CI artifact or establish package acceptance.
 
 P008 keeps Linux mock evidence separate from iOS build evidence and physical-device acceptance. The authoritative exact-SHA results are attached to the successful GitHub Actions run as `iOS-Caffeinate-P008-v0.1-cloud-attestation`; the artifact contains `release-candidate.json`, `P008-CI-ATTESTATION.md`, and a generated readiness matrix. The manifest records the source SHA and artifact hashes collected by that run.
 
@@ -39,4 +41,4 @@ The release candidate is labeled **UNSIGNED / DEVICE-UNVERIFIED**. CI verifies t
 
 ## Physical-device result
 
-Hardware validation is **PENDING**. No iPad test was run. Follow [the consolidated P008 device acceptance plan](P008-DEVICE-ACCEPTANCE.md) only when the target and physical recovery access are available.
+At P008, hardware validation was **PENDING** and no iPad test had run. P010 later records operator-reported execution and network observations, which remain subject to P009 review. Follow [P010 device acceptance](P010-DEVICE-ACCEPTANCE.md) for package installation and the no-assertion comparison.

@@ -48,6 +48,6 @@ Every acceptance trial is attended and capped at 300 seconds. The first device t
 
 ## Current project report
 
-The actual P009 project status is recorded in [P009-READINESS.md](P009-READINESS.md) and [P009-READINESS.json](P009-READINESS.json). The iPad remains unavailable; every real-device gate is pending.
+The P009 milestone snapshot is recorded in [P009-READINESS.md](P009-READINESS.md) and [P009-READINESS.json](P009-READINESS.json). Later operator-reported observations from October 18, 2026 are summarized in [P010 hardware findings](P010-HARDWARE-FINDINGS.md). They are not a P009 acceptance session: execution, IOKit lifecycle, cleanup, and locked-screen SSH remain `REVIEW_REQUIRED`, while package-related gates remain `INSUFFICIENT_EVIDENCE`.
 
 The deterministic synthetic fixtures used in tests live in the generator and case list under `tests/fixtures/p009/`. They are marked `SIMULATED` and are not bundled as a production acceptance session.

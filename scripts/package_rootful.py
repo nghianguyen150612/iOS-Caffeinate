@@ -5,16 +5,26 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
+import platform
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-from macho_ios import validate_ios12_arm64
+from macho_ios import validate_ios12_arm64, validate_signed_source_identity
+from signing_profile import (
+    PROFILE_ID,
+    PROFILE_RELATIVE_PATH,
+    SigningError,
+    load_approved_profile,
+    require_exact_embedded_entitlements,
+    signer_identity,
+    validate_signer,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +33,13 @@ VERSION_FILE = ROOT / "packaging/rootful/VERSION"
 PAYLOADS = {
     "ios-caffeinate": Path("usr/local/bin/ios-caffeinate"),
     "ios-caffeinated": Path("usr/local/bin/ios-caffeinated"),
+}
+EXPECTED_DEPENDENCIES = {
+    "ios-caffeinate": {"/usr/lib/libSystem.B.dylib"},
+    "ios-caffeinated": {
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+    },
 }
 LAUNCHD_SOURCE = ROOT / "packaging/com.ioscaffeinate.daemon.plist"
 MANAGER_SOURCE = ROOT / "packaging/rootful/manager"
@@ -66,19 +83,10 @@ def validate_source_manifest(input_dir: Path) -> dict[str, str]:
         if actual != records[name]:
             fail(f"source SHA-256 mismatch for {name}")
         try:
-            validate_ios12_arm64(path, allow_signature=False)
+            validate_ios12_arm64(path, allow_signature=False, expected_dependencies=EXPECTED_DEPENDENCIES[name])
         except ValueError as error:
             fail(f"{name}: {error}")
     return records
-
-
-def validate_signer(path: Path) -> Path:
-    if not path.is_absolute() or not path.is_file() or not os.access(path, os.X_OK):
-        fail("--sign-with-ldid must name an absolute, executable ldid path supplied by the operator")
-    metadata = path.stat()
-    if metadata.st_mode & (stat.S_ISUID | stat.S_ISGID | stat.S_IWGRP | stat.S_IWOTH):
-        fail("refusing an ldid executable with set-id or group/world-writable permissions")
-    return path.resolve()
 
 
 def copy_regular(source: Path, destination: Path, mode: int) -> None:
@@ -127,8 +135,34 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-dir", type=Path, required=True, help="directory containing iOS executables and SHA256SUMS")
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--sign-with-ldid", type=Path, help="explicit trusted ldid path; signs with ldid -S and no entitlements")
+    parser.add_argument("--sign-with-ldid", type=Path, help="absolute path to an operator-supplied, host-compatible ldid executable")
+    parser.add_argument("--entitlements", type=Path, help="explicit approved entitlement profile; required with --sign-with-ldid")
     return parser.parse_args()
+
+
+def verify_with_codesign(paths: list[Path]) -> dict[str, object]:
+    """Use Apple's host verifier when present; absence remains explicitly pending."""
+    verifier_path = Path("/usr/bin/codesign")
+    if platform.system() != "Darwin" or not verifier_path.is_file() or not os.access(verifier_path, os.X_OK):
+        return {"status": "PENDING", "tool": None, "results": []}
+    verifier = str(verifier_path)
+    results: list[dict[str, object]] = []
+    for path in paths:
+        command = [verifier, "--verify", "--strict", "--verbose=2", str(path)]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False)
+        except OSError as error:
+            fail(f"codesign verifier could not be executed: {error}")
+        results.append({
+            "file": path.name,
+            "command": command,
+            "exit_code": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        })
+        if result.returncode != 0:
+            fail(f"host signature-integrity verification failed for {path.name}: {result.stderr.strip()}")
+    return {"status": "VERIFIED", "tool": verifier, "results": results}
 
 
 def main() -> int:
@@ -142,8 +176,20 @@ def main() -> int:
     version = VERSION_FILE.read_text().strip()
     if not re.fullmatch(r"[0-9][A-Za-z0-9.+:~_-]*", version):
         fail(f"invalid Debian package version in {VERSION_FILE}")
+    if bool(args.sign_with_ldid) != bool(args.entitlements):
+        fail("--sign-with-ldid and --entitlements must be supplied together; signing is never implicit")
     source_hashes = validate_source_manifest(input_dir)
-    signer = validate_signer(args.sign_with_ldid) if args.sign_with_ldid else None
+    signer = None
+    profile_hash: str | None = None
+    signer_version: str | None = None
+    signer_hash: str | None = None
+    if args.sign_with_ldid:
+        try:
+            signer = validate_signer(Path(os.path.abspath(args.sign_with_ldid)))
+            _profile_data, profile_hash = load_approved_profile(Path(os.path.abspath(args.entitlements)))
+            signer_version, signer_hash = signer_identity(signer)
+        except SigningError as error:
+            fail(str(error))
     if output_dir.is_symlink() or not output_dir.is_dir():
         if output_dir.exists() or output_dir.is_symlink():
             fail("output directory must be a real directory")
@@ -170,17 +216,35 @@ def main() -> int:
         control = stage / "DEBIAN"
         control.mkdir(parents=True)
         payload_hash_paths: list[str] = []
+        staged_binaries: dict[str, Path] = {}
+        final_binary_hashes: dict[str, str] = {}
 
         for name, relative in PAYLOADS.items():
             source = input_dir / name
             destination = stage / relative
             copy_regular(source, destination, 0o755)
+            if sha256(destination) != source_hashes[name]:
+                fail(f"staged source identity changed while copying {name}")
             if signer:
-                subprocess.run([str(signer), "-S", str(destination)], check=True)
+                assert args.entitlements is not None and profile_hash is not None
+                profile_path = Path(os.path.abspath(args.entitlements))
                 try:
-                    validate_ios12_arm64(destination, allow_signature=True)
+                    subprocess.run([str(signer), f"-S{profile_path}", str(destination)], check=True, capture_output=True, text=True)
+                except subprocess.CalledProcessError as error:
+                    detail = error.stderr.strip() if error.stderr else f"exit {error.returncode}"
+                    fail(f"ldid signing failed for {name}: {detail}")
+                try:
+                    validate_ios12_arm64(destination, allow_signature=True, expected_dependencies=EXPECTED_DEPENDENCIES[name])
+                    validate_signed_source_identity(source, destination)
+                    require_exact_embedded_entitlements(signer, destination)
+                except SigningError as error:
+                    fail(f"{name}: {error}")
                 except ValueError as error:
                     fail(f"ldid did not produce an inspectable signature for {name}: {error}")
+            elif sha256(destination) != source_hashes[name]:
+                fail(f"unsigned staging changed source executable {name}")
+            final_binary_hashes[name] = sha256(destination)
+            staged_binaries[name] = destination
             payload_hash_paths.append(relative.as_posix())
 
         (stage / "usr/local/bin").mkdir(parents=True, exist_ok=True)
@@ -201,14 +265,33 @@ def main() -> int:
         payload_hash_paths.append(launchd_target.relative_to(stage).as_posix())
 
         signing_state = stage / "usr/share/ioscaffeinate/SIGNING-STATE"
+        signature_integrity = verify_with_codesign(list(staged_binaries.values())) if signer else {
+            "status": "NOT_APPLICABLE", "tool": None, "results": []
+        }
+        signing_lines = [
+            "signature_state=SIGNATURE_PRESENT" if signer else "signature_state=UNSIGNED",
+            f"profile_id={PROFILE_ID if signer else 'none'}",
+            f"profile_sha256={profile_hash if signer else 'not-applicable'}",
+            f"embedded_entitlements={'EXACT_MATCH' if signer else 'NOT_APPLICABLE'}",
+            f"signature_verification={'SIGNATURE_VERIFIED' if signature_integrity['status'] == 'VERIFIED' else ('PENDING' if signer else 'NOT_APPLICABLE')}",
+            "device_execution=NOT_VERIFIED",
+            "device_package_acceptance=NOT_ACCEPTED",
+        ]
         if signer:
-            signing_text = "SIGNED / DEVICE-UNVERIFIED\nsignature_presence=present\nsignature_verification=not-performed\ndevice_acceptance=not-verified\n"
-        else:
-            signing_text = "UNSIGNED / DEVICE-UNVERIFIED\nsignature_presence=absent\nsignature_verification=not-performed\ndevice_acceptance=not-verified\n"
+            signing_lines.extend((f"signing_tool_version={signer_version}", f"signing_tool_sha256={signer_hash}"))
+        signing_text = "\n".join(signing_lines) + "\n"
         signing_state.parent.mkdir(parents=True, exist_ok=True)
         signing_state.write_text(signing_text)
         signing_state.chmod(0o644)
         payload_hash_paths.append(signing_state.relative_to(stage).as_posix())
+
+        if signer:
+            assert args.entitlements is not None
+            profile_target = stage / "usr/share/ioscaffeinate/signing" / PROFILE_RELATIVE_PATH.name
+            copy_regular(Path(os.path.abspath(args.entitlements)), profile_target, 0o644)
+            if sha256(profile_target) != profile_hash:
+                fail("approved signing profile changed while copying into the package")
+            payload_hash_paths.append(profile_target.relative_to(stage).as_posix())
 
         docs_root = stage / "usr/share/doc/ioscaffeinate"
         copy_regular(ROOT / "README.md", docs_root / "README.md", 0o644)
@@ -224,6 +307,46 @@ def main() -> int:
         # These are package files, never default runtime configuration.
         if (stage / "var/lib/ioscaffeinate/schedules.json").exists() or (stage / "var/lib/ioscaffeinate/server-mode.json").exists():
             fail("refusing to package persistent schedule or server-mode state")
+
+        try:
+            source_commit = subprocess.run(
+                ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                check=True, text=True, capture_output=True,
+            ).stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            fail("git source commit identity is unavailable; refusing a release package")
+        if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+            fail("git returned an invalid source commit SHA")
+        status_result = subprocess.run(
+            ["git", "-C", str(ROOT), "status", "--porcelain"],
+            check=True, text=True, capture_output=True,
+        )
+        signing_record = {
+            "schema_version": 1,
+            "package_identifier": PACKAGE_ID,
+            "package_version": version,
+            "architecture": "iphoneos-arm",
+            "source_commit_sha": source_commit,
+            "source_tree_clean": not bool(status_result.stdout.strip()),
+            "signing": {
+                "state": "SIGNATURE_PRESENT" if signer else "UNSIGNED",
+                "profile_id": PROFILE_ID if signer else None,
+                "profile_sha256": profile_hash,
+                "signing_tool_version": signer_version,
+                "signing_tool_sha256": signer_hash,
+                "source_binary_sha256": source_hashes,
+                "final_binary_sha256": final_binary_hashes,
+                "embedded_entitlements": "EXACT_MATCH" if signer else "NOT_APPLICABLE",
+                "signature_verification": "SIGNATURE_VERIFIED" if signature_integrity["status"] == "VERIFIED" else ("PENDING" if signer else "NOT_APPLICABLE"),
+                "signature_integrity": signature_integrity,
+                "device_execution_verification": "NOT_VERIFIED",
+                "device_package_acceptance": "NOT_ACCEPTED",
+            },
+        }
+        package_build_path = stage / "usr/share/ioscaffeinate/package-build.json"
+        package_build_path.write_text(json.dumps(signing_record, indent=2, sort_keys=True) + "\n")
+        package_build_path.chmod(0o644)
+        payload_hash_paths.append(package_build_path.relative_to(stage).as_posix())
 
         manifest_path = stage / "usr/share/ioscaffeinate/SHA256SUMS"
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -270,6 +393,7 @@ def main() -> int:
             output_dir / f"{filename}.sha256",
             output_dir / f"{filename}.files.sha256",
             output_dir / f"{filename}.manifest.txt",
+            output_dir / f"{filename}.manifest.json",
         )
         existing = [str(path) for path in sidecars if path.exists() or path.is_symlink()]
         if existing:
@@ -284,6 +408,9 @@ def main() -> int:
         package_hash = sha256(output)
         (output_dir / f"{filename}.sha256").write_text(f"{package_hash}  {filename}\n")
         (output_dir / f"{filename}.files.sha256").write_text(manifest_path.read_text())
+        sidecar_record = dict(signing_record)
+        sidecar_record["package"] = {"file": filename, "sha256": package_hash}
+        (output_dir / f"{filename}.manifest.json").write_text(json.dumps(sidecar_record, indent=2, sort_keys=True) + "\n")
         report = [
             f"package: {PACKAGE_ID}",
             f"version: {version}",
@@ -294,14 +421,42 @@ def main() -> int:
             f"source_date_epoch: {epoch}",
             f"source_ios_caffeinate_sha256: {source_hashes['ios-caffeinate']}",
             f"source_ios_caffeinated_sha256: {source_hashes['ios-caffeinated']}",
-            f"packaged_ldid_sha256: {sha256(signer) if signer else 'not-used'}",
-            "signature_verification: not-performed",
+            f"source_commit_sha: {source_commit}",
+            f"source_tree_clean: {str(not bool(status_result.stdout.strip())).lower()}",
+            f"profile_id: {PROFILE_ID if signer else 'not-used'}",
+            f"profile_sha256: {profile_hash if signer else 'not-used'}",
+            f"signing_tool_version: {signer_version if signer else 'not-used'}",
+            f"signing_tool_sha256: {signer_hash if signer else 'not-used'}",
+            f"source_cli_sha256: {source_hashes['ios-caffeinate']}",
+            f"source_daemon_sha256: {source_hashes['ios-caffeinated']}",
+            f"final_signed_cli_sha256: {final_binary_hashes['ios-caffeinate'] if signer else 'not-signed'}",
+            f"final_signed_daemon_sha256: {final_binary_hashes['ios-caffeinated'] if signer else 'not-signed'}",
+            f"signature_verification: {'SIGNATURE_VERIFIED' if signature_integrity['status'] == 'VERIFIED' else ('PENDING' if signer else 'NOT_APPLICABLE')}",
+            f"embedded_entitlements: {'EXACT_MATCH' if signer else 'NOT_APPLICABLE'}",
             "device_installation_and_execution: not-verified",
+            "device_package_acceptance: not-accepted",
         ]
         (output_dir / f"{filename}.manifest.txt").write_text("\n".join(report) + "\n")
+        validation_command = [
+            sys.executable,
+            str(ROOT / "scripts/validate_rootful_package.py"),
+            str(output),
+        ]
+        if signer:
+            validation_command.extend(("--ldid", str(signer)))
+        validation = subprocess.run(validation_command, capture_output=True, text=True, check=False)
+        if validation.returncode != 0:
+            for artifact in sidecars:
+                try:
+                    artifact.unlink()
+                except FileNotFoundError:
+                    pass
+            fail("built Debian archive failed final package validation: " + (validation.stderr.strip() or validation.stdout.strip()))
         print(f"Built {output}")
         print(f"Package SHA-256: {package_hash}")
         print(f"Signing state: {state}")
+        print(f"Build manifest: {output_dir / f'{filename}.manifest.json'}")
+        print(validation.stdout.rstrip())
     return 0
 
 

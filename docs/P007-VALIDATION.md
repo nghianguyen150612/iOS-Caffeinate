@@ -73,4 +73,4 @@ The package validator extracts into temporary directories only. Do not install a
 | Battery/thermal observations | PENDING |
 | 24/7 operation | NOT VALIDATED |
 
-P007 status is **PARTIAL — cloud packaging engineering complete; physical-device validation pending** only after the exact final commit's hosted jobs pass. It does not close pending P002–P006 hardware gates.
+P007 status is **PARTIAL — cloud packaging engineering complete** at its milestone. P010 later records operator-reported native execution and assertion observations, but the P007 package remains a historical unsigned artifact and its device package gates were not exercised. Current acceptance is tracked in [P010 release readiness](P010-RELEASE-READINESS.md).

@@ -1,6 +1,6 @@
 # P006-HW — Deferred Device Validation Plan
 
-The iPad is unavailable. This procedure is planning only; no device access, transfer, deployment, launchd activation, assertion, screen lock, reboot, or network change was performed for P006.
+At the time of P006, the iPad was unavailable. This procedure records the P006 plan; no device access, transfer, deployment, launchd activation, assertion, screen lock, reboot, or network change was performed for that milestone. Later operator-reported observations are in [P010 hardware findings](P010-HARDWARE-FINDINGS.md).
 
 ## Preconditions
 

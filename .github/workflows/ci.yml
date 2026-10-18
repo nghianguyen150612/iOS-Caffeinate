@@ -117,6 +117,7 @@ jobs:
             dist/package/*.sha256
             dist/package/*.files.sha256
             dist/package/*.manifest.txt
+            dist/package/*.manifest.json
             dist/package/validation.txt
             dist/package/packaging-tests.txt
 
@@ -169,6 +170,127 @@ jobs:
             build/p009/readiness.json
             build/p009/readiness.md
             build/p009/source-commit.txt
+
+  p010-signing-release-gate:
+    needs: [linux-protocol, ios-cross-build, ios-artifact-inspection, ios-rootful-package, p009-evidence-validation]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-ios12-arm64-UNSIGNED-HARDWARE-UNVERIFIED
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-rootful-iphoneos-arm-UNSIGNED-DEVICE-UNVERIFIED
+          path: dist/package
+      - uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-linux-regression-evidence
+          path: build/p010/linux-evidence
+      - name: Validate P010 profile and Debian prerelease ordering
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          from signing_profile import load_approved_profile
+          profile = Path("packaging/signing/profiles/amethyst-ios12-rootful.plist")
+          entitlements, digest = load_approved_profile(profile)
+          assert entitlements == {"com.apple.private.security.no-container": True}
+          print("profile_id=amethyst-ios12-rootful")
+          print(f"profile_sha256={digest}")
+          print("profile_entitlements=EXACT_MATCH")
+          PY
+          dpkg --compare-versions 0.1.0~rc1-1 lt 0.1.0-1
+          mkdir -p build/p010
+          git rev-parse HEAD | tee build/p010/source-commit.txt
+      - name: Run deterministic P010 signing and release-gate regressions
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tests/packaging -p 'test_p010_signing.py' -v 2>&1 | tee build/p010/p010-tests.txt
+      - name: Run P007 package payload and state-preservation regressions
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tests/packaging -p 'test_rootful_package.py' -v 2>&1 | tee build/p010/packaging-tests.txt
+      - name: Run P009 evidence regressions
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tests -p 'test_p009_evidence.py' -v 2>&1 | tee build/p010/p009-tests.txt
+      - name: Inspect the exact unsigned CI package and prepare operator evidence bundle
+        run: |
+          set -euo pipefail
+          package=$(find dist/package -maxdepth 1 -type f -name '*.deb' -print -quit)
+          test -n "$package"
+          python3 scripts/validate_rootful_package.py "$package" --report build/p010/unsigned-package-validation.txt
+          (cd "$(dirname "$package")" && sha256sum -c "$(basename "$package").sha256")
+          python3 scripts/p010_evidence.py prepare --output-dir build/p010/operator-reported-evidence
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          bundle = json.loads(Path("build/p010/operator-reported-evidence/bundle-metadata.json").read_text())
+          assert bundle["evidence_origin"] == "OPERATOR_RECORDED"
+          assert bundle["review_status"] == "REVIEW_REQUIRED"
+          assert bundle["raw_evidence_files"] == []
+          assert bundle["release_authorization"] == "BLOCKED"
+          PY
+      - name: Generate exact-source P010 RC manifest and validation summary
+        env:
+          P010_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          P010_WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          P010_LINUX_PROTOCOL_RESULT: ${{ needs.linux-protocol.result }}
+          P010_IOS_CROSS_BUILD_RESULT: ${{ needs.ios-cross-build.result }}
+          P010_IOS_INSPECTION_RESULT: ${{ needs.ios-artifact-inspection.result }}
+          P010_ROOTFUL_PACKAGE_RESULT: ${{ needs.ios-rootful-package.result }}
+          P010_P009_RESULT: ${{ needs.p009-evidence-validation.result }}
+        run: |
+          set -euo pipefail
+          python3 scripts/p010_release_manifest.py --dist dist --output dist/package/P010-RELEASE-MANIFEST.json
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          def count(path):
+              match = re.search(r"Ran (\d+) tests? in ", Path(path).read_text())
+              if not match:
+                  raise SystemExit(f"missing unittest count in {path}")
+              return int(match.group(1))
+          p010 = count("build/p010/p010-tests.txt")
+          packaging = count("build/p010/packaging-tests.txt")
+          p009 = count("build/p010/p009-tests.txt")
+          linux = count("build/p010/linux-evidence/integration-report.txt")
+          source = os.environ["P010_SOURCE_SHA"]
+          lines = [
+              "# P010 Exact-Source Validation Summary", "",
+              f"Source SHA: `{source}`", "",
+              "| Suite | Tests | Result |", "|---|---:|---|",
+              f"| Linux integration | {linux} | PASS |",
+              f"| P010 signing/release | {p010} | PASS |",
+              f"| Rootful packaging | {packaging} | PASS |",
+              f"| P009 evidence | {p009} | PASS |", "",
+              f"Linux integration: PASS at source SHA `{source}` (see linux-protocol artifact).",
+              f"iOS cross-build, artifact inspection, and unsigned package jobs: PASS at `{source}`.",
+              "P008 branch-specific attestation: SKIPPED by its release/p008-v01-integration guard.",
+              "P010 result: PASS; hosted artifact remains unsigned; device package acceptance and release authorization remain BLOCKED.", "",
+          ]
+          Path("build/p010/P010-VALIDATION.md").write_text("\n".join(lines))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P010-exact-source-evidence
+          if-no-files-found: error
+          path: |
+            build/p010/source-commit.txt
+            build/p010/p010-tests.txt
+            build/p010/packaging-tests.txt
+            build/p010/p009-tests.txt
+            build/p010/linux-evidence/integration-report.txt
+            build/p010/unsigned-package-validation.txt
+            build/p010/P010-VALIDATION.md
+            build/p010/operator-reported-evidence/**
+            dist/package/P010-RELEASE-MANIFEST.json
 
   p008-release-attestation:
     if: github.ref == 'refs/heads/release/p008-v01-integration' || (github.event_name == 'pull_request' && github.head_ref == 'release/p008-v01-integration')

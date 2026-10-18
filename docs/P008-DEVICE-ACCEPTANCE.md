@@ -1,6 +1,6 @@
 # P008 — Deferred Device Acceptance Plan
 
-**Status: PENDING.** The target iPad mini 2 A1489 is unavailable. No physical test is part of P008 cloud work.
+**P008 snapshot:** At that milestone, the target iPad mini 2 A1489 had not been tested. The operator later reported the October 18, 2026 execution, IOKit, cleanup, and locked-screen SSH results recorded in [P010 hardware findings](P010-HARDWARE-FINDINGS.md). They remain `REVIEW_REQUIRED`; use [P010 device acceptance](P010-DEVICE-ACCEPTANCE.md) for the signed package and controlled comparison. No package installation is established here.
 
 Every future test requires direct physical recovery access, an independent second device for connectivity measurements, and a way to observe battery and thermal condition. Do not use SSH as the only recovery route. Stop if the device is hot, has insufficient battery, or behaves unexpectedly.
 

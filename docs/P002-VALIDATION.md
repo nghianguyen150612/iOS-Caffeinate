@@ -2,6 +2,8 @@
 
 P002 status: PARTIAL overall; all cloud/local engineering gates are complete. Hardware gates remain PENDING. No iPad changes have been made.
 
+This is the P002 snapshot from 2026-10-16. The operator reported a later physical test on 2026-10-18; see [P010 hardware findings](P010-HARDWARE-FINDINGS.md). P002's own hardware gates were not run by that milestone.
+
 ## Baseline and available environment
 
 - Starting `main`, local HEAD and fetched `origin/main`: `069ad94eb344da08d414c9478b6e212146c8fc28`, matching the supplied P001 baseline exactly. Clean clone; no unrelated local modifications.

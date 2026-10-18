@@ -6,7 +6,7 @@ P005 establishes no supported way for a normal userspace timer or launchd calend
 
 The P004 scheduler is a different capability. It evaluates schedules and can request a bounded assertion only while `ios-caffeinated` is running. Both schedule execution on the target and the real IOKit assertion effect still require hardware validation. P004's `IOKit_RUNTIME_UNVERIFIED` label is intentional: finding an IOKit symbol or compiling an iOS-target binary does not show that an iOS 12 device exports or honors that API.
 
-This is a source and SDK feasibility result, not a device result. The iPad is unavailable, and no hardware experiment was run.
+This is a source and SDK feasibility result, not a device result. At the time of this P005 report, the iPad was unavailable and no hardware experiment had been run. Later assertion observations do not establish scheduled wake; see [P010 hardware findings](P010-HARDWARE-FINDINGS.md).
 
 ## Evidence labels
 

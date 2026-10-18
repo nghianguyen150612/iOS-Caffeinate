@@ -1,6 +1,6 @@
 # P007 Deferred Device Installation and Runtime Procedure
 
-**Status: NOT EXECUTED.** The iPad is unavailable. This is a future, attended procedure only. Do not treat a package artifact or CI result as hardware evidence. Do not run an unattended 24/7 test.
+**P007 snapshot: package procedure not executed at that milestone.** The target iPad was unavailable then. P010 later records operator-reported binary execution and assertion results, but no `.deb` installation has been performed. Do not treat CI output as package acceptance. Do not run an unattended 24/7 test; follow [P010 device acceptance](P010-DEVICE-ACCEPTANCE.md).
 
 ## Pre-install checks
 
@@ -9,20 +9,20 @@
 3. Check free space with the device's available filesystem tools. Confirm direct physical access, a working passcode/recovery path, and a way to recover if SSH or the jailbreak becomes unavailable.
 4. Save a package inventory and identify existing files or packages owning `/usr/local/bin/ios-caffeinate`, `/usr/local/bin/ios-caffeinated`, `/usr/local/bin/ic`, `/usr/local/libexec/ioscaffeinate-manager`, and `/usr/share/ioscaffeinate`. The package `preinst` refuses unowned file collisions and unsafe package directories; do not override that refusal to force installation.
 5. Record relevant original package versions and inspect those paths. Verify existing SSH and Tailscale separately before installation; do not use this package to modify either service.
-6. Copy the exact `.deb`, its `.sha256` sidecar, CI manifest, and validation report to the device through a trusted channel. Verify the package hash before inspection. Confirm the artifact label and the binary signature state. If using an optionally signed package, inspect the signature with the trusted signing/verification tools available for the device; presence of an `LC_CODE_SIGNATURE` command alone is not acceptance evidence.
+6. Follow the current [P010 artifact and signing procedure](P010-DEVICE-ACCEPTANCE.md). The P010 RC uses package version `0.1.0~rc1-1`; CI artifacts remain unsigned. Verify the exact package hash and signature/profile evidence before inspection. Presence of `LC_CODE_SIGNATURE` alone is not acceptance evidence.
 7. Check that the live launchd destination `/Library/LaunchDaemons/com.ioscaffeinate.daemon.plist` is absent or record its owner and state. P007 package installation must not place a file there.
 
 ## Install verification
 
-Installation is a separate, explicitly authorized device action. Before it, read the package control fields, payload list, maintainer scripts, package and binary hashes, and package validation report. A CI package is unsigned. Do not install it until binary signing and acceptance requirements for this jailbreak have been separately established. `ldid -h` can report signature metadata, but that output alone does not verify a signature or establish device acceptance.
+Installation is a separate, explicitly authorized device action. Before it, read package control fields, payload, maintainer scripts, package/binary hashes, and the P010 validation report. A CI package is unsigned. Do not install it until the P010 signing and acceptance requirements have been met. `ldid -h` reports metadata only; it does not verify a signature or establish device acceptance.
 
 After those gates pass, use the device's root shell and the verified artifact path:
 
 ```sh
-dpkg -i /path/to/verified/ioscaffeinate_0.1.0-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb
+dpkg -i /path/to/verified/ioscaffeinate_0.1.0~rc1-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb
 ```
 
-The example filename applies only to an explicitly signed artifact. If the package is still unsigned, stop at the signing gate. Dpkg and `preinst` must both accept the `iphoneos-arm` architecture. Do not force an architecture mismatch.
+The example filename applies only to an explicitly signed artifact. If the package is still unsigned, stop at the signing gate. Dpkg and `preinst` must both accept the `iphoneos-arm` architecture. Do not force an architecture mismatch. P010 cloud work does not run this command.
 
 After installation, inspect package status and `dpkg --print-architecture`, then run:
 
@@ -59,4 +59,4 @@ Use [P007 rollback](P007-ROLLBACK.md). Stop the manually run daemon, verify the 
 
 Record device model, iOS, jailbreak/package-manager versions, dpkg architecture, artifact hash/signing state, package version, file ownership/modes, command outputs, timestamps, screen-lock state, independent LAN/Tailscale observations, battery/thermal observations, and physical recovery results. Redact credentials and do not include personal tokens.
 
-Until collected on the real device, installation, signing acceptance, iOS execution, assertion create/release, screen-locked LAN SSH, screen-locked Tailscale, battery/thermal behavior, and 24/7 operation remain pending or unvalidated.
+P010 records operator-reported iOS execution, IOKit create/release, cleanup, and locked-screen LAN/Tailscale observations; they remain subject to P009 evidence review. Signed package installation, upgrade/removal, rollback, no-assertion comparison, battery/thermal behavior, and long-duration operation remain pending or unvalidated. Use [P010 release readiness](P010-RELEASE-READINESS.md) for the current gates.
