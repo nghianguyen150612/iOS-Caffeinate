@@ -1,0 +1,150 @@
+name: Publish iOS-Caffeinate v0.1.0-rc1 signed Debian candidate
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-rc1.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: ioscaffeinate-v0.1.0-rc1-publish
+  cancel-in-progress: false
+jobs:
+  publish-signed-rc1:
+    if: github.repository == 'nghianguyen150612/iOS-Caffeinate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact source from accepted P010 main CI
+        uses: actions/checkout@v4
+        with:
+          ref: 9aac3fa2611c0be4a108b88b4a711649a3034e7a
+          persist-credentials: false
+      - name: Verify source and guard against overwriting an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 9aac3fa2611c0be4a108b88b4a711649a3034e7a
+          if gh release view v0.1.0-rc1 --repo nghianguyen150612/iOS-Caffeinate >/dev/null 2>&1; then
+            echo 'v0.1.0-rc1 already exists; refusing to overwrite or replace assets.'
+            exit 1
+          fi
+      - name: Download exact-source unsigned binaries from successful main CI
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 39245788780
+          github-token: ${{ github.token }}
+          name: iOS-Caffeinate-ios12-arm64-UNSIGNED-HARDWARE-UNVERIFIED
+          path: dist
+      - name: Download exact-source signed-candidate evidence inputs
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 39245788780
+          github-token: ${{ github.token }}
+          name: iOS-Caffeinate-P010-exact-source-evidence
+          path: exact-source-evidence
+      - name: Check exact-source hashes and profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from signing_profile import load_approved_profile
+          ents, digest = load_approved_profile(Path('packaging/signing/profiles/amethyst-ios12-rootful.plist'))
+          assert ents == {'com.apple.private.security.no-container': True}
+          assert digest == 'cd1358e7c8c3b01da98b5544e3c2ffcdc9d92cf9a3191e45038e8691ef2021ca'
+          print('Approved Amethyst signing profile verified:', digest)
+          PY
+      - name: Install host signer build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libplist-dev libssl-dev
+      - name: Build pinned Procursus ldid signer for Linux
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/ProcursusTeam/ldid.git ldid-p010
+          git -C ldid-p010 checkout --detach aaf8f23d7975ecdb8e77e3a8f22253e0a2352cef
+          test "$(git -C ldid-p010 rev-parse HEAD)" = aaf8f23d7975ecdb8e77e3a8f22253e0a2352cef
+          make -C ldid-p010 VERSION=2.1.5-procursus7
+          test -x ldid-p010/ldid
+          sha256sum ldid-p010/ldid
+      - name: Build and fully inspect signed rootful Debian candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/signed-candidate
+          ./scripts/package-rootful.sh \
+            --input-dir dist \
+            --output-dir dist/signed-candidate \
+            --sign-with-ldid "$PWD/ldid-p010/ldid" \
+            --entitlements packaging/signing/profiles/amethyst-ios12-rootful.plist
+          mapfile -t packages < <(find dist/signed-candidate -maxdepth 1 -type f -name '*_SIGNED-DEVICE-UNVERIFIED.deb')
+          test "$(printf '%s\n' "${packages[@]}" | grep -c .)" = 1
+          pkg="${packages[0]}"
+          (cd dist/signed-candidate && sha256sum -c "$(basename "$pkg").sha256")
+          python3 scripts/validate_rootful_package.py "$pkg" \
+            --ldid "$PWD/ldid-p010/ldid" \
+            --report dist/signed-candidate/signed-validation.txt
+          ci_manifest=$(find exact-source-evidence -type f -name P010-RELEASE-MANIFEST.json -print -quit)
+          test -s "$ci_manifest"
+          python3 scripts/p010_signed_candidate_manifest.py \
+            --ci-manifest "$ci_manifest" \
+            --package "$pkg" \
+            --ldid "$PWD/ldid-p010/ldid" \
+            --output dist/signed-candidate/P010-SIGNED-CANDIDATE-MANIFEST.json
+          cp "$ci_manifest" dist/signed-candidate/P010-RELEASE-MANIFEST.json
+          echo "PUBLISHED_PACKAGE=$pkg" >> "$GITHUB_ENV"
+          sha256sum "$pkg"
+      - name: Archive signed candidate with signing evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-v0.1.0-rc1-SIGNED-DEVICE-UNVERIFIED
+          if-no-files-found: error
+          path: |
+            dist/signed-candidate/*.deb
+            dist/signed-candidate/*.sha256
+            dist/signed-candidate/*.json
+            dist/signed-candidate/*.txt
+      - name: Create GitHub experimental pre-release with signed candidate asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="$PUBLISHED_PACKAGE"
+          cat > /tmp/ioscaffeinate-rc1-release-notes.md <<'EOF'
+          Experimental **iOS-Caffeinate v0.1.0-rc1** for **iPad mini 2 / iOS 12.5.7 / Amethyst-Procursus rootful**.
+
+          The attached Debian package is **signed** using the reviewed P010 opt-in profile containing only the private entitlement `com.apple.private.security.no-container=true`. It is built from the exact-source CI-passed ARM64 binaries at commit `9aac3fa2611c0be4a108b88b4a711649a3034e7a`, not from synthetic fixture signatures.
+
+          **DEVICE-UNVERIFIED PACKAGE:** the signed Debian package has not completed supervised installation and rollback acceptance. Linux verified signature presence and exact embedded entitlements, but has not cryptographically verified Apple's signature or device trust. No claim of 24/7 reliability or scheduled wake is made.
+
+          Native foreground CLI/daemon execution, IOKit acquire/release, expiry, STOP, SIGTERM cleanup, and locked-screen LAN/Tailscale SSH were reported by the operator on the target iPad using earlier manually signed binaries. Those observations are not signed-package installation evidence or proof that the assertion causes SSH persistence.
+
+          Before any device installation, verify the accompanying `.sha256` and manifest, inspect `docs/P010-DEVICE-ACCEPTANCE.md`, confirm direct physical recovery, and keep launchd disabled. This release is a **pre-release**, not stable v0.1.0.
+          EOF
+          gh release create v0.1.0-rc1 \
+            "$pkg" \
+            "$pkg.sha256" \
+            "$pkg.files.sha256" \
+            "$pkg.manifest.json" \
+            "$pkg.manifest.txt" \
+            dist/signed-candidate/P010-SIGNED-CANDIDATE-MANIFEST.json \
+            dist/signed-candidate/P010-RELEASE-MANIFEST.json \
+            dist/signed-candidate/signed-validation.txt \
+            --repo nghianguyen150612/iOS-Caffeinate \
+            --target 9aac3fa2611c0be4a108b88b4a711649a3034e7a \
+            --title 'iOS-Caffeinate v0.1.0-rc1 (Experimental)' \
+            --notes-file /tmp/ioscaffeinate-rc1-release-notes.md \
+            --prerelease
+          gh release view v0.1.0-rc1 --repo nghianguyen150612/iOS-Caffeinate --json url,assets,isPrerelease
