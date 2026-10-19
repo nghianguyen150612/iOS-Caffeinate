@@ -85,7 +85,7 @@ def main() -> int:
         raise SystemExit(f"ERROR: exact-source CI job result is not successful: {ci_jobs}")
     manifest = {
         "manifest_version": 1,
-        "release_candidate": "v0.1.0-rc1",
+        "release_candidate": "v0.1.0" if PACKAGE_VERSION == "0.1.0-1" else "v0.1.0-rc1",
         "package_version": PACKAGE_VERSION,
         "source": {
             "repository": os.environ.get("GITHUB_REPOSITORY", "nghianguyen150612/iOS-Caffeinate"),

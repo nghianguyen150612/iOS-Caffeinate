@@ -128,7 +128,7 @@ class RootfulPackageTests(unittest.TestCase):
     def test_package_name_version_architecture_and_hash(self) -> None:
         output = inspect_package(self.deb)
         self.assertIn("package=com.ioscaffeinate.cli", output)
-        self.assertIn("version=0.1.0~rc1-1", output)
+        self.assertIn("version=0.1.0-1", output)
         self.assertIn("architecture=iphoneos-arm", output)
         self.assertIn("result=PASS", output)
 
@@ -180,7 +180,7 @@ class RootfulPackageTests(unittest.TestCase):
     def test_existing_package_artifact_is_not_overwritten(self) -> None:
         output = self.work / "preexisting-output"
         output.mkdir()
-        name = "ioscaffeinate_0.1.0~rc1-1_iphoneos-arm_UNSIGNED-DEVICE-UNVERIFIED.deb"
+        name = "ioscaffeinate_0.1.0-1_iphoneos-arm_UNSIGNED-DEVICE-UNVERIFIED.deb"
         artifact = output / name
         artifact.write_bytes(b"keep existing file")
         result = self.run_builder(self.inputs, output)

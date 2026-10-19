@@ -13,7 +13,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_PROFILE_ID = "amethyst-ios12-rootful"
-EXPECTED_VERSION = "0.1.0~rc1-1"
+EXPECTED_VERSION = (ROOT / "packaging/rootful/VERSION").read_text(encoding="utf-8").strip()
+EXPECTED_RELEASE = "v0.1.0" if EXPECTED_VERSION == "0.1.0-1" else "v0.1.0-rc1"
 EXPECTED_JOBS = {
     "linux-protocol", "ios-cross-build", "ios-artifact-inspection",
     "ios-rootful-package", "p009-evidence-validation",
@@ -80,7 +81,7 @@ def main() -> int:
     assert isinstance(source, dict) and isinstance(artifacts, dict)
     assert isinstance(ci_state, dict) and isinstance(signing_ci, dict)
     source_sha = require_hash(source.get("commit_sha"), "CI source commit", 40)
-    if ci.get("release_candidate") != "v0.1.0-rc1":
+    if ci.get("release_candidate") != EXPECTED_RELEASE:
         raise SystemExit("ERROR: unexpected release candidate identifier")
     workflow_url = source.get("workflow_url")
     if not isinstance(workflow_url, str) or not workflow_url.startswith("https://"):
