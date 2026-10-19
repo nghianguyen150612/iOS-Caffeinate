@@ -46,7 +46,7 @@ jobs:
           run-id: 39245788780
           github-token: ${{ github.token }}
           name: iOS-Caffeinate-P010-exact-source-evidence
-          path: exact-source-evidence
+          path: ${{ runner.temp }}/exact-source-evidence
       - name: Check exact-source hashes and profile
         shell: bash
         run: |
@@ -72,35 +72,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone https://github.com/ProcursusTeam/ldid.git ldid-p010
-          git -C ldid-p010 checkout --detach aaf8f23d7975ecdb8e77e3a8f22253e0a2352cef
-          test "$(git -C ldid-p010 rev-parse HEAD)" = aaf8f23d7975ecdb8e77e3a8f22253e0a2352cef
-          make -C ldid-p010 VERSION=2.1.5-procursus7
-          test -x ldid-p010/ldid
-          sha256sum ldid-p010/ldid
+          git clone https://github.com/ProcursusTeam/ldid.git "$RUNNER_TEMP/ldid-p010"
+          git -C "$RUNNER_TEMP/ldid-p010" checkout --detach aaf8f23d7975ecdb8e77e3a8f22253e0a2352cef
+          test "$(git -C "$RUNNER_TEMP/ldid-p010" rev-parse HEAD)" = aaf8f23d7975ecdb8e77e3a8f22253e0a2352cef
+          make -C "$RUNNER_TEMP/ldid-p010" VERSION=2.1.5-procursus7
+          test -x "$RUNNER_TEMP/ldid-p010/ldid"
+          sha256sum "$RUNNER_TEMP/ldid-p010/ldid"
       - name: Build and fully inspect signed rootful Debian candidate
         shell: bash
         run: |
           set -euo pipefail
+          test -z "$(git status --porcelain)" || { git status --short; exit 1; }
           mkdir -p dist/signed-candidate
           ./scripts/package-rootful.sh \
             --input-dir dist \
             --output-dir dist/signed-candidate \
-            --sign-with-ldid "$PWD/ldid-p010/ldid" \
+            --sign-with-ldid "$RUNNER_TEMP/ldid-p010/ldid" \
             --entitlements packaging/signing/profiles/amethyst-ios12-rootful.plist
           mapfile -t packages < <(find dist/signed-candidate -maxdepth 1 -type f -name '*_SIGNED-DEVICE-UNVERIFIED.deb')
           test "$(printf '%s\n' "${packages[@]}" | grep -c .)" = 1
           pkg="${packages[0]}"
           (cd dist/signed-candidate && sha256sum -c "$(basename "$pkg").sha256")
           python3 scripts/validate_rootful_package.py "$pkg" \
-            --ldid "$PWD/ldid-p010/ldid" \
+            --ldid "$RUNNER_TEMP/ldid-p010/ldid" \
             --report dist/signed-candidate/signed-validation.txt
-          ci_manifest=$(find exact-source-evidence -type f -name P010-RELEASE-MANIFEST.json -print -quit)
+          ci_manifest=$(find "$RUNNER_TEMP/exact-source-evidence" -type f -name P010-RELEASE-MANIFEST.json -print -quit)
           test -s "$ci_manifest"
           python3 scripts/p010_signed_candidate_manifest.py \
             --ci-manifest "$ci_manifest" \
             --package "$pkg" \
-            --ldid "$PWD/ldid-p010/ldid" \
+            --ldid "$RUNNER_TEMP/ldid-p010/ldid" \
             --output dist/signed-candidate/P010-SIGNED-CANDIDATE-MANIFEST.json
           cp "$ci_manifest" dist/signed-candidate/P010-RELEASE-MANIFEST.json
           echo "PUBLISHED_PACKAGE=$pkg" >> "$GITHUB_ENV"
