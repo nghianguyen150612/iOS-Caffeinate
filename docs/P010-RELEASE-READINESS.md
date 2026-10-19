@@ -23,10 +23,14 @@ P010 cloud readiness separates source/CI evidence, operator-reported physical ob
 | Scheduled wake | UNVERIFIED | No supported capability established |
 | 24/7 reliability | NOT VALIDATED | No long-duration unattended test |
 | RC1 release authorization | BLOCKED | Signed package/device acceptance and evidence review remain open |
-| Stable v0.1.0 authorization | BLOCKED | All applicable release and operational gates remain open |
+| Device-accepted stable v0.1.0 certification | BLOCKED | Package installation and operational gates remain unverified; publishing a public stable-channel tag does not satisfy them |
 
 ## Release artifacts and authorization
 
 Public-facing intended prerelease: `v0.1.0-rc1`. Debian version: `0.1.0~rc1-1`, which sorts before `0.1.0-1`. Hosted CI remains unsigned and clearly labeled. Its manifest records the exact source SHA and unsigned artifact hashes. A local signed candidate is a separate artifact; its generated package manifest is the authoritative source for signed binary/package hashes and signer identity.
 
 No package is installed on the iPad, and no GitHub Release or tag is created. Release authorization remains blocked. Passing CI or producing a signed candidate does not establish device trust, package acceptance, network causality, scheduled wake, or long-duration reliability.
+
+## Maintainer-directed public stable channel
+
+The repository maintainer explicitly requested an official public `v0.1.0` GitHub stable release while the device package acceptance gates remain pending. The release pipeline retains the exact signing, source, CI and package verification safeguards and publishes unambiguous `SIGNED-DEVICE-UNVERIFIED` payloads; publication **does not** change these P010 engineering gate results. The release notes disclose missing package installation, upgrade/removal, rollback, long-term reliability and scheduled-wake proof. Distinguish the public GitHub release channel from a device-accepted/stability-certified build.
