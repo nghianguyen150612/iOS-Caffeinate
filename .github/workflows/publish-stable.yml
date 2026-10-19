@@ -1,0 +1,170 @@
+name: Publish signed iOS-Caffeinate v0.1.0 stable
+on:
+  push:
+    branches: [main]
+    paths:
+      - packaging/rootful/VERSION
+      - .github/workflows/publish-stable.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: ioscaffeinate-v0.1.0-stable-publish
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'nghianguyen150612/iOS-Caffeinate' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact commit to release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify version, source, and release uniqueness
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(cat packaging/rootful/VERSION)" = '0.1.0-1'
+          test -z "$(git status --porcelain)"
+          if gh release view v0.1.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'Stable release v0.1.0 already exists; refusing to overwrite.'
+            exit 1
+          fi
+      - name: Wait for exact-commit main CI to pass
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          found=''
+          for attempt in $(seq 1 90); do
+            data=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=40")
+            records=$(jq -r '.workflow_runs[] | select(.name == "iOS-Caffeinate CI" and .event == "push") | [.id, .status, (.conclusion // "pending")] | @tsv' <<<"$data")
+            if test -n "$records"; then
+              line=$(printf '%s\n' "$records" | head -n 1)
+              IFS=$'\t' read -r id status conclusion <<<"$line"
+              echo "Exact-commit CI run=$id status=$status conclusion=$conclusion"
+              if test "$status" = completed; then
+                test "$conclusion" = success || { echo 'Exact-commit CI failed'; exit 1; }
+                echo "CI_RUN_ID=$id" >> "$GITHUB_ENV"
+                found=yes
+                break
+              fi
+            fi
+            sleep 10
+          done
+          test "$found" = yes || { echo 'Timed out waiting for exact-commit CI'; exit 1; }
+      - name: Download exact-source unsigned iOS binaries
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ env.CI_RUN_ID }}
+          github-token: ${{ github.token }}
+          name: iOS-Caffeinate-ios12-arm64-UNSIGNED-HARDWARE-UNVERIFIED
+          path: dist
+      - name: Download exact-source CI readiness manifest
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ env.CI_RUN_ID }}
+          github-token: ${{ github.token }}
+          name: iOS-Caffeinate-P010-exact-source-evidence
+          path: ${{ runner.temp }}/exact-source-evidence
+      - name: Validate unsigned source and approved profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from signing_profile import load_approved_profile
+          profile, digest = load_approved_profile(Path('packaging/signing/profiles/amethyst-ios12-rootful.plist'))
+          assert profile == {'com.apple.private.security.no-container': True}
+          assert digest == 'cd1358e7c8c3b01da98b5544e3c2ffcdc9d92cf9a3191e45038e8691ef2021ca'
+          print('Approved signing profile verified:', digest)
+          PY
+      - name: Install Procursus host signer build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libplist-dev libssl-dev
+      - name: Build pinned Procursus ldid outside the source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/ProcursusTeam/ldid.git "$RUNNER_TEMP/ldid-stable"
+          git -C "$RUNNER_TEMP/ldid-stable" checkout --detach aaf8f23d7975ecdb8e77e3a8f22253e0a2352cef
+          test "$(git -C "$RUNNER_TEMP/ldid-stable" rev-parse HEAD)" = aaf8f23d7975ecdb8e77e3a8f22253e0a2352cef
+          make -C "$RUNNER_TEMP/ldid-stable" VERSION=2.1.5-procursus7
+          test -x "$RUNNER_TEMP/ldid-stable/ldid"
+          sha256sum "$RUNNER_TEMP/ldid-stable/ldid"
+      - name: Sign, verify, and tie stable Debian payload to accepted CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)" || { git status --short; exit 1; }
+          mkdir -p dist/stable
+          ./scripts/package-rootful.sh \
+            --input-dir dist \
+            --output-dir dist/stable \
+            --sign-with-ldid "$RUNNER_TEMP/ldid-stable/ldid" \
+            --entitlements packaging/signing/profiles/amethyst-ios12-rootful.plist
+          pkg=$(find dist/stable -maxdepth 1 -type f -name '*_SIGNED-DEVICE-UNVERIFIED.deb' -print -quit)
+          test -n "$pkg"
+          test "$(find dist/stable -maxdepth 1 -type f -name '*_SIGNED-DEVICE-UNVERIFIED.deb' | wc -l)" -eq 1
+          test "$(dpkg-deb -f "$pkg" Version)" = '0.1.0-1'
+          test "$(dpkg-deb -f "$pkg" Architecture)" = iphoneos-arm
+          test "$(dpkg-deb -f "$pkg" Package)" = com.ioscaffeinate.cli
+          (cd dist/stable && sha256sum -c "$(basename "$pkg").sha256")
+          python3 scripts/validate_rootful_package.py "$pkg" \
+            --ldid "$RUNNER_TEMP/ldid-stable/ldid" \
+            --report dist/stable/signed-validation.txt
+          ci_manifest=$(find "$RUNNER_TEMP/exact-source-evidence" -type f -name 'P010-RELEASE-MANIFEST.json' -print -quit)
+          test -s "$ci_manifest"
+          python3 scripts/p010_signed_candidate_manifest.py \
+            --ci-manifest "$ci_manifest" \
+            --package "$pkg" \
+            --ldid "$RUNNER_TEMP/ldid-stable/ldid" \
+            --output dist/stable/P010-SIGNED-CANDIDATE-MANIFEST.json
+          cp "$ci_manifest" dist/stable/P010-RELEASE-MANIFEST.json
+          echo "SIGNED_DEB=$pkg" >> "$GITHUB_ENV"
+          sha256sum "$pkg"
+      - name: Archive signed stable package and verification metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-v0.1.0-SIGNED-DEVICE-UNVERIFIED
+          if-no-files-found: error
+          path: |
+            dist/stable/*.deb
+            dist/stable/*.sha256
+            dist/stable/*.json
+            dist/stable/*.txt
+      - name: Publish official v0.1.0 stable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="$SIGNED_DEB"
+          gh release create v0.1.0 \
+            "$pkg" \
+            "$pkg.sha256" \
+            "$pkg.files.sha256" \
+            "$pkg.manifest.json" \
+            "$pkg.manifest.txt" \
+            dist/stable/P010-SIGNED-CANDIDATE-MANIFEST.json \
+            dist/stable/P010-RELEASE-MANIFEST.json \
+            dist/stable/signed-validation.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title 'iOS-Caffeinate v0.1.0' \
+            --notes-file docs/releases/v0.1.0.md \
+            --latest
+          gh release view v0.1.0 --repo "$GITHUB_REPOSITORY" --json url,assets,isPrerelease
