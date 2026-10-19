@@ -1,0 +1,48 @@
+{
+  "manifest_version": 1,
+  "release_candidate": "v0.1.0-rc1",
+  "package_version": "0.1.0~rc1-1",
+  "source": {
+    "repository": "https://github.com/nghianguyen150612/iOS-Caffeinate",
+    "commit_sha": null,
+    "workflow_url": null
+  },
+  "target": {
+    "device": "iPad mini 2 A1489",
+    "cpu": "Apple A7 ARM64",
+    "ios": "12.5.7",
+    "bootstrap": "Amethyst/Procursus rootful",
+    "debian_architecture": "iphoneos-arm",
+    "device_binary_architecture": "arm64",
+    "minimum_ios_version": "12.0"
+  },
+  "signing": {
+    "profile_id": "amethyst-ios12-rootful",
+    "profile_path": "packaging/signing/profiles/amethyst-ios12-rootful.plist",
+    "profile_sha256": null,
+    "signing_tool_version": null,
+    "signing_tool_sha256": null,
+    "signature_integrity": "PENDING",
+    "embedded_entitlements": "PENDING_SIGNED_CANDIDATE"
+  },
+  "artifacts": {
+    "unsigned_ci_binaries": null,
+    "unsigned_ci_package": null,
+    "final_signed_binaries": null,
+    "signed_candidate_package": null
+  },
+  "ci": {
+    "workflow_url": null,
+    "results": "PENDING_EXACT_SOURCE_WORKFLOW"
+  },
+  "device_evidence": {
+    "execution": "REVIEW_REQUIRED_OPERATOR_REPORTED",
+    "package_acceptance": "PENDING"
+  },
+  "known_limitations": [
+    "No-assertion comparison is pending.",
+    "Signed package installation, upgrade/removal, and rollback are pending.",
+    "Battery/thermal impact, scheduled wake, and long-duration reliability are not validated."
+  ],
+  "release_authorization_status": "BLOCKED"
+}

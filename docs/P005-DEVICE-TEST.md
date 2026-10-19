@@ -2,7 +2,7 @@
 
 ## Status and gate
 
-**Not executed.** The iPad is unavailable. No SSH, deployment, reboot, respring, service loading, power assertion, or wake mechanism was attempted for P005.
+**P005 snapshot — not executed at that milestone.** The iPad was unavailable then. No SSH, deployment, reboot, respring, service loading, power assertion, or wake mechanism was attempted for P005. Later operator-reported execution and assertion observations are summarized in [P010 hardware findings](P010-HARDWARE-FINDINGS.md); scheduled wake remains unverified.
 
 P005 found no public iOS 12 scheduled-wake API. Experiment C is therefore **not ready to run**. It may be reconsidered only if a viable, bounded, cancelable platform wake mechanism is identified and its target access and recovery behavior are reviewed first. Experiments A and B are still useful for distinguishing lock, process scheduling, and network behavior.
 

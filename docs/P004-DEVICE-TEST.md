@@ -1,13 +1,15 @@
 # P004 — Device Test & Hardware Verification Guidelines
 
+This procedure is a P004 milestone snapshot. The target was unavailable then; later operator-reported execution and assertion results are in [P010 hardware findings](P010-HARDWARE-FINDINGS.md). P004 schedule/restart tests and scheduled wake remain unverified.
+
 ## Hardware Status
 
 - **Device**: iPad mini 2 A1489 (Apple A7)
-- **Status**: **UNAVAILABLE / PENDING**
+- **P004 status at that milestone**: **UNAVAILABLE / PENDING**
 
 ## Verification Scope for P004
 
-Physical hardware tests for timed awake schedules and restart recovery remain **PENDING** until the iPad mini 2 becomes available.
+Physical hardware tests for timed awake schedules and restart recovery were **PENDING** at P004 and remain unverified in P010.
 
 ### Planned Physical Tests
 

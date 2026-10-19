@@ -1,4 +1,6 @@
-# P008 — Release Readiness
+# P008 — Release Readiness Snapshot
+
+This document records the P008 status before the October 18, 2026 device test. P010 supersedes its physical-device rows; current statuses are in [P010 release readiness](P010-RELEASE-READINESS.md). The P010 operator observations remain unreviewed and do not imply signed package acceptance.
 
 This repository matrix describes the source and local results. The generated matrix in the exact-SHA CI attestation artifact updates the hosted cloud gates using observed job results. Device rows remain independent of CI.
 

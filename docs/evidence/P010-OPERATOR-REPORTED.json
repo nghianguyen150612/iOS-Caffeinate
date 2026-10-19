@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "record_type": "operator-reported-hardware-observations",
+  "observation_date": "2026-10-18",
+  "evidence_origin": "OPERATOR_RECORDED",
+  "review_status": "REVIEW_REQUIRED",
+  "device": {
+    "model": "iPad mini 2 A1489",
+    "cpu": "Apple A7 ARM64",
+    "ios_version": "12.5.7",
+    "bootstrap": "Amethyst/Procursus rootful"
+  },
+  "source_identity": {
+    "repository_starting_sha": "67d2aa8d7009770822ea1bd8dc48a546fe63a64b",
+    "tested_binary_source_sha": null,
+    "tested_cli_sha256": null,
+    "tested_daemon_sha256": null
+  },
+  "signing_observation": {
+    "unsigned_ldid_S_exit_code": 137,
+    "kernel_message": "process-exec denied while updating label",
+    "effective_command_shape": "ldid -S<entitlements.plist>",
+    "profile_id": "amethyst-ios12-rootful",
+    "profile_contents": {
+      "com.apple.private.security.no-container": true
+    },
+    "tested_profile_sha256": null,
+    "signer_version": null,
+    "signer_sha256": null,
+    "observations": [
+      "CLI help exited 0",
+      "wake diagnostics exited 0",
+      "daemon started in foreground",
+      "SIGINT shutdown completed"
+    ],
+    "scope_note": "The observation supports this entitlement as effective in the tested bootstrap context; it does not establish a universal jailbreak requirement."
+  },
+  "iokit_observations": {
+    "create_symbol_resolved": true,
+    "release_symbol_resolved": true,
+    "events": [
+      {"kind": "probe", "assertion_id": 33628, "acquired": true, "released": true},
+      {"kind": "timed_hold", "assertion_id": 33700, "duration_seconds": 30, "released": true},
+      {"kind": "explicit_stop", "assertion_id": 33701, "released": true},
+      {"kind": "timed_hold", "assertion_id": 33702, "duration_seconds": 60, "released": true},
+      {"kind": "sigterm_cleanup", "assertion_id": 33720, "acquired_local_time": "20:11:50", "released_local_time": "20:11:52", "socket_and_process_cleanup": true},
+      {"kind": "network_trial", "assertion_id": 33721, "acquired_local_time": "20:15:01", "released_local_time": "20:18:01", "duration_seconds": 180}
+    ],
+    "time_zone_and_raw_logs": "not supplied",
+    "interpretation": "Successful native calls establish the observed assertion lifecycle, not guaranteed prevention of deep sleep."
+  },
+  "locked_screen_network_observations": {
+    "display_locked_throughout": true,
+    "observer": "independent Arch Linux machine",
+    "observation_window_local_time": "approximately 20:16:09–20:18:25; time zone not supplied",
+    "lan_ssh": {"authenticated_commands_succeeded": 24, "attempted": 24},
+    "tailscale_ssh": {"authenticated_commands_succeeded": 24, "attempted": 24},
+    "some_commands_succeeded_after_assertion_expiry": true,
+    "causal_effect_established": false,
+    "no_assertion_baseline": "PENDING",
+    "historical_addresses": "redacted and not retained"
+  },
+  "unverified": [
+    "Rootful .deb installation and acceptance",
+    "Signed package acceptance",
+    "Package upgrade and removal",
+    "Rollback and data preservation",
+    "Battery and thermal impact",
+    "Long idle reproducibility",
+    "Unattended 24/7 stability",
+    "Scheduled wake",
+    "No-assertion SSH baseline"
+  ],
+  "p009_review": {
+    "raw_device_logs_supplied": false,
+    "independent_provenance_records_supplied": false,
+    "P009_gates": {
+      "ios_runtime_verified": "REVIEW_REQUIRED",
+      "iokit_acquire_verified": "REVIEW_REQUIRED",
+      "iokit_release_verified": "REVIEW_REQUIRED",
+      "bounded_hold_verified": "REVIEW_REQUIRED",
+      "explicit_stop_verified": "REVIEW_REQUIRED",
+      "sigterm_cleanup_verified": "REVIEW_REQUIRED",
+      "screen_locked_lan_verified": "REVIEW_REQUIRED",
+      "screen_locked_tailscale_verified": "REVIEW_REQUIRED",
+      "package_integrity_verified": "INSUFFICIENT_EVIDENCE",
+      "signature_acceptance_verified": "INSUFFICIENT_EVIDENCE",
+      "installation_verified": "INSUFFICIENT_EVIDENCE",
+      "rollback_verified": "INSUFFICIENT_EVIDENCE",
+      "independent_no_assertion_comparison": "PENDING",
+      "battery_and_thermal": "PENDING",
+      "scheduled_wake": "UNVERIFIED",
+      "stable_release_authorization": "BLOCKED"
+    },
+    "human_review_field_is_not_approval": true
+  }
+}

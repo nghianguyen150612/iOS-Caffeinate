@@ -26,10 +26,24 @@ from validate_rootful_package import (  # noqa: E402
 )
 
 
-def macho_fixture(*, cpu_type: int = 0x0100000C, subtype: int = 0, min_os: int = 12 << 16, signed: bool = False) -> bytes:
-    commands = [struct.pack("<IIIIII", 0x32, 24, 2, min_os, 12 << 16, 0)]
+def macho_fixture(
+    *,
+    cpu_type: int = 0x0100000C,
+    subtype: int = 0,
+    min_os: int = 12 << 16,
+    signed: bool = False,
+    dependencies: tuple[str, ...] = ("/usr/lib/libSystem.B.dylib",),
+) -> bytes:
+    commands = [
+        struct.pack("<IIIIII", 0x32, 24, 2, min_os, 12 << 16, 0),
+        struct.pack("<II16sQQQQiiII", 0x19, 72, b"__LINKEDIT", 0x100000, 0, 0, 0, 7, 1, 0, 0),
+    ]
+    for dependency in dependencies:
+        encoded = dependency.encode("utf-8") + b"\x00"
+        size = (24 + len(encoded) + 7) & ~7
+        commands.append(struct.pack("<IIIIII", 0x0C, size, 24, 0, 0, 0) + encoded + b"\x00" * (size - 24 - len(encoded)))
     if signed:
-        commands.append(struct.pack("<IIII", 0x1D, 16, 64, 16))
+        commands.append(struct.pack("<IIII", 0x1D, 16, 32 + sum(map(len, commands)) + 16, 16))
     header = struct.pack(
         "<IiiIIIII",
         0xFEEDFACF,
@@ -41,15 +55,31 @@ def macho_fixture(*, cpu_type: int = 0x0100000C, subtype: int = 0, min_os: int =
         0,
         0,
     )
-    return header + b"".join(commands) + b"\x00" * 64
+    result = bytearray(header + b"".join(commands) + b"\x00" * 64 + (b"X" * 16 if signed else b""))
+    segment_offset = 32 + 24
+    struct.pack_into("<Q", result, segment_offset + 32, len(result))
+    struct.pack_into("<Q", result, segment_offset + 48, len(result))
+    return bytes(result)
 
 
-def write_source_inputs(path: Path, *, cpu_type: int = 0x0100000C, subtype: int = 0, min_os: int = 12 << 16, signed: bool = False) -> None:
+def write_source_inputs(
+    path: Path,
+    *,
+    cpu_type: int = 0x0100000C,
+    subtype: int = 0,
+    min_os: int = 12 << 16,
+    signed: bool = False,
+    extra_dependencies: tuple[str, ...] = (),
+) -> None:
     path.mkdir(parents=True, exist_ok=True)
     records = []
     for name in ("ios-caffeinate", "ios-caffeinated"):
+        dependencies = ("/usr/lib/libSystem.B.dylib",)
+        if name == "ios-caffeinated":
+            dependencies += ("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",)
+        dependencies += extra_dependencies
         executable = path / name
-        executable.write_bytes(macho_fixture(cpu_type=cpu_type, subtype=subtype, min_os=min_os, signed=signed))
+        executable.write_bytes(macho_fixture(cpu_type=cpu_type, subtype=subtype, min_os=min_os, signed=signed, dependencies=dependencies))
         executable.chmod(0o755)
         records.append(f"{hashlib.sha256(executable.read_bytes()).hexdigest()}  {name}")
     (path / "SHA256SUMS").write_text("\n".join(records) + "\n")
@@ -98,7 +128,7 @@ class RootfulPackageTests(unittest.TestCase):
     def test_package_name_version_architecture_and_hash(self) -> None:
         output = inspect_package(self.deb)
         self.assertIn("package=com.ioscaffeinate.cli", output)
-        self.assertIn("version=0.1.0-1", output)
+        self.assertIn("version=0.1.0~rc1-1", output)
         self.assertIn("architecture=iphoneos-arm", output)
         self.assertIn("result=PASS", output)
 
@@ -122,7 +152,11 @@ class RootfulPackageTests(unittest.TestCase):
             self.assertEqual((root / "usr/local/bin/ios-caffeinated").stat().st_mode & 0o777, 0o755)
 
     def test_macho_architecture_and_minimum_target(self) -> None:
-        info = validate_ios12_arm64(self.inputs / "ios-caffeinate", allow_signature=False)
+        info = validate_ios12_arm64(
+            self.inputs / "ios-caffeinate",
+            allow_signature=False,
+            expected_dependencies={"/usr/lib/libSystem.B.dylib"},
+        )
         self.assertEqual(info.architecture, "arm64")
         self.assertEqual(info.platform, "iOS")
         self.assertEqual(info.minimum_os, (12, 0, 0))
@@ -146,7 +180,7 @@ class RootfulPackageTests(unittest.TestCase):
     def test_existing_package_artifact_is_not_overwritten(self) -> None:
         output = self.work / "preexisting-output"
         output.mkdir()
-        name = "ioscaffeinate_0.1.0-1_iphoneos-arm_UNSIGNED-DEVICE-UNVERIFIED.deb"
+        name = "ioscaffeinate_0.1.0~rc1-1_iphoneos-arm_UNSIGNED-DEVICE-UNVERIFIED.deb"
         artifact = output / name
         artifact.write_bytes(b"keep existing file")
         result = self.run_builder(self.inputs, output)
@@ -168,6 +202,13 @@ class RootfulPackageTests(unittest.TestCase):
         result = self.run_builder(wrong)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("wrong Mach-O CPU type", result.stderr)
+
+    def test_unexpected_dynamic_dependency_is_rejected(self) -> None:
+        unexpected = self.work / "unexpected-dependency"
+        write_source_inputs(unexpected, extra_dependencies=("/usr/lib/libunexpected.dylib",))
+        result = self.run_builder(unexpected)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unexpected dynamic dependencies", result.stderr)
 
     def test_arm64e_only_input_is_rejected(self) -> None:
         arm64e = self.work / "arm64e"

@@ -1,6 +1,6 @@
 # iOS-Caffeinate
 
-Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides the daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds a read-only scheduled-wake capability report. P006 adds read-only server diagnostics, explicit bounded trials, health observations, readiness gates, and an external connectivity evidence schema. P007 adds rootful Debian packaging and safety checks. P008 integrates and audits P001–P007 and prepares a v0.1 cloud candidate. P009 adds offline evidence validation and replay for future supervised hardware tests. Real-device execution, signature acceptance, assertion lifecycle, package installation, and networking remain **PENDING** because the iPad is unavailable. Version 0.1 has not shipped and is not production-ready.
+Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds read-only scheduled-wake diagnostics. P006 adds server diagnostics, bounded trials, health observations, readiness gates, and connectivity evidence. P007 adds rootful Debian packaging. P008 integrates P001–P007; P009 adds offline evidence review. On October 18, 2026, the operator reported successful target-device execution with an explicit private no-container entitlement, IOKit assertion lifecycle, cleanup, and locked-screen LAN/Tailscale SSH observations. Those results still need P009 evidence review. Signed package installation, rollback, the no-assertion comparison, battery/thermal behavior, scheduled wake, and long-duration reliability remain pending or unverified. Version 0.1 has not shipped and is not production-ready.
 
 Executables: **ios-caffeinate** (CLI), **ios-caffeinated** (daemon). **ic** is a filesystem symlink to the CLI, never a second executable or shell alias. The socket remains `/var/run/ioscaffeinated.sock`.
 
@@ -40,7 +40,7 @@ ic server trial start --for 1m
 ic server trial stop
 ```
 
-P006 does not authorize unattended operation. The default server policy is `DISABLED`; missing, corrupt, or unsafe configuration fails closed. Hardware gates remain pending. Read [server-mode behavior](docs/P006-SERVER-MODE.md) and the [deferred device procedure](docs/P006-DEVICE-TEST.md) before any future iPad trial.
+P006 does not authorize unattended operation. The default server policy is `DISABLED`; missing, corrupt, or unsafe configuration fails closed. Read [server-mode behavior](docs/P006-SERVER-MODE.md) and the [P010 device acceptance procedure](docs/P010-DEVICE-ACCEPTANCE.md) before any package trial.
 
 ## Build and tests
 
@@ -59,13 +59,13 @@ macOS with Xcode and the official **iPhoneOS** SDK:
 python3 scripts/inspect-ios.py
 ```
 
-Outputs: `dist/ios-caffeinate`, `dist/ios-caffeinated`, relative symlink `dist/ic -> ios-caffeinate`, and `dist/SHA256SUMS`. CI also records the Xcode, iPhoneOS SDK, and Clang identifiers used for the build. The P008 workflow uploads **UNSIGNED, HARDWARE-UNVERIFIED** binaries, the inspection report, rootful `.deb`, checksums, and a run-specific release-candidate manifest and readiness attestation. The default build does not sign, install, deploy, or activate a service. The package builder can run an explicitly requested local `ldid -S` stage; see [P007 packaging](docs/P007-PACKAGING.md).
+Outputs: `dist/ios-caffeinate`, `dist/ios-caffeinated`, relative symlink `dist/ic -> ios-caffeinate`, and `dist/SHA256SUMS`. CI records the Xcode, iPhoneOS SDK, and Clang identifiers. CI artifacts remain **UNSIGNED, HARDWARE-UNVERIFIED**. Signing requires an explicitly supplied host-compatible `ldid` and the exact approved profile; see [P010 signing](docs/P010-SIGNING.md). No automatic install or service activation occurs.
 
 ## Rootful package
 
-P007 defines package `com.ioscaffeinate.cli` version `0.1.0-1`, Debian architecture `iphoneos-arm`, and thin ARM64 iOS 12.0 executables. The package architecture is distinct from the binaries' ARM64 CPU architecture. It carries unsigned binaries in CI, a genuine `ic` symlink, docs, a read-only manager, empty persistent/log directories, and the disabled launchd template staged under `/usr/share/ioscaffeinate/`. It does not activate launchd or seed server/schedule configuration. The manager is installed at `/usr/local/libexec/ioscaffeinate-manager`, outside writable state directories.
+The P010 release candidate uses package `com.ioscaffeinate.cli` version `0.1.0~rc1-1`, Debian architecture `iphoneos-arm`, and thin ARM64 iOS 12.0 executables. The Debian package architecture is distinct from the binaries' ARM64 CPU architecture. The package includes a genuine `ic` symlink, docs, a read-only manager, empty persistent/log directories, and the inactive launchd template under `/usr/share/ioscaffeinate/`. It does not activate launchd or seed server/schedule configuration. The manager is installed at `/usr/local/libexec/ioscaffeinate-manager`, outside writable state directories.
 
-Read [P007 packaging](docs/P007-PACKAGING.md), [validation](docs/P007-VALIDATION.md), [deferred device test](docs/P007-DEVICE-TEST.md), and [rollback](docs/P007-ROLLBACK.md) before using an artifact. The CI `.deb` is **UNSIGNED / DEVICE-UNVERIFIED**. Its archive and checksums are cloud evidence only; installation, signature acceptance, execution, assertion behavior, screen-locked connectivity, and 24/7 operation remain pending.
+Read [P010 signing](docs/P010-SIGNING.md), [package validation](docs/P010-PACKAGING-VALIDATION.md), and [device acceptance](docs/P010-DEVICE-ACCEPTANCE.md) before using an artifact. CI `.deb` files remain **UNSIGNED / DEVICE-UNVERIFIED**. A locally signed package is not device-accepted until the supervised installation gates pass.
 
 ## Rootful installation layout
 
@@ -101,10 +101,14 @@ python3 scripts/p009_evidence.py replay /path/to/evidence --json
 python3 scripts/p009_evidence.py report /path/to/evidence --format json
 ```
 
-Mock, simulated, and CI evidence cannot pass hardware gates. Complete physical-origin evidence still requires individual human review. The current project status remains `hardware_acceptance=PENDING`, `unattended_24_7=NOT_VALIDATED`, and `scheduled_wake=UNVERIFIED`; see [P009 readiness](docs/P009-READINESS.md), the [runbook](docs/P009-DEVICE-RUNBOOK.md), and [validation](docs/P009-VALIDATION.md).
+Mock, simulated, and CI evidence cannot pass hardware gates. The October 18, 2026 device observations are operator-reported and remain `REVIEW_REQUIRED`; package integrity, installation, and rollback are `INSUFFICIENT_EVIDENCE`. Current gates are in [P010 release readiness](docs/P010-RELEASE-READINESS.md), [operator findings](docs/P010-HARDWARE-FINDINGS.md), and the [P009 evidence format](docs/P009-EVIDENCE-FORMAT.md). `unattended_24_7=NOT_VALIDATED` and `scheduled_wake=UNVERIFIED` remain unchanged.
+
+## P010 hardware signing and RC1
+
+P010 adds the opt-in `amethyst-ios12-rootful` profile, exact entitlement extraction, source-to-signed-binary identity checks, final `.deb` validation, operator-reported evidence bundling, and the `v0.1.0-rc1` release process. The Debian version `0.1.0~rc1-1` sorts before `0.1.0-1`. The exact-source CI release manifest is an Actions artifact; it is not a signed installation package. See [P010 validation](docs/P010-VALIDATION.md) and [RC1 draft notes](docs/releases/v0.1.0-rc1.md).
 
 ## Scope and evidence
 
-Timed holds and scheduled awake windows are bounded to 24 hours. P004 schedule evaluation requires the daemon to be running; it does not wake a suspended system. There is no indefinite mode, GUI, tweak injection, Apple daemon change, scheduled-wake command, or automatic installation. P005 makes no 24/7 unattended reliability claim. P006 provides engineering and diagnostics only; all hardware gates remain pending. P007 cloud packaging engineering is implemented, but device validation remains pending. Package success does not authorize unattended operation.
+Timed holds and scheduled awake windows are bounded to 24 hours. P004 schedule evaluation requires the daemon to be running; it does not wake a suspended system. There is no indefinite mode, GUI, tweak injection, Apple daemon change, scheduled-wake command, or automatic installation. The reported IOKit success does not establish scheduled wake or prevention of deep sleep. Battery/thermal characterization, causal network comparison, package acceptance, rollback, and unattended 24/7 reliability remain open. Package success does not authorize unattended operation.
 
 See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P008 integration and evidence](docs/P008-INTEGRATION.md), [P009 evidence format](docs/P009-EVIDENCE-FORMAT.md), [P009 security](docs/P009-SECURITY.md), [P009 validation](docs/P009-VALIDATION.md), [P009 device runbook](docs/P009-DEVICE-RUNBOOK.md), [P007 package contract](docs/P007-PACKAGING.md), [P007 validation](docs/P007-VALIDATION.md), [P007 deferred device procedure](docs/P007-DEVICE-TEST.md), [P007 rollback](docs/P007-ROLLBACK.md), [P006 server-mode design](docs/P006-SERVER-MODE.md), [P006 validation](docs/P006-VALIDATION.md), [deferred P006 device tests](docs/P006-DEVICE-TEST.md), [P005 feasibility report](docs/P005-WAKE-FEASIBILITY.md), [P005 validation](docs/P005-VALIDATION.md), [deferred P005 device tests](docs/P005-DEVICE-TEST.md), [P004 schedule details](docs/P004-SCHEDULING.md), and earlier [device recovery instructions](docs/P003-DEVICE-TEST.md).

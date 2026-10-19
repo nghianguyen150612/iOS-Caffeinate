@@ -50,7 +50,7 @@ The implementation commit `e6d0d92e290c1eae4644fd06af7e9d420af602c8` passed both
 
 ## Hardware state
 
-- iPad mini 2 A1489 / Apple A7 / iOS 12.5.7: unavailable.
+- iPad mini 2 A1489 / Apple A7 / iOS 12.5.7: unavailable during P005; later operator-reported tests are in [P010 hardware findings](P010-HARDWARE-FINDINGS.md).
 - Screen lock and LAN/Tailscale reachability: pending.
 - `IOPMAssertionCreateWithName` target availability/effect: pending; current Apple API docs list macOS and Mac Catalyst, not iOS.
 - Scheduled wake: pending and unverified; no experiment or wake API call was made.
