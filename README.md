@@ -133,6 +133,40 @@ P014 adds a separate bounded recovery policy and a root-owned durable run journa
 
 P014 does not perform an automatic restart. `ELIGIBLE_FOR_ATTENDED_START` is a policy result only; `automatic_restart=no`. P013 `enable`, `start`, and `restart` remain fail-closed pending iOS 12 launchd compatibility, no launchd job is enabled, and the managed profile retains `KeepAlive=false`. Crash detection, exit classification, assertion cleanup, restart eligibility, actual process restart, launchd boot persistence, SSH reachability, OS awake state, and long-duration reliability remain separate capabilities. Device recovery remains pending. See [P014 architecture](docs/v0.2/P014-ARCHITECTURE.md), [restart policy](docs/v0.2/P014-RESTART-POLICY.md), [persistence](docs/v0.2/P014-PERSISTENCE.md), [security](docs/v0.2/P014-SECURITY.md), [schedule interaction](docs/v0.2/P014-SCHEDULE-INTERACTION.md), [device acceptance](docs/v0.2/P014-DEVICE-ACCEPTANCE.md), [validation](docs/v0.2/P014-VALIDATION.md), and [manifest](docs/v0.2/P014-MANIFEST.md).
 
+## P015 Server Mode v2 policy
+
+P015 adds strict schema v2 while preserving v1 `disabled` and `observe_only`. The `bounded_session` setting is only a policy request; it never starts a daemon, creates an assertion, enables launchd, resumes after a crash, or creates a schedule. Eligibility requires current reviewed P009-compatible physical evidence, a safe P014 recovery journal, no conflicting assertion, operator attendance, physical recovery, and known battery/thermal safety.
+
+Use read-only policy diagnostics:
+
+```sh
+ic server policy show
+ic server policy validate
+ic server policy explain
+ic server policy plan
+ic server policy migrate --dry-run
+```
+
+There is no `apply` command. Migration is preview-only and preserves v1 files. The 300-second maximum is the ceiling for a future separately authorized manual session. `ELIGIBLE_FOR_MANUAL_BOUNDED_SESSION` does not grant execution authorization.
+
+Illustrative simulated report; it is not device output:
+
+```text
+policy.mode=BOUNDED_SESSION
+policy.config_valid=yes
+decision=BLOCK_RECOVERY
+eligible=no
+execution_authorized=no
+runtime_activated=UNKNOWN
+recovery.journal=MISSING
+recovery.supervisor=UNVERIFIED
+evidence.battery_safety.state=PENDING
+evidence.thermal_safety.state=PENDING
+next_safe_step=resolve the P014 recovery blocker and review recovery status
+```
+
+P015 cloud completion is `P015_CLOUD_COMPLETE_DEVICE_POLICY_PENDING` until hardware evidence is separately reviewed. P016 should provide battery percentage, charging, thermal state, observation time, freshness, source, and confidence through a supported read-only interface. Unknown values must stay unavailable; P016 must not enable unattended operation. See [P015 architecture](docs/v0.2/P015-ARCHITECTURE.md), [schema](docs/v0.2/P015-POLICY-SCHEMA.md), [states](docs/v0.2/P015-POLICY-STATES.md), [decision matrix](docs/v0.2/P015-DECISION-MATRIX.md), [migration](docs/v0.2/P015-CONFIG-MIGRATION.md), [recovery integration](docs/v0.2/P015-RECOVERY-INTEGRATION.md), [security](docs/v0.2/P015-SECURITY.md), [device procedure](docs/v0.2/P015-DEVICE-ACCEPTANCE.md), [validation](docs/v0.2/P015-VALIDATION.md), and [manifest](docs/v0.2/P015-MANIFEST.md).
+
 ## Scope and evidence
 
 Timed holds and scheduled awake windows are bounded to 24 hours. P004 schedule evaluation requires the daemon to be running; it does not wake a suspended system. There is no indefinite mode, GUI, tweak injection, Apple daemon change, scheduled-wake command, or automatic installation. The reported IOKit success does not establish scheduled wake or prevention of deep sleep. Battery/thermal characterization, causal network comparison, package acceptance, rollback, and unattended 24/7 reliability remain open. Package success does not authorize unattended operation.

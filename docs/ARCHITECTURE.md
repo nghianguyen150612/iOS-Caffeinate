@@ -81,6 +81,12 @@ The root-owned `/var/lib/ioscaffeinate/recovery-state.json` journal records a du
 
 Crash detection, exit classification, assertion cleanup, restart eligibility, process restart, launchd boot persistence, SSH reachability, OS awake state, and long-duration reliability remain distinct. Cloud mocks and simulations validate policy and persistence behavior only; they do not establish kernel cleanup after SIGKILL or physical reliability.
 
+## P015 Server Mode v2 Policy
+
+P015 extends the P006 configuration path with strict schema v2 while preserving v1 `disabled` and `observe_only`. The pure C11 evaluator in `src/server_policy.c` consumes a requested operation, bounded duration, read-only runtime observation, P014 journal status, reviewed P009-compatible hardware evidence, and explicit battery/thermal availability. It returns a deterministic decision and all known blocker reasons. Missing data remains missing; CI, mocks, simulations, and unreviewed operator statements cannot satisfy hardware gates.
+
+`ic server policy show|validate|explain|plan|migrate --dry-run` only read state. Migration does not write. A config writer is gated. `ELIGIBLE_FOR_MANUAL_BOUNDED_SESSION` only permits a later separate authorization step; execution authorization remains false and P015 includes no executor. The policy path never calls launchctl, IOKit, service start/restart, or schedule mutation. P013 `KeepAlive=false` and P014 cleanup/recovery gates remain unchanged. Battery/thermal measurement integration belongs to P016; SSH/Tailscale reachability does not prove awake state.
+
 ## Timed Awake, Scheduled Awake, and Scheduled Wake
 
 These are separate capabilities:

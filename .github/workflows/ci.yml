@@ -664,3 +664,167 @@ jobs:
             build/p014/package-tests.txt
             build/p014/source-commit.txt
             build/p014/managed-live.plist
+
+  p015-server-policy-validation:
+    needs: [p014-crash-recovery-validation]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Compile pure C11 policy/schema and filesystem cases
+        env:
+          P015_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$P015_SOURCE_SHA"
+          mkdir -p build/p015
+          cc -std=c11 -Wall -Wextra -Werror -O2 \
+            -DIOSCAFFEINATE_SERVER_MODE_TESTING \
+            tests/p015_policy_unit.c src/server_mode.c src/server_policy.c src/recovery.c \
+            -o build/p015/policy-unit
+          build/p015/policy-unit 2>&1 | tee build/p015/policy-tests.txt
+          git rev-parse HEAD > build/p015/source-commit.txt
+      - name: Build CLI and validate read-only policy diagnostics and regressions
+        run: |
+          set -euo pipefail
+          ./scripts/build-linux-test.sh
+          python3 -m unittest discover -s tests -p 'test_p015_policy_cli.py' -v 2>&1 | tee build/p015/cli-tests.txt
+          python3 tests/integration.py 2>&1 | tee build/p015/integration-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p009_evidence.py' -v 2>&1 | tee build/p015/p009-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p011_preflight.py' -v 2>&1 | tee build/p015/p011-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p012_research.py' -v 2>&1 | tee build/p015/p012-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p013_service.py' -v 2>&1 | tee build/p015/p013-tests.txt
+          python3 -m unittest discover -s tests/packaging -p 'test_p010_signing.py' -v 2>&1 | tee build/p015/p010-tests.txt
+          python3 -m unittest discover -s tests/packaging -p 'test_rootful_package.py' -v 2>&1 | tee build/p015/package-tests.txt
+      - name: Recheck P013 lifecycle and P014 cleanup gates
+        run: |
+          set -euo pipefail
+          cc -std=c11 -Wall -Wextra -Werror -O2 \
+            -DIOSCAFFEINATE_SERVICE_TESTING -DIOSCAFFEINATE_RECOVERY_TESTING \
+            tests/p014_recovery_unit.c src/service.c src/recovery.c \
+            -o build/p015/p014-recovery-unit
+          build/p015/p014-recovery-unit 2>&1 | tee build/p015/p014-tests.txt
+          cc -std=c11 -Wall -Wextra -Werror -O2 -DIOSCAFFEINATE_SERVICE_TESTING \
+            tests/p013_service_unit.c src/service.c src/recovery.c \
+            -o build/p015/p013-service-unit
+          build/p015/p013-service-unit 2>&1 | tee build/p015/p013-native-tests.txt
+          cc -std=c11 -Wall -Wextra -Werror -O2 -DIOSCAFFEINATE_TEST_MOCK \
+            tests/daemon_readonly_test.c src/power.c src/schedule.c src/recovery.c \
+            -o build/p015/daemon-readonly
+          build/p015/daemon-readonly 2>&1 | tee build/p015/daemon-readonly-tests.txt
+      - name: Verify policy module has no runtime or power-control calls
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path("src/server_policy.c").read_text(encoding="utf-8")
+          forbidden = ("launchctl", "IOKit", "system(", "fork(", "execv(", "posix_spawn(", "socket(", "open(", "unlink(", "rename(")
+          found = [token for token in forbidden if token in source]
+          if found:
+              raise SystemExit("policy evaluator contains side-effect interface: " + ",".join(found))
+          print("policy side-effect interface check: PASS")
+          PY
+      - name: Write deterministic exact-source validation manifest
+        env:
+          P015_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          root = Path("build/p015")
+          source_sha = os.environ["P015_SOURCE_SHA"]
+          if (root / "source-commit.txt").read_text().strip() != source_sha:
+              raise SystemExit("P015 report source SHA differs from checked out source")
+          base_sha = "5dbf08176f3219c082e5b8f48bac43461b3fdd96"
+          merge_base = subprocess.check_output(
+              ["git", "merge-base", source_sha, base_sha], text=True
+          ).strip()
+          expected = {
+              "cli-tests.txt": "p015_readonly_cli_and_migration",
+              "p009-tests.txt": "p009_evidence",
+              "p011-tests.txt": "p011_release_preflight",
+              "p012-tests.txt": "p012_idle_research",
+              "p013-tests.txt": "p013_lifecycle",
+              "p010-tests.txt": "p010_signing",
+              "package-tests.txt": "rootful_package",
+          }
+          suites = {}
+          for filename, label in expected.items():
+              content = (root / filename).read_text()
+              match = re.search(r"Ran (\d+) tests? in ", content)
+              if not match or "\nOK\n" not in content:
+                  raise SystemExit(f"{label} suite did not pass")
+              suites[label] = {"tests": int(match.group(1)), "result": "PASS"}
+          policy_count = re.search(r"P015 policy/schema/filesystem checks: (\d+) passed",
+                                   (root / "policy-tests.txt").read_text())
+          if not policy_count:
+              raise SystemExit("P015 native checks did not report a pass count")
+          suites["p015_c11_policy_schema_filesystem"] = {
+              "checks": int(policy_count.group(1)), "result": "PASS"
+          }
+          recovery_count = re.search(r"P014 recovery policy and persistence checks: (\d+) passed",
+                                     (root / "p014-tests.txt").read_text())
+          if not recovery_count:
+              raise SystemExit("P014 native recovery checks did not report a pass count")
+          suites["p014_recovery"] = {"checks": int(recovery_count.group(1)), "result": "PASS"}
+          for label in ("linux_protocol_integration", "p013_native_lifecycle", "daemon_readonly"):
+              suites[label] = {"result": "PASS"}
+          document = {
+              "manifest_version": 1,
+              "milestone": "P015",
+              "status": "P015_CLOUD_COMPLETE_DEVICE_POLICY_PENDING",
+              "branch": "ios/p015-server-mode-v2",
+              "base_sha": base_sha,
+              "merge_base": merge_base,
+              "source_sha": source_sha,
+              "validation_class": "SIMULATED_AND_MOCK_ONLY",
+              "suites": suites,
+              "config_writer": "GATED_NOT_IMPLEMENTED",
+              "package_installation": "NOT_PERFORMED",
+              "launchd_mutation": "NOT_PERFORMED",
+              "launchd_auto_activation": "NOT_ENABLED",
+              "automatic_assertion": "NOT_IMPLEMENTED",
+              "real_power_assertions": "NOT_ACQUIRED",
+              "physical_device_acceptance": "PENDING",
+              "p009_schema_modified": False,
+          }
+          (root / "P015-VALIDATION.json").write_text(
+              json.dumps(document, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+          )
+          (root / "P015-VALIDATION.txt").write_text(
+              "\n".join((f"{key}={value}" for key, value in (
+                  ("status", document["status"]), ("branch", document["branch"]),
+                  ("base_sha", base_sha), ("merge_base", merge_base),
+                  ("source_sha", source_sha), ("validation_class", document["validation_class"]),
+                  ("launchd_mutation", document["launchd_mutation"]),
+                  ("real_power_assertions", document["real_power_assertions"]),
+                  ("physical_device_acceptance", document["physical_device_acceptance"]))))) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P015-server-policy-validation
+          if-no-files-found: error
+          path: |
+            build/p015/P015-VALIDATION.json
+            build/p015/P015-VALIDATION.txt
+            build/p015/source-commit.txt
+            build/p015/policy-tests.txt
+            build/p015/cli-tests.txt
+            build/p015/integration-tests.txt
+            build/p015/p009-tests.txt
+            build/p015/p010-tests.txt
+            build/p015/p011-tests.txt
+            build/p015/p012-tests.txt
+            build/p015/p013-tests.txt
+            build/p015/p014-tests.txt
+            build/p015/p013-native-tests.txt
+            build/p015/daemon-readonly-tests.txt
+            build/p015/package-tests.txt
