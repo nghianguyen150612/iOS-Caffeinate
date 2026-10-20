@@ -378,3 +378,91 @@ jobs:
             dist/package/release-candidate.json
             dist/package/P008-CI-ATTESTATION.md
             dist/package/P008-RELEASE-READINESS.md
+
+  p012-idle-research-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify P012 protocol and trial-format JSON
+        run: |
+          set -euo pipefail
+          mkdir -p build/p012
+          python3 -m json.tool experiments/p012/protocol-v1.json > /dev/null
+          python3 -m json.tool experiments/p012/protocol-v1.schema.json > /dev/null
+          python3 -m json.tool experiments/p012/trial-record-v1.schema.json > /dev/null
+          python3 scripts/p012_trial.py validate > build/p012/protocol-validation.json
+      - name: Compile P012 standard-library tools
+        run: |
+          python3 -m py_compile \
+            scripts/p012_common.py \
+            scripts/p012_host_probe.py \
+            scripts/p012_trial.py \
+            scripts/p012_analyze.py \
+            tests/p012_fixtures.py \
+            tests/test_p012_research.py
+      - name: Run P012 offline protocol, measurement, safety, privacy, analysis, and P009 mapping tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_p012_research.py' -v 2>&1 | tee build/p012/p012-tests.txt
+      - name: Rerun existing P009 validator regression for compatibility
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_p009_evidence.py' -v 2>&1 | tee build/p012/p009-compatibility-tests.txt
+      - name: Produce deterministic SIMULATED analysis and source record
+        run: |
+          set -euo pipefail
+          python3 tests/p012_fixtures.py build/p012/simulated-all-success.json --scenario all-success
+          source_sha="$(git rev-parse HEAD)"
+          printf '%s\n' "$source_sha" > build/p012/source-commit.txt
+          python3 scripts/p012_analyze.py build/p012/simulated-all-success.json \
+            --source-sha "$source_sha" --format json --output build/p012/analysis-report.json
+          python3 scripts/p012_analyze.py build/p012/simulated-all-success.json \
+            --source-sha "$source_sha" --format markdown --output build/p012/analysis-report.md
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("build/p012/analysis-report.json").read_text())
+          assert report["counts"]["records"] == 24
+          assert report["evidence_origins"] == ["SIMULATED"]
+          assert report["evidence_strength"]["strong_evidence_established"] is False
+          assert all(group["success_percent"] == 100.0 for group in report["groups"])
+          assert all(item["outcome"] == "NO_OBSERVABLE_DIFFERENCE" for item in report["comparisons"])
+          assert all(item["outcome"] == "NO_OBSERVABLE_DIFFERENCE" for item in report["route_comparisons"])
+          assert report["source_commit_sha"] == Path("build/p012/source-commit.txt").read_text().strip()
+          PY
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          test_log = Path("build/p012/p012-tests.txt").read_text()
+          match = re.search(r"Ran (\d+) tests? in ", test_log)
+          if not match or "\nOK\n" not in test_log:
+              raise SystemExit("P012 offline regression suite did not finish successfully")
+          sha = Path("build/p012/source-commit.txt").read_text().strip()
+          Path("build/p012/P012-VALIDATION.txt").write_text("\n".join([
+              "P012 protocol validation: PASS",
+              f"P012 offline tests: {match.group(1)} PASS",
+              "P009 v1 compatibility tests: PASS",
+              "analysis fixture origin: SIMULATED",
+              "physical device access: NOT_PERFORMED",
+              "SSH probes: MOCKED_OR_DRY_RUN_ONLY",
+              "power assertions: NOT_CREATED",
+              f"checked_out_source_sha: {sha}",
+          ]) + "\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P012-idle-research-validation
+          if-no-files-found: error
+          path: |
+            build/p012/P012-VALIDATION.txt
+            build/p012/protocol-validation.json
+            build/p012/p012-tests.txt
+            build/p012/p009-compatibility-tests.txt
+            build/p012/source-commit.txt
+            build/p012/simulated-all-success.json
+            build/p012/analysis-report.json
+            build/p012/analysis-report.md

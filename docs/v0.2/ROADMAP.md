@@ -20,11 +20,11 @@ Feature implementation, physical-device acceptance, and production reliability c
 
 **Depends on:** P011 cloud baseline; P011 installed-package acceptance and physical recovery before any device trial.
 
-**Deliverables:** preregistered A/B/C/D conditions, measurement protocol, confounder controls, and an analysis that separates daemon availability, assertion state, display lock, LAN, and Tailscale.
+**Deliverables:** preregistered protocol v1; four explicit conditions; a one-shot attended host SSH probe; operator trial recording; offline analysis; P009 v1 event proposals where representable; deterministic tests and CI artifact; research, operator, format, analysis, evidence, validation, and manifest documentation.
 
-**Safety constraints:** attended trials only; bounded assertions; quiet idle intervals before sparse probes; no implication that SSH reachability proves prevention of sleep.
+**Safety constraints:** no physical trials before P011 installed-package acceptance, separately authorized installation, installed runtime verification, confirmed acquire/release cleanup, direct physical recovery, operator presence, and battery/thermal review. Each trial has one route and at most one SSH command after a quiet period. No automated device action, unbounded hold, host-key bypass, or implication that SSH reachability proves prevention of sleep.
 
-**Validation and completion:** cloud protocol review can complete independently. Device results need separate LAN and Tailscale observations, a no-assertion baseline, timebase and uncertainty records, cleanup evidence, and P009 review. P012 must not claim battery, thermal, or sleep-prevention effects from connectivity alone.
+**Validation and completion:** cloud tooling and synthetic analysis can complete independently of the iPad. Device results need the preregistered A/B/C/D comparisons, separate LAN and Tailscale observations, locked-screen and quiet-period confirmations, battery/thermal/charging/route/timebase records, actual acquire/release cleanup, counterbalanced route order, physical recovery, and P009 human review. P012 must not claim battery, thermal, OS-suspend, or sleep-prevention effects from SSH reachability alone. Hardware remains `PENDING` until separately reviewed.
 
 ### P013 — Opt-in LaunchDaemon lifecycle management
 
@@ -115,4 +115,6 @@ P004 ─────────────────────────
 P011 ───────────────────────────────> P018 ────┘
 ```
 
-P012 cloud protocol work can start while P011 physical package testing is pending. P012 device experiments, and every later state-changing device trial, still depend on P011 package acceptance and a confirmed physical recovery path. P019 production reliability certification is a separate gate from feature implementation and from v0.1.0's public stable channel.
+P012 cloud engineering is complete on stacked branch `ios/p012-controlled-idle-power-research` while P011 physical package testing remains pending. P012 device experiments, and every later state-changing device trial, still depend on P011 package acceptance and a confirmed physical recovery path. P019 production reliability certification is a separate gate from feature implementation and from v0.1.0's public stable channel.
+
+P012 preserves the P009 event vocabulary and records the P009 v1 mapping limitation rather than changing historical acceptance semantics. The October 18, 2026 observations remain operator-reported, used manually staged binaries, lack a no-assertion baseline, and are not P012 trial data. See [P012 research questions](P012-RESEARCH-QUESTIONS.md), [protocol](P012-EXPERIMENT-PROTOCOL.md), [operator runbook](P012-OPERATOR-RUNBOOK.md), [measurement format](P012-MEASUREMENT-FORMAT.md), [analysis](P012-ANALYSIS.md), [evidence matrix](P012-EVIDENCE-MATRIX.md), [validation](P012-VALIDATION.md), and [manifest](P012-MANIFEST.md).

@@ -113,6 +113,12 @@ The subsequent public [v0.1.0 stable release](https://github.com/nghianguyen1506
 
 P011 verifies the published stable artifact and prepares a read-only device preflight and supervised acceptance procedure. Its physical installation, installed-binary, rollback, power, and reliability gates remain pending. See the [v0.2 roadmap](docs/v0.2/ROADMAP.md), [P011 device procedure](docs/v0.2/P011-DEVICE-ACCEPTANCE.md), [evidence matrix](docs/v0.2/P011-EVIDENCE-MATRIX.md), and [validation commands](docs/v0.2/P011-VALIDATION.md).
 
+## P012 controlled idle research
+
+P012 adds a preregistered A/B/C/D research protocol, an inert-by-default host SSH probe, an operator record controller, a deterministic offline analyzer, and a conservative P009 v1 event mapper. The probe requires `--run-attended`, an operator-supplied destination, a completed quiet period, locked-screen/state confirmations, P011 package/runtime prerequisites, and direct recovery before it can connect. Tests use subprocess mocks. P012 does not automate device operations, infer assertion cleanup, or claim that SSH or an IOKit API call proves OS sleep behavior. No P012 hardware trials were run during cloud engineering.
+
+P011 installed-package acceptance and its exact `ldid` provenance gate remain pending, so the iPad procedure is not ready to run. The October 18 operator observations remain separate operator-reported evidence and are not P012 trial data. See [P012 questions](docs/v0.2/P012-RESEARCH-QUESTIONS.md), [protocol](docs/v0.2/P012-EXPERIMENT-PROTOCOL.md), [operator runbook](docs/v0.2/P012-OPERATOR-RUNBOOK.md), [measurement format](docs/v0.2/P012-MEASUREMENT-FORMAT.md), [analysis](docs/v0.2/P012-ANALYSIS.md), [evidence matrix](docs/v0.2/P012-EVIDENCE-MATRIX.md), [validation](docs/v0.2/P012-VALIDATION.md), and [manifest](docs/v0.2/P012-MANIFEST.md).
+
 ## Scope and evidence
 
 Timed holds and scheduled awake windows are bounded to 24 hours. P004 schedule evaluation requires the daemon to be running; it does not wake a suspended system. There is no indefinite mode, GUI, tweak injection, Apple daemon change, scheduled-wake command, or automatic installation. The reported IOKit success does not establish scheduled wake or prevention of deep sleep. Battery/thermal characterization, causal network comparison, package acceptance, rollback, and unattended 24/7 reliability remain open. Package success does not authorize unattended operation.
