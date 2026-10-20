@@ -14,7 +14,7 @@ CLANG_VERSION="$("$CLANG" --version | head -n 1)"
 mkdir -p dist
 FLAGS=(-std=c11 -O2 -Wall -Wextra -Werror -target arm64-apple-ios12.0 -isysroot "$SDK" -Wl,-no_adhoc_codesign)
 "$CLANG" "${FLAGS[@]}" src/daemon.c src/schedule.c src/power.c -framework CoreFoundation -o dist/ios-caffeinated
-"$CLANG" "${FLAGS[@]}" src/cli.c src/schedule.c src/wake_capability.c src/server_mode.c -o dist/ios-caffeinate
+"$CLANG" "${FLAGS[@]}" src/cli.c src/schedule.c src/wake_capability.c src/server_mode.c src/service.c -o dist/ios-caffeinate
 python3 - "$SDK" "$SDK_VERSION" "$XCODE_VERSION" "$CLANG_VERSION" <<'PY'
 import json
 import sys

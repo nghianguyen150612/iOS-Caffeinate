@@ -141,6 +141,25 @@ class Integration(unittest.TestCase):
         self.call("start", "--for", "5m", exe=alias)
         self.call("stop", exe=alias)
 
+    def test_service_shutdown_protocol_confirms_release_before_exit(self):
+        proc = self.start()
+        self.call("start", "--for", "1m")
+        self.assertIn("active=yes", self.call("status").stdout)
+        reply = self.raw(b"SHUTDOWN\n")
+        self.assertIn("OK shutdown=accepted assertion_released=yes", reply)
+        self.assertEqual(proc.wait(timeout=4), 0)
+        self.assertFalse(os.path.lexists(self.path))
+
+    def test_service_shutdown_does_not_claim_failed_release(self):
+        proc = self.start(IOSCAFFEINATE_MOCK_FAIL_RELEASE="1")
+        self.call("start", "--for", "1m")
+        reply = self.raw(b"SHUTDOWN\n")
+        self.assertIn("ERR shutdown assertion release", reply)
+        self.assertIsNone(proc.poll())
+        status = self.call("status")
+        self.assertIn("state=RELEASE_FAILED", status.stdout)
+        self.assertIn("release_pending=yes", status.stdout)
+
     def test_wake_status_is_read_only_and_unverified(self):
         state = ("{\n"
                  "  \"version\": 1,\n"
