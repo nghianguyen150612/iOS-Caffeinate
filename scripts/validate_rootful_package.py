@@ -112,7 +112,7 @@ def validate_archive_members(members: list[tarfile.TarInfo]) -> dict[str, tarfil
     return entries
 
 
-def expected_package_paths() -> set[str]:
+def expected_package_paths(source_commit_sha: str | None = None, source_tree_clean: bool | None = None) -> set[str]:
     root = Path(__file__).resolve().parents[1]
     files = {
         "usr/local/bin/ios-caffeinate",
@@ -126,10 +126,39 @@ def expected_package_paths() -> set[str]:
         "usr/share/doc/ioscaffeinate/README.md",
         "usr/share/doc/ioscaffeinate/LICENSE",
     }
-    for source in (root / "docs").rglob("*"):
-        if source.is_file() and not source.is_symlink():
-            relative = source.relative_to(root)
-            files.add("usr/share/doc/ioscaffeinate/" + relative.as_posix())
+    document_paths: set[str] = set()
+    if source_commit_sha is not None and source_tree_clean is True:
+        require(re.fullmatch(r"[0-9a-f]{40}", source_commit_sha) is not None, "package source SHA is invalid")
+        try:
+            tree = subprocess.run(
+                ["git", "ls-tree", "-r", "-z", "--full-tree", source_commit_sha, "--", "docs"],
+                cwd=root,
+                check=False,
+                capture_output=True,
+            )
+        except OSError as error:
+            raise ValueError(f"BLOCKED: git is required to inspect the clean package source tree: {error}") from None
+        require(tree.returncode == 0, "BLOCKED: package source commit is unavailable for exact documentation validation")
+        for record in tree.stdout.split(b"\0"):
+            if not record:
+                continue
+            metadata, separator, raw_path = record.partition(b"\t")
+            require(bool(separator), "invalid git tree entry while checking packaged documentation")
+            mode = metadata.split(b" ", 1)[0]
+            if mode not in (b"100644", b"100755"):
+                continue
+            try:
+                relative = raw_path.decode("utf-8")
+            except UnicodeDecodeError:
+                raise ValueError("package documentation path is not valid UTF-8") from None
+            require(relative.startswith("docs/") and ".." not in PurePosixPath(relative).parts, "unsafe documentation path in package source tree")
+            document_paths.add(relative)
+    else:
+        for source in (root / "docs").rglob("*"):
+            if source.is_file() and not source.is_symlink():
+                document_paths.add(source.relative_to(root).as_posix())
+    for relative in document_paths:
+        files.add("usr/share/doc/ioscaffeinate/" + relative)
     directories = {"var", "var/lib", "var/lib/ioscaffeinate", "var/log", "var/log/ioscaffeinate"}
     for file_path in files:
         parent = PurePosixPath(file_path).parent
@@ -137,6 +166,10 @@ def expected_package_paths() -> set[str]:
             directories.add(parent.as_posix())
             parent = parent.parent
     return files | directories | {"."}
+
+
+def validate_package_path_set(actual_paths: set[str], expected_paths: set[str]) -> None:
+    require(actual_paths == expected_paths, "package file manifest differs from the approved payload layout")
 
 
 def validate_installed_modes(entries: dict[str, tarfile.TarInfo]) -> None:
@@ -214,13 +247,7 @@ def inspect_package(deb: Path, ldid: Path | None = None) -> str:
     tar_bytes = subprocess.run(["dpkg-deb", "--fsys-tarfile", str(deb)], check=True, capture_output=True).stdout
     with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:*") as archive:
         entries = validate_archive_members(archive.getmembers())
-        expected_paths = expected_package_paths()
         signed_profile_present = SIGNING_PROFILE_PATH in entries
-        if signed_profile_present:
-            expected_paths.add(SIGNING_PROFILE_PATH)
-            expected_paths.add("usr/share/ioscaffeinate/signing")
-        require(set(entries) == expected_paths, "package file manifest differs from the approved payload layout")
-        validate_installed_modes(entries)
         for path, expected_mode in (
             ("usr/local/bin/ios-caffeinate", 0o755),
             ("usr/local/bin/ios-caffeinated", 0o755),
@@ -254,6 +281,12 @@ def inspect_package(deb: Path, ldid: Path | None = None) -> str:
         require(package_build.get("package_version") == fields["Version"], "package build manifest version mismatch")
         require(package_build.get("architecture") == "iphoneos-arm", "package build manifest architecture mismatch")
         require(re.fullmatch(r"[0-9a-f]{40}", package_build.get("source_commit_sha", "")) is not None, "package build manifest source SHA is missing or invalid")
+        expected_paths = expected_package_paths(package_build["source_commit_sha"], package_build.get("source_tree_clean"))
+        if signed_profile_present:
+            expected_paths.add(SIGNING_PROFILE_PATH)
+            expected_paths.add("usr/share/ioscaffeinate/signing")
+        validate_package_path_set(set(entries), expected_paths)
+        validate_installed_modes(entries)
         signing = package_build.get("signing")
         require(isinstance(signing, dict), "package build manifest signing record is invalid")
         require(type(package_build.get("source_tree_clean")) is bool, "package build manifest tree state is invalid")

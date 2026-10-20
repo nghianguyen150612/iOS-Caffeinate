@@ -1,5 +1,7 @@
 # Roadmap — iOS-Caffeinate
 
+The public GitHub stable release **v0.1.0** has shipped from main baseline `0cfdc645dc1d67ddc4320a00bb114763b9669b66`. Its signed Debian package is explicitly device-unverified; publication did not pass installation, P009 evidence review, rollback, power-behavior, or reliability gates. The v0.2 roadmap continues in [docs/v0.2/ROADMAP.md](v0.2/ROADMAP.md).
+
 | Milestone | Deliverable | Status |
 |---|---|---|
 | P001 | Native C CLI/daemon, bounded hold, mock tests, unsigned iOS cross-build and disabled launchd template | Baseline `069ad94eb344da08d414c9478b6e212146c8fc28` verified |
@@ -9,9 +11,10 @@
 | P005 | Scheduled-wake feasibility, read-only capability diagnostics, tests, and deferred hardware procedure | Cloud engineering and exact-commit CI complete; hardware PENDING; scheduled wake UNVERIFIED |
 | P006 | Server-mode foundation, health monitoring, safety policy, connectivity evidence, and deferred hardware validation plan | Engineering implemented; hardware PENDING; 24/7 NOT VALIDATED |
 | P007 | Rootful `.deb` packaging, installation safety, artifact verification, rollback and regression testing | Integrated at the P007 merge baseline; package remains unsigned and hardware validation is PENDING |
-| P008 | Full P001–P007 integration audit, regression, package consistency, release manifest and readiness gates | Cloud candidate validation is tied to the exact P008 source SHA; hardware validation is PENDING; v0.1 has not shipped |
+| P008 | Full P001–P007 integration audit, regression, package consistency, release manifest and readiness gates | Cloud candidate validation was tied to the exact P008 source SHA; the public v0.1.0 release was published subsequently; hardware validation remains PENDING |
 | P009 | Versioned device-evidence contract, offline validator/replay, readiness gates, integrity checks, operator runbook, and CI | Cloud engineering implemented; exact-final-SHA CI pending; all physical gates PENDING; scheduled wake UNVERIFIED; 24/7 NOT VALIDATED |
-| P010 | Opt-in hardware signing profile, signed rootful package validation, operator-evidence integration, controlled idle comparison, and RC1 readiness | Cloud implementation and deterministic validation complete; exact-source PR CI is the final source gate; operator-reported observations need P009 review; package acceptance and rollback pending; stable release BLOCKED |
+| P010 | Opt-in hardware signing profile, signed rootful package validation, operator-evidence integration, controlled idle comparison, and RC1 readiness | Cloud implementation prepared the signed v0.1.0 package; public stable tag/release shipped afterward; operator-reported observations still need P009 review; installed-package acceptance and rollback remain PENDING |
+| P011 | Verify the published v0.1.0 package and prepare supervised hardware acceptance | Cloud preflight, tests, CI, and documentation are in progress; installation, installed-binary execution, rollback, and operational gates remain physical PENDING; see [P011 validation](v0.2/P011-VALIDATION.md) |
 
 P004/P005 hardware gate: iPad binary execution, IOKit create/release results, a bounded first timed hold, STOP/expiry/SIGTERM cleanup, controlled screen-lock observations, separate LAN and Tailscale measurements, and confirmed physical recovery. The operator reported several of these observations on 2026-10-18; they remain subject to P009 evidence review. API acceptance alone cannot pass network or scheduled-wake gates. P005 does not run device experiments and does not add a wake alarm command. Cloud CI does not pass device gates.
 
@@ -19,4 +22,4 @@ P005 was integrated at verified SHA `77f3f15dda5c75f10e40b48fc0575d47fa38b80e`. 
 
 P009 starts at the verified P008 source SHA `256611b97004f798c7dadd41ff25c8ebf95b6db5` on a stacked branch targeting `release/p008-v01-integration`. Offline P009 fixture results do not establish physical acceptance. P010 records later operator-reported observations without upgrading P009 acceptance gates. See [P009 validation](P009-VALIDATION.md), [P009 project readiness](P009-READINESS.md), and [P010 findings](P010-HARDWARE-FINDINGS.md).
 
-P010 uses base SHA `67d2aa8d7009770822ea1bd8dc48a546fe63a64b` and branch `fix/p010-hardware-signing-rc1`. It targets `v0.1.0-rc1` / Debian `0.1.0~rc1-1`. Exact-source CI generates an unsigned release manifest; any signed candidate is built separately with the explicit host-compatible signer and must pass a later supervised package-acceptance session. P010 does not install packages, activate launchd, publish a release, or authorize stable v0.1.0.
+P010 used base SHA `67d2aa8d7009770822ea1bd8dc48a546fe63a64b` and branch `fix/p010-hardware-signing-rc1`. It targeted `v0.1.0-rc1` / Debian `0.1.0~rc1-1`. The subsequent main baseline `0cfdc645dc1d67ddc4320a00bb114763b9669b66` published the public v0.1.0 stable release. This release-channel event does not change P010's hardware findings: the signed stable package is still uninstalled, package acceptance and rollback are pending, and the operator-reported observations still require P009 review. P011 begins at that main baseline on `ios/p011-signed-package-acceptance`; its device runbook is [P011-DEVICE-ACCEPTANCE.md](v0.2/P011-DEVICE-ACCEPTANCE.md).
