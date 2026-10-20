@@ -797,15 +797,19 @@ jobs:
           (root / "P015-VALIDATION.json").write_text(
               json.dumps(document, sort_keys=True, indent=2) + "\n", encoding="utf-8"
           )
+          report_lines = [
+              f"status={document['status']}",
+              f"branch={document['branch']}",
+              f"base_sha={base_sha}",
+              f"merge_base={merge_base}",
+              f"source_sha={source_sha}",
+              f"validation_class={document['validation_class']}",
+              f"launchd_mutation={document['launchd_mutation']}",
+              f"real_power_assertions={document['real_power_assertions']}",
+              f"physical_device_acceptance={document['physical_device_acceptance']}",
+          ]
           (root / "P015-VALIDATION.txt").write_text(
-              "\n".join((f"{key}={value}" for key, value in (
-                  ("status", document["status"]), ("branch", document["branch"]),
-                  ("base_sha", base_sha), ("merge_base", merge_base),
-                  ("source_sha", source_sha), ("validation_class", document["validation_class"]),
-                  ("launchd_mutation", document["launchd_mutation"]),
-                  ("real_power_assertions", document["real_power_assertions"]),
-                  ("physical_device_acceptance", document["physical_device_acceptance"]))))) + "\n",
-              encoding="utf-8",
+              "\n".join(report_lines) + "\n", encoding="utf-8"
           )
           PY
       - uses: actions/upload-artifact@v4
