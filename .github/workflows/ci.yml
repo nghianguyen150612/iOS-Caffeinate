@@ -548,6 +548,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
       - name: Compile C11 recovery policy and filesystem fault-injection tests
         env:
           P014_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
