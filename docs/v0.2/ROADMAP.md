@@ -40,21 +40,21 @@ Feature implementation, physical-device acceptance, and production reliability c
 
 **Depends on:** P013 lifecycle controls and P009 cleanup evidence.
 
-**Deliverables:** bounded restart policy, crash classification, backoff, observable loop protection, and explicit stop behavior.
+**Deliverables:** bounded deterministic C11 restart eligibility policy, versioned exit classification, protected durable run journal, cleanup-aware assertion gate, read-only P013 diagnostics, crash and filesystem fault injection, exact-source CI evidence, and a supervised acceptance runbook.
 
-**Safety constraints:** never restart into an indefinite assertion; restart limits fail closed; a failed release remains visible and blocks another trial.
+**Safety constraints:** no production automatic restart or launchd mutation; `KeepAlive=false` remains in the managed profile; missing, corrupt, unclean, or uncertain recovery state blocks assertion acquisition; release failure and unknown assertion ownership remain blockers; no stale socket or absent PID is treated as cleanup confirmation.
 
-**Validation and completion:** fault-injection tests, restart-loop limits, state-recovery checks, and attended crash/restart trials. CI fault tests do not certify long-duration reliability.
+**Validation and completion:** deterministic fault-injection tests, backoff and attempt-limit checks, journal ownership and atomic-write checks, schedule reacquisition regression tests, P013 fail-closed tests, and exact-head CI. Physical cleanup and supervisor behavior remain PENDING; cloud tests do not certify long-duration reliability. See [P014 validation](P014-VALIDATION.md).
 
 ### P015 — Server Mode v2 policy engine
 
-**Depends on:** P012 research; P013 lifecycle controls; P014 restart safeguards.
+**Depends on:** P012 research; P013 lifecycle controls; P014 recovery policy. P014 supplies a cleanup and recovery eligibility input only; it does not supply an active supervisor or verified automatic restart.
 
 **Deliverables:** versioned policy evaluation for bounded server sessions, explicit readiness reasons, policy migration, and a read-only explain/doctor path.
 
-**Safety constraints:** opt-in policy, conservative defaults, no hidden indefinite hold, and no automatic interpretation of network reachability as proof of awake state.
+**Safety constraints:** opt-in policy, conservative defaults, no hidden indefinite hold, no automatic interpretation of network reachability as proof of awake state, and no assumption that launchd mutation, restart execution, unattended reliability, or SSH availability has been verified.
 
-**Validation and completion:** policy unit/property tests, migration tests, negative configuration cases, and supervised policy transitions on the target device.
+**Validation and completion:** policy unit/property tests, migration tests, negative configuration cases, and supervised policy transitions on the target device. P015 must keep recovery blocked when P014 cleanup is unresolved and must report supervisor capability separately from policy eligibility.
 
 ### P016 — Health, battery and thermal monitoring
 

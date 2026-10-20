@@ -67,6 +67,9 @@ typedef int (*service_test_runner_fn)(void *context, const char *subcommand,
                                       int *exit_status);
 void service_test_set_runner(service_test_runner_fn runner, void *context);
 int service_test_preflight(const char *action, const service_policy_facts_t *facts);
+int service_test_recovery_reset(const char *path, int daemon_absent,
+                                int socket_absent, int lock_safe);
+int service_test_recovery_lock_acquire(const char *path);
 #endif
 
 #endif

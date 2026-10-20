@@ -10,6 +10,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "service.h"
+#include "recovery.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -21,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -148,6 +150,15 @@ typedef struct {
     const char *socket_state;
     const char *state;
     const char *last_shutdown;
+    char recovery_state[40];
+    char recovery_last_exit[48];
+    char recovery_attempt_budget[16];
+    char recovery_cooldown[24];
+    char recovery_cleanup[32];
+    char recovery_restart_eligibility[48];
+    char recovery_supervisor[24];
+    char recovery_runtime[8];
+    char recovery_blocker[192];
     int live_plist_exists;
     int live_plist_enabled;
     char daemon_reply[4096];
@@ -740,7 +751,7 @@ static int daemon_query(char *reply, size_t reply_cap, const char **ipc_state,
 }
 
 static const char *field_value(const char *reply, const char *key, const char *fallback) {
-    static char fields[8][64];
+    static char fields[24][64];
     static unsigned slot;
     char *result = fields[slot++ % 8];
     char pattern[48];
@@ -753,6 +764,106 @@ static const char *field_value(const char *reply, const char *key, const char *f
     if (n == 0 || (p[n] && p[n] != ' ')) return fallback;
     memcpy(result, p, n); result[n] = '\0';
     return result;
+}
+
+static void inspect_recovery_journal(service_snapshot_t *s) {
+    recovery_record_t record;
+    char detail[192] = {0};
+    recovery_store_result_t state = recovery_store_load(RECOVERY_DEFAULT_PATH, geteuid(),
+                                                         &record, detail, sizeof(detail));
+    snprintf(s->recovery_supervisor, sizeof(s->recovery_supervisor), "UNVERIFIED");
+    snprintf(s->recovery_runtime, sizeof(s->recovery_runtime), "no");
+    snprintf(s->recovery_restart_eligibility, sizeof(s->recovery_restart_eligibility),
+             "BLOCKED_SUPERVISOR_UNVERIFIED");
+    if (state != RECOVERY_STORE_OK) {
+        snprintf(s->recovery_state, sizeof(s->recovery_state), "RECOVERY_UNVERIFIED");
+        snprintf(s->recovery_last_exit, sizeof(s->recovery_last_exit), "UNKNOWN_UNOBSERVED");
+        snprintf(s->recovery_attempt_budget, sizeof(s->recovery_attempt_budget), "UNKNOWN/3");
+        snprintf(s->recovery_cooldown, sizeof(s->recovery_cooldown), "UNVERIFIED");
+        snprintf(s->recovery_cleanup, sizeof(s->recovery_cleanup), "UNVERIFIED");
+        snprintf(s->recovery_blocker, sizeof(s->recovery_blocker),
+                 "recovery journal is missing, corrupt, unsafe, or unsupported; reviewed cleanup is required");
+        return;
+    }
+    snprintf(s->recovery_last_exit, sizeof(s->recovery_last_exit), "%s",
+             recovery_exit_class_name(record.last_exit_class));
+    snprintf(s->recovery_attempt_budget, sizeof(s->recovery_attempt_budget), "%u/%u",
+             record.attempt_count <= RECOVERY_MAX_ATTEMPTS ?
+             RECOVERY_MAX_ATTEMPTS - record.attempt_count : 0, RECOVERY_MAX_ATTEMPTS);
+    snprintf(s->recovery_cleanup, sizeof(s->recovery_cleanup), "%s",
+             record.last_exit_class == RECOVERY_EXIT_OPERATOR_REVIEWED_CLEANUP ? "OPERATOR_REVIEWED" :
+             (record.last_exit_class == RECOVERY_EXIT_RELEASE_FAILURE ||
+              record.last_exit_class == RECOVERY_EXIT_ASSERTION_OWNERSHIP_UNKNOWN) ? "REVIEW_REQUIRED" :
+             recovery_cleanup_state_name(record.cleanup_state));
+    snprintf(s->recovery_cooldown, sizeof(s->recovery_cooldown), "%s",
+             record.attempt_count ? "UNVERIFIED" : "INACTIVE");
+    if (record.process_state != RECOVERY_PROCESS_CLEAN ||
+        record.cleanup_state != RECOVERY_CLEANUP_CONFIRMED ||
+        record.last_exit_class == RECOVERY_EXIT_RELEASE_FAILURE ||
+        record.last_exit_class == RECOVERY_EXIT_ASSERTION_OWNERSHIP_UNKNOWN) {
+        snprintf(s->recovery_state, sizeof(s->recovery_state), "RECOVERY_UNVERIFIED");
+        snprintf(s->recovery_restart_eligibility, sizeof(s->recovery_restart_eligibility),
+                 "BLOCKED_CLEANUP_UNVERIFIED");
+        snprintf(s->recovery_blocker, sizeof(s->recovery_blocker),
+                 "prior daemon exit or assertion cleanup is not confirmed; elapsed time cannot clear it");
+    } else {
+        snprintf(s->recovery_state, sizeof(s->recovery_state),
+                 record.last_exit_class == RECOVERY_EXIT_OPERATOR_REVIEWED_CLEANUP ?
+                 "HEALTHY" : "EXIT_CONFIRMED");
+        snprintf(s->recovery_blocker, sizeof(s->recovery_blocker),
+                 "no compatible recovery supervisor is active; automatic restart is disabled");
+    }
+}
+
+static int recovery_lock_acquire_path(const char *path, uid_t expected_owner) {
+    if (!path || path[0] != '/') return -1;
+    struct stat before;
+    int existed = lstat(path, &before) == 0;
+    if (!existed && errno != ENOENT) return -1;
+    if (existed && (!S_ISREG(before.st_mode) || before.st_uid != expected_owner || before.st_nlink != 1 ||
+                    (before.st_mode & 07777) != 0600)) return -1;
+    int flags = O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC;
+    int fd = existed ? open(path, flags) : open(path, flags | O_CREAT | O_EXCL, 0600);
+    if (fd < 0) return -1;
+    struct stat opened, named;
+    if (!existed && fchmod(fd, 0600) != 0) { close(fd); return -1; }
+    if (fstat(fd, &opened) != 0 || lstat(path, &named) != 0 ||
+        !S_ISREG(opened.st_mode) || opened.st_uid != expected_owner || opened.st_nlink != 1 ||
+        (opened.st_mode & 07777) != 0600 ||
+        (existed && (opened.st_dev != before.st_dev || opened.st_ino != before.st_ino)) ||
+        opened.st_dev != named.st_dev || opened.st_ino != named.st_ino ||
+        flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static int recovery_lock_acquire(void) {
+    return recovery_lock_acquire_path("/var/run/ioscaffeinated.sock.lock", 0);
+}
+
+static int recovery_reset_record(const char *path, uid_t owner, int daemon_absent,
+                                 int socket_absent, int lock_held,
+                                 char *detail, size_t detail_cap) {
+    if (!daemon_absent || !socket_absent || !lock_held) {
+        if (detail && detail_cap)
+            snprintf(detail, detail_cap, "daemon, socket, or lock state is active or ambiguous");
+        return -1;
+    }
+    recovery_record_t record;
+    recovery_store_result_t state = recovery_store_load(path, owner, &record, detail, detail_cap);
+    if (state == RECOVERY_STORE_MISSING) recovery_record_init(&record);
+    else if (state != RECOVERY_STORE_OK) {
+        if (detail && detail_cap)
+            snprintf(detail, detail_cap, "corrupt, unsafe, or unsupported recovery state cannot be reset");
+        return -1;
+    }
+    if (recovery_reset_reviewed(&record, 1, 1) != 0) {
+        if (detail && detail_cap) snprintf(detail, detail_cap, "reviewed recovery reset was rejected");
+        return -1;
+    }
+    return recovery_store_save_atomic(path, owner, &record, detail, detail_cap);
 }
 
 static void inspect_service(service_snapshot_t *s) {
@@ -822,6 +933,7 @@ static void inspect_service(service_snapshot_t *s) {
     s->ipc = "UNAVAILABLE";
     s->socket_state = "UNKNOWN";
     (void)daemon_query(s->daemon_reply, sizeof(s->daemon_reply), &s->ipc, &s->socket_state);
+    inspect_recovery_journal(s);
     s->runtime = strcmp(s->ipc, "RESPONSIVE") == 0 ? "RUNNING_CONFIRMED" :
                  strcmp(s->registration, "REGISTERED") == 0 && pid_is_stopped(s->registration_pid) ? "STOPPED_CONFIRMED" :
                  strcmp(s->registration, "REGISTERED") == 0 && pid_is_positive(s->registration_pid) ? "RUNNING_UNVERIFIED" :
@@ -837,6 +949,28 @@ static void inspect_service(service_snapshot_t *s) {
     s->state_invariant = strcmp(s->ipc, "RESPONSIVE") == 0 ? field_value(s->daemon_reply, "state_invariant", "UNKNOWN") : "UNKNOWN";
     s->release_pending = strcmp(s->ipc, "RESPONSIVE") == 0 ? field_value(s->daemon_reply, "release_pending", "UNKNOWN") : "UNKNOWN";
     s->last_shutdown = "UNAVAILABLE";
+    if (strcmp(s->ipc, "RESPONSIVE") == 0) {
+        snprintf(s->recovery_state, sizeof(s->recovery_state), "%s",
+                 field_value(s->daemon_reply, "recovery_state", "RECOVERY_UNVERIFIED"));
+        snprintf(s->recovery_last_exit, sizeof(s->recovery_last_exit), "%s",
+                 field_value(s->daemon_reply, "recovery_last_exit", "UNKNOWN_UNOBSERVED"));
+        snprintf(s->recovery_attempt_budget, sizeof(s->recovery_attempt_budget), "%s",
+                 field_value(s->daemon_reply, "recovery_attempt_budget", "UNKNOWN/3"));
+        snprintf(s->recovery_cooldown, sizeof(s->recovery_cooldown), "%s",
+                 field_value(s->daemon_reply, "recovery_cooldown", "UNVERIFIED"));
+        snprintf(s->recovery_cleanup, sizeof(s->recovery_cleanup), "%s",
+                 field_value(s->daemon_reply, "recovery_cleanup", "UNVERIFIED"));
+        snprintf(s->recovery_restart_eligibility, sizeof(s->recovery_restart_eligibility), "%s",
+                 field_value(s->daemon_reply, "recovery_restart_eligibility", "BLOCKED_SUPERVISOR_UNVERIFIED"));
+        snprintf(s->recovery_supervisor, sizeof(s->recovery_supervisor), "%s",
+                 field_value(s->daemon_reply, "recovery_supervisor", "UNVERIFIED"));
+        snprintf(s->recovery_runtime, sizeof(s->recovery_runtime), "%s",
+                 field_value(s->daemon_reply, "recovery_runtime_activated", "no"));
+        snprintf(s->recovery_blocker, sizeof(s->recovery_blocker), "%s",
+                 strcmp(s->recovery_state, "RECOVERY_UNVERIFIED") == 0 ?
+                 "daemon journal or prior assertion cleanup is unverified" :
+                 "supervisor compatibility is unverified; automatic restart is disabled");
+    }
 
     if (strcmp(s->package, "INCONSISTENT") == 0 || strcmp(s->staged, "INCONSISTENT") == 0 ||
         strcmp(s->managed_plist, "INCONSISTENT") == 0 || strcmp(s->ipc, "UNSAFE") == 0 ||
@@ -992,6 +1126,17 @@ static service_policy_facts_t policy_facts_from_snapshot(const char *action,
 int service_test_preflight(const char *action, const service_policy_facts_t *facts) {
     return service_policy_preflight(action, facts);
 }
+
+int service_test_recovery_reset(const char *path, int daemon_absent,
+                                int socket_absent, int lock_safe) {
+    char detail[192] = {0};
+    return recovery_reset_record(path, geteuid(), daemon_absent, socket_absent,
+                                 lock_safe, detail, sizeof(detail));
+}
+
+int service_test_recovery_lock_acquire(const char *path) {
+    return recovery_lock_acquire_path(path, geteuid());
+}
 #endif
 
 static void report_snapshot(FILE *out, const service_snapshot_t *s) {
@@ -1023,10 +1168,23 @@ static void report_snapshot(FILE *out, const service_snapshot_t *s) {
             "ssh_reachability=UNVERIFIED\n"
             "readiness=BLOCKED\n"
             "recovery_blocker=%s\n"
+            "recovery.state=%s\n"
+            "recovery.last_exit_category=%s\n"
+            "recovery.attempt_budget=%s\n"
+            "recovery.cooldown=%s\n"
+            "recovery.cleanup_confidence=%s\n"
+            "recovery.restart_eligibility=%s\n"
+            "recovery.blocker=%s\n"
+            "recovery.supervisor_compatibility=%s\n"
+            "recovery.runtime_activated=%s\n"
+            "automatic_restart=no\n"
             "changed=no\n",
             s->state, s->package, s->package_database, s->staged, s->managed_plist, s->enablement, s->registration,
             s->registration_pid, s->launchctl_path, s->help_state, s->runtime, s->ipc, s->socket_state,
-            s->daemon_state, s->assertion, s->release_pending, s->state_invariant, s->last_shutdown, s->blocker);
+            s->daemon_state, s->assertion, s->release_pending, s->state_invariant, s->last_shutdown, s->blocker,
+            s->recovery_state, s->recovery_last_exit, s->recovery_attempt_budget, s->recovery_cooldown,
+            s->recovery_cleanup, s->recovery_restart_eligibility, s->recovery_blocker,
+            s->recovery_supervisor, s->recovery_runtime);
     static const char *const commands[] = {
         "load", "unload", "start", "stop", "enable", "disable", "bootstrap", "bootout"
     };
@@ -1120,8 +1278,80 @@ static int service_stop(FILE *out, FILE *err) {
 }
 
 int service_command(int argc, char **argv, FILE *out, FILE *err) {
-    if (argc != 1 || !argv || !out || !err) {
-        fprintf(err ? err : stderr, "usage: ic service status|doctor|plan|enable|disable|start|stop|restart\n");
+    if (!argv || !out || !err) {
+        fprintf(err ? err : stderr, "usage: ic service status|doctor|plan|recovery status|recovery plan|recovery reset --reviewed-cleanup --reviewed-supervisor-state|enable|disable|start|stop|restart\n");
+        return SERVICE_EXIT_USAGE;
+    }
+    if (argc == 4 && strcmp(argv[0], "recovery") == 0 && strcmp(argv[1], "reset") == 0 &&
+        strcmp(argv[2], "--reviewed-cleanup") == 0 &&
+        strcmp(argv[3], "--reviewed-supervisor-state") == 0) {
+        if (geteuid() != 0) {
+            fprintf(err, "service recovery reset: root privilege is required; changed=no\n");
+            return SERVICE_EXIT_PRIVILEGE;
+        }
+        int lock_fd = recovery_lock_acquire();
+        if (lock_fd < 0) {
+            fprintf(err,
+                    "service recovery reset: cannot hold the daemon socket lock; daemon state may be active or ambiguous; changed=no\n");
+            return SERVICE_EXIT_UNSAFE;
+        }
+        service_snapshot_t s;
+        inspect_service(&s);
+        int daemon_absent = strcmp(s.registration, "NOT_REGISTERED") == 0 &&
+                            strcmp(s.ipc, "RESPONSIVE") != 0 &&
+                            strcmp(s.runtime, "NOT_OBSERVED") == 0;
+        int socket_absent = strcmp(s.socket_state, "ABSENT") == 0;
+        char detail[192] = {0};
+        if (recovery_reset_record(RECOVERY_DEFAULT_PATH, 0, daemon_absent,
+                                  socket_absent, 1, detail, sizeof(detail)) != 0) {
+            close(lock_fd);
+            fprintf(err,
+                    "service recovery reset: operator-reviewed cleanup requires a confirmed unregistered service, absent socket, held daemon lock, and trusted journal; %s; changed=no\n",
+                    detail);
+            return SERVICE_EXIT_UNSAFE;
+        }
+        close(lock_fd);
+        fprintf(out,
+                "operation=recovery_reset\n"
+                "recovery.last_exit_category=OPERATOR_REVIEWED_CLEANUP\n"
+                "recovery.cleanup_confidence=OPERATOR_REVIEWED\n"
+                "automatic_restart=no\n"
+                "launchd_mutation=UNVERIFIED\n"
+                "device_cleanup_evidence=NOT_COLLECTED\n"
+                "changed=yes\n");
+        return ferror(out) ? SERVICE_EXIT_ERROR : SERVICE_EXIT_OK;
+    }
+    if (argc == 2 && strcmp(argv[0], "recovery") == 0 &&
+        (strcmp(argv[1], "status") == 0 || strcmp(argv[1], "plan") == 0)) {
+        service_snapshot_t s;
+        inspect_service(&s);
+        if (strcmp(argv[1], "status") == 0) {
+            fprintf(out, "iOS-Caffeinate recovery status\n");
+            report_snapshot(out, &s);
+            return ferror(out) ? SERVICE_EXIT_ERROR : SERVICE_EXIT_OK;
+        }
+        fprintf(out,
+                "iOS-Caffeinate recovery plan\n"
+                "recovery.state=%s\n"
+                "recovery.last_exit_category=%s\n"
+                "recovery.attempt_budget=%s\n"
+                "recovery.cooldown=%s\n"
+                "recovery.cleanup_confidence=%s\n"
+                "recovery.restart_eligibility=%s\n"
+                "recovery.blocker=%s\n"
+                "recovery.supervisor_compatibility=%s\n"
+                "recovery.runtime_activated=%s\n"
+                "automatic_restart=no\n"
+                "launchd_mutation=UNVERIFIED\n"
+                "manual_start_eligibility=BLOCKED_P013_MUTATION_GATE\n"
+                "changed=no\n",
+                s.recovery_state, s.recovery_last_exit, s.recovery_attempt_budget,
+                s.recovery_cooldown, s.recovery_cleanup, s.recovery_restart_eligibility,
+                s.recovery_blocker, s.recovery_supervisor, s.recovery_runtime);
+        return ferror(out) ? SERVICE_EXIT_ERROR : SERVICE_EXIT_OK;
+    }
+    if (argc != 1) {
+        fprintf(err, "usage: ic service status|doctor|plan|recovery status|recovery plan|recovery reset --reviewed-cleanup --reviewed-supervisor-state|enable|disable|start|stop|restart\n");
         return SERVICE_EXIT_USAGE;
     }
     const char *action = argv[0];
@@ -1144,12 +1374,15 @@ int service_command(int argc, char **argv, FILE *out, FILE *err) {
                     "check.daemon_state=%s\n"
                     "check.assertion_state=%s\n"
                     "check.assertion_release_pending=%s\n"
+                    "check.recovery=%s\n"
+                    "check.recovery_cleanup=%s\n"
                     "check.boot_persistence=UNVERIFIED\n"
                     "check.hardware_acceptance=PENDING\n"
                     "readiness=BLOCKED\n"
                     "unattended_authorized=no\n",
                     s.package, s.staged, s.managed_plist, s.help_state, s.registration,
-                    s.ipc, s.daemon_state, s.assertion, s.release_pending);
+                    s.ipc, s.daemon_state, s.assertion, s.release_pending,
+                    s.recovery_state, s.recovery_cleanup);
             return ferror(out) ? SERVICE_EXIT_ERROR : SERVICE_EXIT_OK;
         }
         fprintf(out,
@@ -1167,6 +1400,10 @@ int service_command(int argc, char **argv, FILE *out, FILE *err) {
                 "daemon.state=%s\n"
                 "assertion.state=%s\n"
                 "assertion.release_pending=%s\n"
+                "recovery.state=%s\n"
+                "recovery.restart_eligibility=%s\n"
+                "recovery.runtime_activated=%s\n"
+                "automatic_restart=no\n"
                 "automatic_activation=no\n"
                 "automatic_assertion=no\n"
                 "managed_profile=Disabled-false RunAtLoad-false KeepAlive-false\n"
@@ -1180,6 +1417,7 @@ int service_command(int argc, char **argv, FILE *out, FILE *err) {
                 "changed=no\n",
                 s.state, s.package, s.package_database, s.staged, s.managed_plist, s.enablement, s.help_state,
                 s.registration, s.runtime, s.ipc, s.daemon_state, s.assertion, s.release_pending,
+                s.recovery_state, s.recovery_restart_eligibility, s.recovery_runtime,
                 IOSCAFFEINATE_SERVICE_EXECUTABLE, IOSCAFFEINATE_SERVICE_LABEL);
         return ferror(out) ? SERVICE_EXIT_ERROR : SERVICE_EXIT_OK;
     }

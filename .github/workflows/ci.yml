@@ -479,10 +479,10 @@ jobs:
           mkdir -p build/p013 build/test
           ./scripts/build-linux-test.sh
           cc -std=c11 -Wall -Wextra -Werror -O2 -DIOSCAFFEINATE_SERVICE_TESTING \
-            tests/p013_service_unit.c src/service.c -o build/p013/service-unit
+            tests/p013_service_unit.c src/service.c src/recovery.c -o build/p013/service-unit
           build/p013/service-unit 2>&1 | tee build/p013/native-tests.txt
           cc -std=c11 -Wall -Wextra -Werror -O2 -DIOSCAFFEINATE_TEST_MOCK \
-            tests/daemon_readonly_test.c src/power.c src/schedule.c -o build/p013/daemon-readonly
+            tests/daemon_readonly_test.c src/power.c src/schedule.c src/recovery.c -o build/p013/daemon-readonly
           build/p013/daemon-readonly 2>&1 | tee build/p013/daemon-readonly-tests.txt
           build/p013/service-unit --emit-managed build/p013/managed-live.plist
       - name: Validate disabled package template and managed KeepAlive false profile
@@ -541,3 +541,125 @@ jobs:
             build/p013/package-tests.txt
             build/p013/source-commit.txt
             build/p013/managed-live.plist
+
+  p014-crash-recovery-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Compile C11 recovery policy and filesystem fault-injection tests
+        env:
+          P014_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$P014_SOURCE_SHA"
+          mkdir -p build/p014
+          cc -std=c11 -Wall -Wextra -Werror -O2 \
+            -DIOSCAFFEINATE_RECOVERY_TESTING -DIOSCAFFEINATE_SERVICE_TESTING \
+            tests/p014_recovery_unit.c src/service.c src/recovery.c \
+            -o build/p014/recovery-unit
+          build/p014/recovery-unit 2>&1 | tee build/p014/policy-tests.txt
+          git rev-parse HEAD > build/p014/source-commit.txt
+      - name: Build C11 CLI and run deterministic crash and schedule simulations
+        run: |
+          set -euo pipefail
+          ./scripts/build-linux-test.sh
+          python3 tests/integration.py 2>&1 | tee build/p014/integration-tests.txt
+      - name: Revalidate P013 fail-closed lifecycle and inert managed profile
+        env:
+          P014_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          cc -std=c11 -Wall -Wextra -Werror -O2 -DIOSCAFFEINATE_SERVICE_TESTING \
+            tests/p013_service_unit.c src/service.c src/recovery.c -o build/p014/p013-service-unit
+          build/p014/p013-service-unit 2>&1 | tee build/p014/p013-native-tests.txt
+          cc -std=c11 -Wall -Wextra -Werror -O2 -DIOSCAFFEINATE_TEST_MOCK \
+            tests/daemon_readonly_test.c src/power.c src/schedule.c src/recovery.c \
+            -o build/p014/daemon-readonly
+          build/p014/daemon-readonly 2>&1 | tee build/p014/daemon-readonly-tests.txt
+          build/p014/p013-service-unit --emit-managed build/p014/managed-live.plist
+          python3 scripts/p013_validate.py \
+            --managed build/p014/managed-live.plist \
+            --source-sha "$P014_SOURCE_SHA" \
+            --output build/p014/P013-VALIDATION.txt
+      - name: Run P009 through P013 Python and package regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_p009_evidence.py' -v 2>&1 | tee build/p014/p009-tests.txt
+          python3 -m unittest discover -s tests/packaging -p 'test_p010_signing.py' -v 2>&1 | tee build/p014/p010-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p011_preflight.py' -v 2>&1 | tee build/p014/p011-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p012_research.py' -v 2>&1 | tee build/p014/p012-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p013_service.py' -v 2>&1 | tee build/p014/p013-tests.txt
+          python3 -m unittest discover -s tests/packaging -p 'test_rootful_package.py' -v 2>&1 | tee build/p014/package-tests.txt
+      - name: Record deterministic exact-source validation summary
+        env:
+          P014_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path("build/p014")
+          source = os.environ["P014_SOURCE_SHA"]
+          if Path("build/p014/source-commit.txt").read_text().strip() != source:
+              raise SystemExit("P014 source SHA differs from the checked-out source")
+          records = [
+              "validation_class=SIMULATED_AND_MOCK_ONLY",
+              "p014_policy_persistence_filesystem_fault_injection=PASS",
+          ]
+          for label, name in (
+              ("P014 integration", "integration-tests.txt"),
+              ("P009 evidence", "p009-tests.txt"),
+              ("P010 signing", "p010-tests.txt"),
+              ("P011 preflight", "p011-tests.txt"),
+              ("P012 research", "p012-tests.txt"),
+              ("P013 lifecycle", "p013-tests.txt"),
+              ("rootful package", "package-tests.txt"),
+          ):
+              text = (root / name).read_text()
+              match = re.search(r"Ran (\d+) tests? in ", text)
+              if not match or "\nOK\n" not in text:
+                  raise SystemExit(f"{label} did not pass")
+              records.append(f"{label}: {match.group(1)} PASS")
+          policy = (root / "policy-tests.txt").read_text()
+          match = re.search(r"P014 recovery policy and persistence checks: (\d+) passed", policy)
+          if not match:
+              raise SystemExit("P014 native recovery checks did not pass")
+          records.append(f"P014 native policy/persistence checks: {match.group(1)} PASS")
+          for name, label in (("p013-native-tests.txt", "P013 native lifecycle"),
+                              ("daemon-readonly-tests.txt", "daemon read-only status")):
+              text = (root / name).read_text()
+              if "passed" not in text:
+                  raise SystemExit(f"{label} did not pass")
+              records.append(f"{label}: PASS")
+          records.extend((
+              "launchd_mutation=NOT_PERFORMED",
+              "launchd_auto_activation=NOT_ENABLED",
+              "real_power_assertions=NOT_ACQUIRED",
+              "device_crash_recovery=UNVERIFIED",
+              "source_sha=" + source,
+          ))
+          (root / "P014-VALIDATION.txt").write_text("\n".join(records) + "\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P014-crash-recovery-validation
+          if-no-files-found: error
+          path: |
+            build/p014/P014-VALIDATION.txt
+            build/p014/P013-VALIDATION.txt
+            build/p014/policy-tests.txt
+            build/p014/integration-tests.txt
+            build/p014/p013-native-tests.txt
+            build/p014/daemon-readonly-tests.txt
+            build/p014/p009-tests.txt
+            build/p014/p010-tests.txt
+            build/p014/p011-tests.txt
+            build/p014/p012-tests.txt
+            build/p014/p013-tests.txt
+            build/p014/package-tests.txt
+            build/p014/source-commit.txt
+            build/p014/managed-live.plist

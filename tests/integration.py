@@ -25,6 +25,8 @@ class Integration(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = str(Path(self.temp.name) / "test.sock")
         self.sched_path = str(Path(self.temp.name) / "schedules.json")
+        self.recovery_path = str(Path(self.temp.name) / "recovery-state.json")
+        self._write_recovery_record("CLEAN", "CONFIRMED", "GRACEFUL_CONFIRMED")
         self.server_config_path = str(Path(self.temp.name) / "server-mode.json")
         self.processes = []
         self.addCleanup(self.shutdown)
@@ -37,11 +39,33 @@ class Integration(unittest.TestCase):
             proc.stderr.close()
 
     def launch(self, **env):
-        proc = subprocess.Popen([str(DAEMON), "--socket", self.path, "--schedules", self.sched_path, "--foreground"],
+        proc = subprocess.Popen([str(DAEMON), "--socket", self.path, "--schedules", self.sched_path,
+                                 "--recovery-state", self.recovery_path, "--foreground"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                                 text=True, env={**os.environ, **env})
         self.processes.append(proc)
         return proc
+
+    def _write_recovery_record(self, process_state, cleanup_state, exit_class):
+        record = {
+            "schema_version": 1,
+            "policy_version": 1,
+            "generation": 1,
+            "process_state": process_state,
+            "cleanup_state": cleanup_state,
+            "last_exit_class": exit_class,
+            "last_exit_signal": 0,
+            "attempts": [],
+            "last_event_id": 0,
+            "last_failure_event_id": 0,
+            "last_failure_monotonic_ns": 0,
+            "last_failure_wall_utc_seconds": 0,
+            "last_failure_clock_id": "",
+            "healthy_since_monotonic_ns": 0,
+            "healthy_clock_id": "",
+        }
+        Path(self.recovery_path).write_text(json.dumps(record, indent=2) + "\n")
+        os.chmod(self.recovery_path, 0o600)
 
     def start(self, **env):
         proc = self.launch(**env)
@@ -691,6 +715,102 @@ class Integration(unittest.TestCase):
         status_recheck = self.call("status").stdout
         self.assertIn("active=no", status_recheck)
 
+    def test_recovery_journal_fields_and_read_only_service_commands(self):
+        self.start()
+        status = self.call("status").stdout
+        for field in (
+            "recovery_state=HEALTHY",
+            "recovery_attempt_budget=3/3",
+            "recovery_runtime_activated=no",
+            "recovery_schedule_gate=OPEN",
+        ):
+            self.assertIn(field, status)
+        for action in ("status", "plan"):
+            result = subprocess.run([str(CLI), "service", "recovery", action],
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("automatic_restart=no", result.stdout)
+            self.assertIn("recovery.runtime_activated=no", result.stdout)
+            self.assertIn("changed=no", result.stdout)
+
+    def test_unclean_exit_blocks_scheduled_reacquisition_and_manual_start(self):
+        proc = self.start()
+        os.kill(proc.pid, signal.SIGKILL)
+        self.assertEqual(proc.wait(timeout=3), -signal.SIGKILL)
+        proc.stderr.close()
+
+        schedule = {
+            "version": 1,
+            "next_id_counter": 1,
+            "schedules": [{
+                "id": "p014_due_after_crash",
+                "type": 1,
+                "target_time": int(time.time()) - 1,
+                "hour": 0,
+                "minute": 0,
+                "days_mask": 0,
+                "duration": 60,
+                "tz": "",
+                "enabled": True,
+                "last_fired_time": 0,
+            }],
+        }
+        Path(self.sched_path).write_text(json.dumps(schedule, indent=2) + "\n")
+        os.chmod(self.sched_path, 0o600)
+        restarted = self.start()
+        status = self.call("status").stdout
+        self.assertIn("active=no", status)
+        self.assertIn("recovery_state=RECOVERY_UNVERIFIED", status)
+        self.assertIn("recovery_schedule_gate=BLOCKED", status)
+        self.assertIn("recovery blocked", self.call("start", "--for", "1m", code=1).stderr)
+        self.assertIn("recovery blocked", self.call("probe", code=1).stderr)
+        self.raw(b"SHUTDOWN\n")
+        self.assertEqual(restarted.wait(timeout=3), 0)
+
+    def test_missing_or_corrupt_journal_blocks_every_assertion_path(self):
+        os.unlink(self.recovery_path)
+        proc = self.start()
+        status = self.call("status").stdout
+        self.assertIn("recovery_state=RECOVERY_UNVERIFIED", status)
+        self.assertIn("recovery_schedule_gate=BLOCKED", status)
+        self.assertIn("recovery blocked", self.call("start", "--for", "1m", code=1).stderr)
+        self.assertIn("recovery blocked", self.call("probe", code=1).stderr)
+        self.assertIn("recovery blocked", self.server_call("trial", "start", "--for", "1s", code=1).stderr)
+        self.raw(b"SHUTDOWN\n")
+        self.assertEqual(proc.wait(timeout=3), 0)
+
+        Path(self.recovery_path).write_text("{bad json\n")
+        os.chmod(self.recovery_path, 0o600)
+        blocked = self.start()
+        status = self.call("status").stdout
+        self.assertIn("recovery_state=RECOVERY_UNVERIFIED", status)
+        self.assertIn("recovery blocked", self.call("start", "--for", "1m", code=1).stderr)
+        self.raw(b"SHUTDOWN\n")
+        self.assertEqual(blocked.wait(timeout=3), 0)
+
+    def test_clean_recovery_journal_preserves_active_schedule_behavior(self):
+        schedule = {
+            "version": 1,
+            "next_id_counter": 1,
+            "schedules": [{
+                "id": "p014_clean_start_due",
+                "type": 1,
+                "target_time": int(time.time()) - 1,
+                "hour": 0,
+                "minute": 0,
+                "days_mask": 0,
+                "duration": 60,
+                "tz": "",
+                "enabled": True,
+                "last_fired_time": 0,
+            }],
+        }
+        Path(self.sched_path).write_text(json.dumps(schedule, indent=2) + "\n")
+        os.chmod(self.sched_path, 0o600)
+        self.start()
+        self.assertIn("active=yes", self.call("status").stdout)
+        self.call("stop")
+
     def test_daemon_restart_recovery(self):
         now_wall = int(time.time())
         start_wall = now_wall - 300
@@ -873,6 +993,9 @@ class Integration(unittest.TestCase):
 
     def test_release_failure_is_not_success(self):
         for probe in (False, True):
+            self.recovery_path = str(Path(self.temp.name) /
+                                     ("recovery-probe.json" if probe else "recovery-start.json"))
+            self._write_recovery_record("CLEAN", "CONFIRMED", "GRACEFUL_CONFIRMED")
             proc = self.start(IOSCAFFEINATE_MOCK_FAIL_RELEASE="1")
             if probe:
                 self.assertIn("release_rc=0xe00002bc", self.call("probe", code=1).stderr)
@@ -883,6 +1006,9 @@ class Integration(unittest.TestCase):
             self.assertIn("active=yes", status)
             self.assertIn("state=RELEASE_FAILED", status)
             self.assertIn("release_pending=yes", status)
+            self.assertIn("recovery_state=CLEANUP_UNVERIFIED", status)
+            self.assertIn("recovery_restart_eligibility=BLOCK_CLEANUP_UNVERIFIED", status)
+            self.assertIn("recovery_schedule_gate=BLOCKED", status)
             self.assertRegex(status, r"assertion_id=[1-9][0-9]*")
             self.call("start", "--for", "1s", code=1)
             time.sleep(1.2)
