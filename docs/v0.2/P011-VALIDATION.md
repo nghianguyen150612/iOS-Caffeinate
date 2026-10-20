@@ -4,7 +4,7 @@ P011 validates the v0.1.0 artifact and prepares a device acceptance session. It 
 
 ## Automated cloud validation
 
-The `p011-validation` CI job runs `tests/test_p011_preflight.py`, validates POSIX shell syntax for the device preflight, records the exact checked-out commit, and uploads its test output. It is offline and does not depend on a release download or physical device.
+The `p011-release-preflight` CI job runs `tests/test_p011_preflight.py`, validates POSIX shell syntax for the device preflight, records the exact checked-out commit, and uploads its test output. It is offline and does not depend on a release download or physical device.
 
 The regressions cover stable tag and asset identity, the pinned package SHA, Debian identity/version/architecture rejection, unsigned package rejection, invalid profile identity, tampered checksum and package-manifest relationships, P010 alias/executable path contracts, source-commit-specific package documentation, device-preflight read-only invariants, missing tool failure, and P009-compatible pending hardware gates.
 
