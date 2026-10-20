@@ -186,8 +186,9 @@ static void test_append_config_race(const char *path) {
     int fd = open(path, O_WRONLY | O_APPEND | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0) return;
     const char byte = ' ';
-    (void)write(fd, &byte, 1);
+    ssize_t written = write(fd, &byte, 1);
     close(fd);
+    if (written != 1) return;
 }
 #endif
 
