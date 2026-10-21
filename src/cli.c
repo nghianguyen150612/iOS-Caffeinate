@@ -338,7 +338,15 @@ static int capture_program(const char *program, char *const argv[],
         if (dup2(descriptors[1], STDOUT_FILENO) < 0) _exit(125);
         close(descriptors[1]);
         execv(program, argv);
-        (void)write(STDOUT_FILENO, missing, sizeof(missing) - 1);
+        size_t missing_length = sizeof(missing) - 1;
+        const char *missing_cursor = missing;
+        while (missing_length > 0) {
+            ssize_t written = write(STDOUT_FILENO, missing_cursor, missing_length);
+            if (written < 0 && errno == EINTR) continue;
+            if (written <= 0) break;
+            missing_cursor += (size_t)written;
+            missing_length -= (size_t)written;
+        }
         _exit(127);
     }
     close(descriptors[1]);
