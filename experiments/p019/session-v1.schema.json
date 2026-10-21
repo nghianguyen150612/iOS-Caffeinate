@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ios-caffeinate.invalid/schemas/p019-session-v1.schema.json",
+  "title": "P019 offline session and evidence cross-reference v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["session_version", "protocol_id", "protocol_version", "protocol_sha256", "session_id", "created_at_utc", "source_commit_sha", "session_state", "current_phase", "evidence_class", "candidate", "prerequisites", "supervision", "operator_confirmations", "trial_records", "bounded_cycles", "resource_observations", "p009_evidence", "p018_export", "review", "incidents", "protocol_deviations"],
+  "properties": {
+    "session_version": {"const": 1},
+    "protocol_id": {"const": "P019"},
+    "protocol_version": {"const": 1},
+    "protocol_sha256": {"$ref": "#/$defs/sha256"},
+    "session_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "created_at_utc": {"type": "string", "format": "date-time"},
+    "source_commit_sha": {"$ref": "#/$defs/sha1"},
+    "session_state": {"enum": ["NOT_STARTED", "IN_PROGRESS", "ENDED", "CANCELLED"]},
+    "current_phase": {"type": "integer", "minimum": 0, "maximum": 5},
+    "evidence_class": {"$ref": "#/$defs/sourceOrUnassigned"},
+    "candidate": {"$ref": "#/$defs/candidate"},
+    "prerequisites": {"type": "array", "minItems": 14, "maxItems": 14, "items": {"$ref": "#/$defs/prerequisite"}},
+    "supervision": {"$ref": "#/$defs/supervision"},
+    "operator_confirmations": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/operatorConfirmation"}},
+    "trial_records": {"type": "array", "maxItems": 24, "items": {"type": "object"}},
+    "bounded_cycles": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/boundedCycle"}},
+    "resource_observations": {"type": "array", "maxItems": 512, "items": {"$ref": "#/$defs/resourceObservation"}},
+    "p009_evidence": {"$ref": "#/$defs/p009Evidence"},
+    "p018_export": {"$ref": "#/$defs/p018Export"},
+    "review": {"$ref": "#/$defs/review"},
+    "incidents": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/incident"}},
+    "protocol_deviations": {"type": "array", "maxItems": 512, "items": {"$ref": "#/$defs/deviation"}}
+  },
+  "$defs": {
+    "sha1": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "nullableSha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "nullableSha1": {"oneOf": [{"$ref": "#/$defs/sha1"}, {"type": "null"}]},
+    "sourceOrUnassigned": {"enum": ["UNASSIGNED", "DEVICE_REPORTED", "EXTERNAL_OBSERVER", "OPERATOR_RECORDED", "SIMULATED", "MOCK", "CI"]},
+    "prerequisite": {
+      "type": "object", "additionalProperties": false, "required": ["gate_id", "status", "source_class", "evidence_ref", "reason"],
+      "properties": {"gate_id": {"type": "string", "minLength": 1}, "status": {"enum": ["NOT_ASSESSED", "PASS", "PENDING", "BLOCKED", "UNAVAILABLE", "NOT_APPLICABLE"]}, "source_class": {"$ref": "#/$defs/sourceOrUnassigned"}, "evidence_ref": {"type": ["string", "null"], "maxLength": 512}, "reason": {"type": "string", "maxLength": 1000}}
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact_role", "source_commit_sha", "build_id", "package_identifier", "package_version", "package_sha256", "cli_binary_sha256", "daemon_binary_sha256", "profile_id", "profile_sha256", "ldid_version", "ldid_sha256", "signature_validation", "installed_paths_verified", "rollback_artifact_sha256"],
+      "properties": {
+        "artifact_role": {"enum": ["UNASSIGNED", "STABLE_V0.1.0", "DEVELOPMENT_CANDIDATE"]},
+        "source_commit_sha": {"$ref": "#/$defs/nullableSha1"}, "build_id": {"type": ["string", "null"], "maxLength": 256},
+        "package_identifier": {"type": ["string", "null"], "maxLength": 256}, "package_version": {"type": ["string", "null"], "maxLength": 128},
+        "package_sha256": {"$ref": "#/$defs/nullableSha256"}, "cli_binary_sha256": {"$ref": "#/$defs/nullableSha256"}, "daemon_binary_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "profile_id": {"type": ["string", "null"], "maxLength": 128}, "profile_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "ldid_version": {"type": ["string", "null"], "maxLength": 128}, "ldid_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "signature_validation": {"enum": ["NOT_RUN", "PENDING", "PASS", "FAIL"]}, "installed_paths_verified": {"type": "boolean"},
+        "rollback_artifact_sha256": {"$ref": "#/$defs/nullableSha256"}
+      }
+    },
+    "supervision": {
+      "type": "object", "additionalProperties": false, "required": ["operator_id", "attendance", "independent_recovery", "recovery_method_available", "source_class"],
+      "properties": {"operator_id": {"type": ["string", "null"], "maxLength": 64}, "attendance": {"enum": ["NOT_RECORDED", "PRESENT", "ABSENT"]}, "independent_recovery": {"enum": ["NOT_RECORDED", "AVAILABLE", "UNAVAILABLE"]}, "recovery_method_available": {"type": "boolean"}, "source_class": {"$ref": "#/$defs/sourceOrUnassigned"}}
+    },
+    "operatorConfirmation": {
+      "type": "object", "additionalProperties": false, "required": ["confirmation_id", "key", "value", "recorded_at_utc", "operator_id", "source_class", "timebase_id", "uncertainty_ms", "note"],
+      "properties": {"confirmation_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}, "key": {"type": "string", "minLength": 1, "maxLength": 128}, "value": {"enum": ["CONFIRMED", "DECLINED", "UNKNOWN"]}, "recorded_at_utc": {"type": "string", "format": "date-time"}, "operator_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}, "source_class": {"const": "OPERATOR_RECORDED"}, "timebase_id": {"type": "string", "minLength": 1, "maxLength": 128}, "uncertainty_ms": {"type": ["integer", "null"], "minimum": 0, "maximum": 86400000}, "note": {"type": "string", "maxLength": 500}}
+    },
+    "boundedCycle": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cycle_id", "observation_period", "cycle_number", "started_at_utc", "ended_at_utc", "source_class", "observer_timebase_id", "observer_monotonic_elapsed_seconds", "timestamp_uncertainty_ms", "device_timebase_id", "device_boot_identity", "device_monotonic_elapsed_seconds", "device_clock_uncertainty_ms", "duration_method", "duration_timebase_id", "duration_uncertainty_ms", "attended", "assertion_duration_seconds", "acquisition", "release", "daemon_exit", "unexpected_restart", "cleanup_state", "rest_before_seconds", "charging_state", "battery_api_state", "battery_operator_state", "thermal_api_state", "thermal_operator_state", "deviation_ids"],
+      "properties": {
+        "cycle_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}, "observation_period": {"type": "integer", "minimum": 1, "maximum": 3}, "cycle_number": {"type": "integer", "minimum": 1, "maximum": 4},
+        "started_at_utc": {"type": "string", "format": "date-time"}, "ended_at_utc": {"type": "string", "format": "date-time"}, "source_class": {"$ref": "#/$defs/sourceOrUnassigned"},
+        "observer_timebase_id": {"type": "string", "minLength": 1, "maxLength": 128}, "observer_monotonic_elapsed_seconds": {"type": ["number", "null"], "minimum": 0}, "timestamp_uncertainty_ms": {"type": ["integer", "null"], "minimum": 0, "maximum": 86400000},
+        "device_timebase_id": {"type": ["string", "null"], "maxLength": 128}, "device_boot_identity": {"type": ["string", "null"], "maxLength": 128}, "device_monotonic_elapsed_seconds": {"type": ["number", "null"], "minimum": 0}, "device_clock_uncertainty_ms": {"type": ["integer", "null"], "minimum": 0, "maximum": 86400000},
+        "duration_method": {"enum": ["DEVICE_MONOTONIC", "HOST_MONOTONIC", "OPERATOR_RECORDED", "UNKNOWN"]}, "duration_timebase_id": {"type": ["string", "null"], "maxLength": 128}, "duration_uncertainty_ms": {"type": ["integer", "null"], "minimum": 0, "maximum": 86400000}, "attended": {"type": "boolean"},
+        "assertion_duration_seconds": {"type": ["integer", "null"], "minimum": 0, "maximum": 300}, "acquisition": {"enum": ["NOT_ATTEMPTED", "CONFIRMED", "FAILED", "UNKNOWN"]}, "release": {"enum": ["NOT_ATTEMPTED", "CONFIRMED", "FAILED", "UNKNOWN"]},
+        "daemon_exit": {"enum": ["EXPECTED", "UNEXPECTED", "UNKNOWN"]}, "unexpected_restart": {"type": "boolean"}, "cleanup_state": {"enum": ["SAFE", "UNRESOLVED", "UNKNOWN", "CORRUPT"]}, "rest_before_seconds": {"type": ["integer", "null"], "minimum": 0},
+        "charging_state": {"enum": ["CHARGING", "NOT_CHARGING", "UNKNOWN", "UNAVAILABLE"]}, "battery_api_state": {"enum": ["AVAILABLE", "UNAVAILABLE", "UNKNOWN"]}, "battery_operator_state": {"enum": ["DOCUMENTED_SAFE", "NOT_RECORDED", "CONCERN"]}, "thermal_api_state": {"enum": ["AVAILABLE", "UNAVAILABLE", "UNKNOWN"]}, "thermal_operator_state": {"enum": ["DOCUMENTED_SAFE", "NOT_RECORDED", "CONCERN"]}, "deviation_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
+      }
+    },
+    "resourceObservation": {
+      "type": "object", "additionalProperties": false, "required": ["observation_id", "trial_id", "field", "availability", "value", "source_class", "observed_at_utc", "timebase_id", "uncertainty_ms"],
+      "properties": {"observation_id": {"type": "string", "minLength": 1, "maxLength": 128}, "trial_id": {"type": ["string", "null"], "maxLength": 128}, "field": {"enum": ["battery_percent", "charging_state", "battery_health", "thermal_state", "temperature"]}, "availability": {"enum": ["AVAILABLE", "UNAVAILABLE", "UNKNOWN"]}, "value": {"type": ["string", "number", "null"], "maxLength": 128}, "source_class": {"$ref": "#/$defs/sourceOrUnassigned"}, "observed_at_utc": {"type": "string", "format": "date-time"}, "timebase_id": {"type": "string", "minLength": 1, "maxLength": 128}, "uncertainty_ms": {"type": "integer", "minimum": 0, "maximum": 86400000}}
+    },
+    "p009Evidence": {
+      "type": "object", "additionalProperties": false, "required": ["status", "validation_status", "replay_status", "packages", "event_refs"],
+      "properties": {"status": {"enum": ["NOT_PROVIDED", "PENDING", "VALIDATED", "INVALID"]}, "validation_status": {"enum": ["NOT_RUN", "PASS", "FAIL"]}, "replay_status": {"enum": ["NOT_RUN", "PASS", "WARNINGS", "FAIL"]}, "packages": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/p009PackageRef"}}, "event_refs": {"type": "array", "maxItems": 10000, "uniqueItems": true, "items": {"$ref": "#/$defs/p009EventRef"}}}
+    },
+    "p009PackageRef": {"type": "object", "additionalProperties": false, "required": ["session_id", "session_sha256", "manifest_sha256", "artifact_role", "source_commit_sha", "package_sha256"], "properties": {"session_id": {"type": "string", "minLength": 1, "maxLength": 128}, "session_sha256": {"$ref": "#/$defs/sha256"}, "manifest_sha256": {"$ref": "#/$defs/sha256"}, "artifact_role": {"enum": ["STABLE_V0.1.0", "DEVELOPMENT_CANDIDATE"]}, "source_commit_sha": {"$ref": "#/$defs/nullableSha1"}, "package_sha256": {"$ref": "#/$defs/nullableSha256"}}},
+    "p009EventRef": {"type": "object", "additionalProperties": false, "required": ["p009_session_id", "event_id", "purpose"], "properties": {"p009_session_id": {"type": "string", "minLength": 1, "maxLength": 128}, "event_id": {"type": "string", "minLength": 1, "maxLength": 128}, "purpose": {"enum": ["package_preflight", "package_integrity", "signature_acceptance", "package_installation", "daemon_launch", "assertion_acquire", "hold", "assertion_release", "daemon_exit", "screen_lock", "lan_observation", "tailscale_observation", "battery", "thermal", "physical_recovery", "abnormal_or_interrupted_trial"]}}},
+    "p018Export": {"type": "object", "additionalProperties": false, "required": ["status", "manifest_sha256", "source_commit_sha", "hardware_evidence_accepted"], "properties": {"status": {"enum": ["NOT_CREATED", "PENDING", "VALID", "INVALID", "EXPORT_BLOCKED_BY_PRIVACY"]}, "manifest_sha256": {"$ref": "#/$defs/nullableSha256"}, "source_commit_sha": {"$ref": "#/$defs/nullableSha1"}, "hardware_evidence_accepted": {"const": "NOT_ESTABLISHED"}}},
+    "review": {"type": "object", "additionalProperties": false, "required": ["status", "reviewer_id", "operator_id", "independent", "reviewed_at_utc", "reviewed_p009_session_sha256", "checked_source_hashes", "decision", "findings"], "properties": {"status": {"enum": ["PENDING", "REVIEWED", "REJECTED"]}, "reviewer_id": {"type": ["string", "null"], "maxLength": 64}, "operator_id": {"type": ["string", "null"], "maxLength": 64}, "independent": {"type": "boolean"}, "reviewed_at_utc": {"type": ["string", "null"], "format": "date-time"}, "reviewed_p009_session_sha256": {"$ref": "#/$defs/nullableSha256"}, "checked_source_hashes": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/sha256"}}, "decision": {"enum": ["NOT_DECIDED", "ACCEPT", "REJECT", "DEFER"]}, "findings": {"type": "array", "items": {"type": "string", "maxLength": 1000}}}},
+    "incident": {"type": "object", "additionalProperties": false, "required": ["incident_id", "code", "severity", "occurred_at_utc", "source_class", "timebase_id", "uncertainty_ms", "disposition", "summary"], "properties": {"incident_id": {"type": "string", "minLength": 1, "maxLength": 128}, "code": {"type": "string", "minLength": 1, "maxLength": 128}, "severity": {"enum": ["STOP", "SAFETY_REVIEW", "OBSERVATION"]}, "occurred_at_utc": {"type": "string", "format": "date-time"}, "source_class": {"$ref": "#/$defs/sourceOrUnassigned"}, "timebase_id": {"type": "string", "minLength": 1, "maxLength": 128}, "uncertainty_ms": {"type": ["integer", "null"], "minimum": 0, "maximum": 86400000}, "disposition": {"enum": ["OPEN", "PRESERVED", "REVIEWED", "CLOSED"]}, "summary": {"type": "string", "maxLength": 1000}}},
+    "deviation": {"type": "object", "additionalProperties": false, "required": ["deviation_id", "trial_id", "occurred_at_utc", "source_class", "timebase_id", "uncertainty_ms", "description", "reason", "impact", "review_status"], "properties": {"deviation_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}, "trial_id": {"type": ["string", "null"], "maxLength": 128}, "occurred_at_utc": {"type": "string", "format": "date-time"}, "source_class": {"$ref": "#/$defs/sourceOrUnassigned"}, "timebase_id": {"type": "string", "minLength": 1, "maxLength": 128}, "uncertainty_ms": {"type": ["integer", "null"], "minimum": 0, "maximum": 86400000}, "description": {"type": "string", "minLength": 1, "maxLength": 1000}, "reason": {"type": "string", "minLength": 1, "maxLength": 1000}, "impact": {"enum": ["NO_COMPARISON_IMPACT", "INCONCLUSIVE", "INVALIDATES_TRIAL", "SAFETY_STOP"]}, "review_status": {"enum": ["PENDING", "REVIEWED"]}}}
+  }
+}

@@ -1,0 +1,355 @@
+{
+  "protocol_id": "P019",
+  "protocol_version": 1,
+  "protocol_status": "PREREGISTERED",
+  "preregistered_at_utc": "2026-10-21T23:50:44Z",
+  "target_platform": {
+    "device": "iPad mini 2 A1489 / iPad4,4",
+    "soc": "Apple A7 ARM64",
+    "ios": "12.5.7",
+    "bootstrap": "Amethyst / Procursus rootful"
+  },
+  "package_identity": {
+    "stable_artifact": "ioscaffeinate_0.1.0-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb",
+    "stable_package_sha256": "439d2543adbe1472f82cfd6c9e6bb9dd747da6c31c79f3da1f3da86b8ca9421c",
+    "stable_package_use": "P011 acceptance only; it does not contain P018/P019-only behavior",
+    "recorded_ldid_version": "2.1.5-procursus7",
+    "recorded_ldid_sha256": "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c",
+    "development_candidate_required": true,
+    "development_candidate_auto_build_or_install": false,
+    "candidate_identity_fields": [
+      "source_commit_sha",
+      "build_id",
+      "package_identifier",
+      "package_version",
+      "package_sha256",
+      "cli_binary_sha256",
+      "daemon_binary_sha256",
+      "profile_id_and_sha256",
+      "ldid_version_and_exact_sha256",
+      "signature_validation_result",
+      "installed_path_hashes",
+      "previously_accepted_rollback_artifact"
+    ]
+  },
+  "prerequisite_gates": [
+    "p011_stable_package_acceptance",
+    "p010_exact_ldid_provenance",
+    "development_candidate_provenance",
+    "installed_candidate_identity",
+    "p013_launchd_mutation_compatibility",
+    "operator_present",
+    "independent_physical_recovery",
+    "p014_journal_and_assertion_state_safe",
+    "p014_automatic_restart_executor",
+    "p015_attended_only_policy",
+    "p015_unattended_server_mode",
+    "p017_schedule_execution_disabled",
+    "resource_safety_review",
+    "observation_timebase_plan"
+  ],
+  "p012_reference": {
+    "path": "experiments/p012/protocol-v1.json",
+    "protocol_id": "P012",
+    "protocol_version": 1,
+    "sha256": "5cf6c44806be0f3d510cbef368ecf96a95d9092585b7f02d6f04674760af3169",
+    "conditions": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "routes": [
+      "LAN",
+      "TAILSCALE"
+    ],
+    "quiet_interval_seconds": 120,
+    "quiet_interval_minimum_seconds": 60,
+    "quiet_interval_maximum_seconds": 180,
+    "active_hold_seconds": 180,
+    "maximum_hold_seconds": 300,
+    "probe_timeout_seconds": 8,
+    "maximum_probe_timeout_seconds": 15,
+    "maximum_probes_per_trial": 1,
+    "repetitions_per_condition_per_route": 3,
+    "planned_probe_trials": 24,
+    "condition_order_by_repetition": [
+      [
+        "A",
+        "B",
+        "C",
+        "D"
+      ],
+      [
+        "B",
+        "D",
+        "A",
+        "C"
+      ],
+      [
+        "C",
+        "A",
+        "D",
+        "B"
+      ]
+    ],
+    "route_order_by_repetition": [
+      [
+        "LAN",
+        "TAILSCALE"
+      ],
+      [
+        "TAILSCALE",
+        "LAN"
+      ],
+      [
+        "LAN",
+        "TAILSCALE"
+      ]
+    ],
+    "automated_physical_trial_series": false
+  },
+  "phases": [
+    {
+      "id": 0,
+      "name": "Read-only inspection",
+      "entry_gate": "operator present, direct recovery available, and initial read-only work authorized",
+      "operations": [
+        "identify device",
+        "inspect package and installed paths",
+        "inspect daemon, socket, launchd, recovery journal, policy, schedules, telemetry, logs, and evidence"
+      ],
+      "state_changes_allowed": false
+    },
+    {
+      "id": 1,
+      "name": "Package acceptance",
+      "entry_gate": "P011 exact artifact and signer provenance verified; installation separately authorized",
+      "operations": [
+        "follow P011 stable v0.1.0 acceptance procedure",
+        "verify installed package and paths",
+        "prepare a separately identified signed development candidate only after its provenance is complete"
+      ],
+      "state_changes_allowed": "only individually authorized P011 package actions"
+    },
+    {
+      "id": 2,
+      "name": "Foreground daemon lifecycle",
+      "entry_gate": "P011 acceptance, candidate identity, clean P014 state, and separate session authorization",
+      "operations": [
+        "foreground start",
+        "existing IPC",
+        "read-only status",
+        "clean manual shutdown",
+        "separate process-exit and socket-cleanup observations",
+        "record assertion ownership and recovery journal"
+      ],
+      "state_changes_allowed": "attended foreground lifecycle only"
+    },
+    {
+      "id": 3,
+      "name": "Controlled idle and SSH comparison",
+      "entry_gate": "P012 prerequisites and the exact P012 v1 trial definitions are satisfied",
+      "operations": [
+        "manually conduct the fixed 24-trial A/B/C/D matrix",
+        "one route and at most one SSH probe per trial",
+        "preserve quiet interval, fixed orders, missing outcomes, and clock uncertainty"
+      ],
+      "state_changes_allowed": "one separately authorized bounded assertion in C trials only"
+    },
+    {
+      "id": 4,
+      "name": "Repeated bounded reliability sessions",
+      "entry_gate": "Phases 0 through 3 pass safety review and no unresolved cleanup remains",
+      "operations": [
+        "three attended observation periods on separate calendar dates",
+        "four operator-started bounded cycles per period",
+        "record rest, carryover, network, resource, process, and cleanup observations"
+      ],
+      "state_changes_allowed": "one manually started assertion per cycle; no automated series or silent renewal"
+    },
+    {
+      "id": 5,
+      "name": "Lifecycle and recovery review",
+      "entry_gate": "prior phases complete and evidence preserved",
+      "operations": [
+        "review supported P013/P014 behavior and records",
+        "observe clean manual shutdown and recovery state",
+        "leave launchd mutation, restart automation, reboot, respring, crash injection, and journal reset disabled"
+      ],
+      "state_changes_allowed": false
+    }
+  ],
+  "endurance_plan": {
+    "observation_periods": 3,
+    "period_separation": "separate calendar dates",
+    "manual_cycles_per_period": 4,
+    "planned_bounded_cycles": 12,
+    "attended_for_every_cycle": true,
+    "target_hold_seconds": 180,
+    "maximum_hold_seconds": 300,
+    "minimum_unasserted_rest_seconds_between_cycles": 300,
+    "automated_runner": false,
+    "overnight_or_unattended_execution": false,
+    "sample_rationale": "Twelve manually separated cycles across three dates are an initial recurrence and cleanup consistency screen, not a failure-rate certification. The P012 24-probe matrix is a separate exploratory comparison. Neither duration aggregation nor a zero-failure finite sample establishes 24/7 reliability."
+  },
+  "observation_design": {
+    "source_classes": [
+      "DEVICE_REPORTED",
+      "EXTERNAL_OBSERVER",
+      "OPERATOR_RECORDED",
+      "SIMULATED",
+      "MOCK",
+      "CI"
+    ],
+    "required_time_fields": [
+      "UTC timestamp",
+      "monotonic elapsed time when available",
+      "timebase identity",
+      "timestamp uncertainty",
+      "boot identity when available",
+      "trial and session IDs",
+      "source class"
+    ],
+    "clock_reconciliation": "Never compare unrelated monotonic clocks. Cross-device event order is INCONCLUSIVE without an independently documented UTC reconciliation that accounts for both uncertainties.",
+    "lan_and_tailscale": "Keep LAN and Tailscale authenticated SSH results separate. One route per trial and no retry. A reachable peer or TCP port is not authenticated SSH.",
+    "resource_sources": "Keep P016 API readings separate from operator observations. UNAVAILABLE is not zero, full battery, or nominal temperature. Defer a trial when available evidence cannot support a safe resource review.",
+    "secret_exclusions": [
+      "SSH passwords",
+      "private keys",
+      "Tailscale tokens",
+      "raw debug logs",
+      "secret-bearing command lines"
+    ]
+  },
+  "inclusion_criteria": [
+    "The current package, source, signing profile, signer, installed paths, and rollback artifact are identified and reviewed.",
+    "The operator is physically present and has an independent recovery method for the full attended session.",
+    "P014 assertion ownership and recovery journal are known, consistent, and safe before each phase.",
+    "Every individual operation has its required separate authorization and stays within the registered time ceiling.",
+    "Required observations, source classes, timestamps, uncertainty, and condition state are recorded.",
+    "P012 trial records match protocol v1, including the quiet interval, route/order, screen lock, one-probe limit, and confirmed release."
+  ],
+  "exclusion_criteria": [
+    "Any required state, source, timestamp, timebase, package identity, or cleanup result is unknown or contradictory.",
+    "A quiet interval is missing or contaminated, a trial is duplicated, or route/condition/repetition order differs from P012 v1.",
+    "The observer timebases cannot establish that a condition C probe preceded assertion release.",
+    "Battery or thermal evidence is unavailable and an independent operator review cannot establish safe conditions.",
+    "A reboot, respring, clock discontinuity, interruption, or carryover makes the registered comparison invalid."
+  ],
+  "stop_conditions": [
+    "Assertion release failed or cannot be confirmed.",
+    "Prior assertion ownership becomes unknown.",
+    "P014 recovery state becomes unsafe, corrupt, or inconsistent.",
+    "Unexpected daemon restart or process exit.",
+    "Unexplained reboot or respring.",
+    "Unexpected scheduled assertion acquisition.",
+    "SSH host-key verification failure.",
+    "Independent physical recovery becomes unavailable.",
+    "Battery or thermal concern, or resource evidence no longer supports safe continuation.",
+    "Operator attendance is lost.",
+    "Package, installed binary, signer, or build identity mismatch.",
+    "Service, socket, lock, or assertion ownership state becomes inconsistent.",
+    "Persistent state corruption or required observation loss.",
+    "The approved test duration or 300-second assertion ceiling is exceeded.",
+    "A prior trial leaves daemon, socket, assertion, or recovery state uncertain."
+  ],
+  "failure_handling": {
+    "ssh_failure": "Record one route-specific outcome; do not retry. Continue only if the preregistered safety rule permits and all safety state remains known.",
+    "unsafe_stop": "Stop all further trials, preserve incomplete records, keep the operator present, and use only a separately authorized manual recovery plan.",
+    "prohibited_automatic_actions": [
+      "restart service",
+      "reboot",
+      "respring",
+      "SIGKILL",
+      "repair state",
+      "delete sockets",
+      "reset P014 journal",
+      "install or roll back package",
+      "launchctl mutation",
+      "automatic assertion release/acquisition"
+    ]
+  },
+  "analysis_plan": {
+    "p012_comparisons": [
+      "A/C",
+      "B/C",
+      "C/D"
+    ],
+    "group_routes_separately": true,
+    "report_denominators": [
+      "planned",
+      "attempted",
+      "valid",
+      "invalid",
+      "incomplete",
+      "interrupted"
+    ],
+    "latency": "Report successful authenticated SSH latency using host monotonic elapsed time with n, median, quartiles, minimum, and maximum.",
+    "reliability_metrics": [
+      "successful bounded sessions",
+      "aggregate attended observation time",
+      "confirmed assertion releases",
+      "release failures",
+      "daemon availability",
+      "unexpected exits/restarts",
+      "LAN authenticated SSH",
+      "Tailscale authenticated SSH",
+      "failure categories",
+      "resource availability",
+      "recovery blockers",
+      "protocol deviations"
+    ],
+    "claim_limits": [
+      "No significance test",
+      "No causal sleep-prevention claim",
+      "No 24/7 claim",
+      "Do not add independent short sessions into a continuous uptime interval",
+      "Any confounded comparison is INCONCLUSIVE"
+    ]
+  },
+  "evidence_review": {
+    "p009_v1_is_acceptance_authority": true,
+    "raw_evidence_is_preserved": true,
+    "p018_export_is_sanitized_derivative_only": true,
+    "cloud_fixture_source_classes_are_not_physical": true,
+    "independent_human_review_required": true,
+    "p009_event_extension": "P009 v1 remains unchanged. P019 records interrupted trials, charging categories, period/cycle identifiers, and protocol deviations in its own versioned session format. If acceptance requires a new P009 event meaning, submit a versioned extension proposal before collection."
+  },
+  "acceptance_criteria": {
+    "required_controlled_trials": 24,
+    "required_valid_controlled_trials": 24,
+    "required_bounded_cycles": 12,
+    "required_confirmed_acquisitions": 12,
+    "required_confirmed_releases": 12,
+    "maximum_release_failures": 0,
+    "maximum_unexpected_daemon_exits": 0,
+    "maximum_unexpected_restarts": 0,
+    "required_p009_human_review": "REVIEWED",
+    "required_p018_export_validation": "VALID",
+    "required_independent_reviewer": true,
+    "accepted_scope_must_name_conditions_and_routes": true,
+    "excluded_claims": [
+      "continuous 24-hour uptime",
+      "24/7 server readiness",
+      "automatic restart",
+      "reboot persistence",
+      "crash recovery",
+      "unattended schedule execution",
+      "causal sleep prevention"
+    ]
+  },
+  "revision_policy": {
+    "immutable_after_collection_begins": true,
+    "future_changes_require_new_version": true,
+    "revision_record_fields": [
+      "new protocol version",
+      "UTC timestamp",
+      "reason",
+      "reviewer",
+      "superseded version",
+      "affected trial definitions"
+    ],
+    "retroactive_trial_redefinition_allowed": false
+  }
+}

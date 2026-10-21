@@ -128,6 +128,10 @@ Review the manifest and every included file before sharing. `EXPORT_CREATED` doe
 
 Initial attended inspection commands are listed in [P018 device acceptance](P018-DEVICE-ACCEPTANCE.md). Do not reboot/respring or perform unattended power tests during P018. Current outcome: `P018_CLOUD_COMPLETE_DEVICE_UX_PENDING`.
 
-## P019 next milestone
+## P019 supervised reliability
 
-P019 should be a separately authorized, supervised endurance study after P011 package/signer provenance and P013/P014 runtime gates are reviewed. Preregister duration, screen/charging/network conditions, comparison periods, battery/thermal criteria, observation cadence, assertion acquisition/release and cleanup criteria, and abort/recovery steps. Capture genuine P009 device and independent-observer records, including failure/cleanup events. Fail if cleanup is unresolved, state/provenance is ambiguous, safety limits are crossed, or observations cannot be attributed to the exact build. P018's bounded export can carry sanitized snapshots and validated P009 records to a reviewer; it cannot itself pass a hardware gate.
+P019 has separate cloud and hardware completion. Cloud tools are offline. The initial hardware session, after exact signer provenance and separate operator authorization, is Phase 0 read-only inspection. Do not install, start the daemon, probe SSH, acquire an assertion, mutate launchd, or reset recovery state in that initial session. See the [P019 prerequisite matrix](P019-PREREQUISITES.md), [phase matrix](P019-SESSION-MATRIX.md), [runbook](P019-OPERATOR-RUNBOOK.md), and [stop criteria](P019-STOP-CRITERIA.md).
+
+P012 v1 remains fixed: 120-second initial quiet period, 180-second proposed hold, 300-second ceiling, one route and at most one SSH probe per trial, 24 manually conducted trials. The P019 endurance plan adds 12 attended bounded cycles across three separate dates, with five-minute unasserted rests. No automatic trial runner, silent assertion renewal, unattended overnight run, or 24/7 claim is allowed.
+
+Preserve original P009 evidence securely. A P018 export is a separately reviewed sanitized derivative; it does not replace raw observations. Unknown battery/thermal values remain unavailable, and a trial is deferred when resource safety cannot be assessed. Stage A status is `P019_CLOUD_COMPLETE_HARDWARE_ACCEPTANCE_PENDING` until independent physical evidence review completes.
