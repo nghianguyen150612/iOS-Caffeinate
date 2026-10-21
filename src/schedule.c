@@ -888,10 +888,12 @@ static int utc_localtime(void *context, time_t instant, struct tm *local) {
     return gmtime_r(&instant, local) ? 0 : -1;
 }
 
+#ifndef __APPLE__
 static int system_localtime(void *context, time_t instant, struct tm *local) {
     (void)context;
     return localtime_r(&instant, local) ? 0 : -1;
 }
+#endif
 
 #ifdef __APPLE__
 typedef struct {
