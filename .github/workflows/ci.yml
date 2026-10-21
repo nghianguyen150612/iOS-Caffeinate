@@ -953,3 +953,224 @@ jobs:
             build/p016/p009-tests.txt
             build/p016/p012-tests.txt
             build/p016/integration-tests.txt
+
+  p017-scheduling-validation:
+    needs: [linux-protocol, ios-cross-build, ios-artifact-inspection, ios-rootful-package, p009-evidence-validation, p011-release-preflight, p010-signing-release-gate, p012-idle-research-validation, p013-launchd-lifecycle-validation, p014-crash-recovery-validation, p015-server-policy-validation, p016-health-telemetry-validation]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Compile schedule, recovery, policy, telemetry and lifecycle C11 checks
+        env:
+          P017_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$P017_SOURCE_SHA"
+          mkdir -p build/p017
+          cc -std=c11 -Wall -Wextra -Werror -O2 -DIOSCAFFEINATE_TEST_MOCK -Isrc \
+            tests/p017_schedule_unit.c src/schedule.c -o build/p017/schedule-unit
+          build/p017/schedule-unit 2>&1 | tee build/p017/schedule-tests.txt
+          cc -std=c11 -Wall -Wextra -Werror -O2 \
+            -DIOSCAFFEINATE_RECOVERY_TESTING -DIOSCAFFEINATE_SERVICE_TESTING \
+            tests/p014_recovery_unit.c src/service.c src/recovery.c \
+            -o build/p017/p014-recovery-unit
+          build/p017/p014-recovery-unit 2>&1 | tee build/p017/p014-tests.txt
+          cc -std=c11 -Wall -Wextra -Werror -O2 -DIOSCAFFEINATE_SERVICE_TESTING \
+            tests/p013_service_unit.c src/service.c src/recovery.c \
+            -o build/p017/p013-service-unit
+          build/p017/p013-service-unit 2>&1 | tee build/p017/p013-native-tests.txt
+          cc -std=c11 -Wall -Wextra -Werror -O2 -DIOSCAFFEINATE_SERVER_MODE_TESTING \
+            tests/p015_policy_unit.c src/server_mode.c src/server_policy.c src/recovery.c \
+            -o build/p017/p015-policy-unit
+          build/p017/p015-policy-unit 2>&1 | tee build/p017/p015-tests.txt
+          cc -std=c11 -Wall -Wextra -Werror -O2 -DIOSCAFFEINATE_TEST_MOCK -Isrc \
+            tests/p016_health_unit.c src/health.c src/health_ios.c src/health_mock.c \
+            src/health_policy.c src/server_policy.c src/server_mode.c src/recovery.c \
+            -o build/p017/p016-health-unit
+          build/p017/p016-health-unit 2>&1 | tee build/p017/p016-tests.txt
+          git rev-parse HEAD > build/p017/source-commit.txt
+      - name: Run full P009–P017 CLI, protocol, persistence and fault regressions
+        run: |
+          set -euo pipefail
+          ./scripts/build-linux-test.sh
+          python3 tests/integration.py 2>&1 | tee build/p017/integration-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p017_schedule_cli.py' -v 2>&1 | tee build/p017/cli-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p016_health.py' -v 2>&1 | tee build/p017/p016-cli-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p015_policy_cli.py' -v 2>&1 | tee build/p017/p015-cli-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p009_evidence.py' -v 2>&1 | tee build/p017/p009-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p011_preflight.py' -v 2>&1 | tee build/p017/p011-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p012_research.py' -v 2>&1 | tee build/p017/p012-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p013_service.py' -v 2>&1 | tee build/p017/p013-tests.txt
+          python3 -m unittest discover -s tests/packaging -p 'test_p010_signing.py' -v 2>&1 | tee build/p017/p010-tests.txt
+          python3 -m unittest discover -s tests/packaging -p 'test_rootful_package.py' -v 2>&1 | tee build/p017/package-tests.txt
+      - name: Verify scheduler has no process-global timezone or execution side effects
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          schedule = Path("src/schedule.c").read_text(encoding="utf-8")
+          daemon = Path("src/daemon.c").read_text(encoding="utf-8")
+          cli = Path("src/cli.c").read_text(encoding="utf-8")
+          forbidden_schedule = ("setenv(", "unsetenv(", "tzset(", "mktime(",
+                                "IOKit", "launchctl", "socket(", "connect(",
+                                "fork(", "execv(", "system(")
+          found = [item for item in forbidden_schedule if item in schedule]
+          if found:
+              raise SystemExit("schedule recurrence contains forbidden side effects: " + ",".join(found))
+          if "schedule_store_evaluate(" in daemon or "check_and_trigger_schedules" in daemon:
+              raise SystemExit("daemon still has an automatic schedule execution path")
+          diagnostics = cli.split("static int schedule_diagnostics_command", 1)[1].split(
+              "static int schedule_cli_load_store", 1
+          )[0]
+          forbidden_cli = ("system(", "popen(", "execv(", "launchctl", "START ", "PROBE\\n")
+          found = [item for item in forbidden_cli if item in diagnostics]
+          if found:
+              raise SystemExit("read-only schedule diagnostics contain an activation path: " + ",".join(found))
+          print("schedule timezone and side-effect boundary: PASS")
+          PY
+      - name: Write deterministic exact-source validation evidence
+        env:
+          P017_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          P009_RESULT: ${{ needs.p009-evidence-validation.result }}
+          P010_RESULT: ${{ needs.p010-signing-release-gate.result }}
+          P011_RESULT: ${{ needs.p011-release-preflight.result }}
+          P012_RESULT: ${{ needs.p012-idle-research-validation.result }}
+          P013_RESULT: ${{ needs.p013-launchd-lifecycle-validation.result }}
+          P014_RESULT: ${{ needs.p014-crash-recovery-validation.result }}
+          P015_RESULT: ${{ needs.p015-server-policy-validation.result }}
+          P016_RESULT: ${{ needs.p016-health-telemetry-validation.result }}
+          IOS_BUILD_RESULT: ${{ needs.ios-cross-build.result }}
+          MACHO_RESULT: ${{ needs.ios-artifact-inspection.result }}
+          PACKAGE_RESULT: ${{ needs.ios-rootful-package.result }}
+          LINUX_RESULT: ${{ needs.linux-protocol.result }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path("build/p017")
+          source_sha = os.environ["P017_SOURCE_SHA"]
+          if (root / "source-commit.txt").read_text().strip() != source_sha:
+              raise SystemExit("P017 report SHA differs from checked-out source")
+
+          def native(filename, pattern, label):
+              match = re.search(pattern, (root / filename).read_text())
+              if not match:
+                  raise SystemExit(f"{label} native suite did not report success")
+              return {"checks": int(match.group(1)), "result": "PASS"}
+
+          def python_suite(filename, label):
+              content = (root / filename).read_text()
+              match = re.search(r"Ran (\d+) tests? in ", content)
+              if not match or "\nOK\n" not in content:
+                  raise SystemExit(f"{label} suite did not pass")
+              return {"tests": int(match.group(1)), "result": "PASS"}
+
+          upstream = {
+              name: os.environ[variable]
+              for name, variable in (
+                  ("linux_protocol", "LINUX_RESULT"), ("ios_arm64_cross_build", "IOS_BUILD_RESULT"),
+                  ("macho_inspection", "MACHO_RESULT"), ("rootful_package", "PACKAGE_RESULT"),
+                  ("p009", "P009_RESULT"), ("p010", "P010_RESULT"),
+                  ("p011", "P011_RESULT"), ("p012", "P012_RESULT"),
+                  ("p013", "P013_RESULT"), ("p014", "P014_RESULT"),
+                  ("p015", "P015_RESULT"), ("p016", "P016_RESULT"),
+              )
+          }
+          if any(result != "success" for result in upstream.values()):
+              raise SystemExit("an upstream P009–P016/build CI gate did not succeed")
+
+          suites = {
+              "p017_c11_recurrence_dst_conflict_storage": native(
+                  "schedule-tests.txt", r"P017 scheduling checks: (\d+) passed", "P017 schedule"
+              ),
+              "p014_recovery_blocking": native(
+                  "p014-tests.txt", r"P014 recovery policy and persistence checks: (\d+) passed", "P014"
+              ),
+              "p013_lifecycle": native(
+                  "p013-native-tests.txt", r"P013 native service checks: (\d+) passed", "P013"
+              ),
+              "p015_unattended_policy_denial": native(
+                  "p015-tests.txt", r"P015 policy/schema/filesystem checks: (\d+) passed", "P015"
+              ),
+              "p016_unknown_stale_telemetry": native(
+                  "p016-tests.txt", r"P016 health/native checks: (\d+) passed", "P016"
+              ),
+              "p017_cli_storage_and_mutation_previews": python_suite("cli-tests.txt", "P017 CLI"),
+              "p016_cli_compatibility": python_suite("p016-cli-tests.txt", "P016 CLI"),
+              "p015_cli_compatibility": python_suite("p015-cli-tests.txt", "P015 CLI"),
+              "p009_evidence_compatibility": python_suite("p009-tests.txt", "P009"),
+              "p011_preflight": python_suite("p011-tests.txt", "P011"),
+              "p012_idle_research": python_suite("p012-tests.txt", "P012"),
+              "p013_service_cli": python_suite("p013-tests.txt", "P013 CLI"),
+              "p010_signing": python_suite("p010-tests.txt", "P010"),
+              "rootful_package_regression": python_suite("package-tests.txt", "package"),
+              "linux_protocol_and_missed_restart_integration": {"result": "PASS"},
+              "no_launchd_or_device_side_effects": {"result": "PASS"},
+              "legacy_schedule_preservation": {"result": "PASS"},
+          }
+          document = {
+              "manifest_version": 1,
+              "milestone": "P017",
+              "status": "P017_CLOUD_COMPLETE_DEVICE_SCHEDULING_PENDING",
+              "branch": "ios/p017-scheduling-v2",
+              "source_sha": source_sha,
+              "validation_class": "SIMULATED_AND_MOCK_ONLY",
+              "upstream_gate_results": upstream,
+              "suites": suites,
+              "schedule_executor": "NOT_AUTHORIZED_BY_P015",
+              "legacy_schedule_data": "PRESERVED_SCHEMA_V1_NO_PACKAGE_MIGRATION",
+              "legacy_execution_change": "AUTOMATIC_P004_EXECUTION_SUPPRESSED",
+              "maximum_new_schedule_seconds": 300,
+              "launchd_mutation": "NOT_PERFORMED",
+              "real_iokit_assertions": "NOT_ACQUIRED",
+              "network_probes": "NOT_PERFORMED",
+              "scheduled_wake": "UNVERIFIED",
+              "device_acceptance": "PENDING",
+          }
+          (root / "P017-VALIDATION.json").write_text(
+              json.dumps(document, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+          )
+          lines = [
+              f"status={document['status']}",
+              f"source_sha={source_sha}",
+              f"validation_class={document['validation_class']}",
+              f"schedule_executor={document['schedule_executor']}",
+              f"legacy_schedule_data={document['legacy_schedule_data']}",
+              f"legacy_execution_change={document['legacy_execution_change']}",
+              f"launchd_mutation={document['launchd_mutation']}",
+              f"real_iokit_assertions={document['real_iokit_assertions']}",
+              f"scheduled_wake={document['scheduled_wake']}",
+              f"device_acceptance={document['device_acceptance']}",
+          ]
+          (root / "P017-VALIDATION.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P017-scheduling-validation
+          if-no-files-found: error
+          path: |
+            build/p017/P017-VALIDATION.json
+            build/p017/P017-VALIDATION.txt
+            build/p017/source-commit.txt
+            build/p017/schedule-tests.txt
+            build/p017/cli-tests.txt
+            build/p017/integration-tests.txt
+            build/p017/p014-tests.txt
+            build/p017/p013-native-tests.txt
+            build/p017/p015-tests.txt
+            build/p017/p016-tests.txt
+            build/p017/p016-cli-tests.txt
+            build/p017/p015-cli-tests.txt
+            build/p017/p009-tests.txt
+            build/p017/p011-tests.txt
+            build/p017/p012-tests.txt
+            build/p017/p013-tests.txt
+            build/p017/p010-tests.txt
+            build/p017/package-tests.txt
