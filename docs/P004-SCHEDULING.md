@@ -1,33 +1,26 @@
-# P004 — Timed Awake & Scheduling Architecture
+# P004 — Timed Awake Scheduling
 
-## Overview
+## P004 v1 behavior recorded during the P017 audit
 
-The scheduling subsystem in `ios-caffeinated` manages one-time and recurring keep-awake schedule definitions and triggers power assertions when scheduled windows become active.
+The v1 store is `/var/lib/ioscaffeinate/schedules.json`, schema version 1, with up to 64 definitions:
 
-## Schedule Definitions & Data Structures
+- One-time UTC timestamp schedules.
+- Daily local wall-clock schedules.
+- Weekly schedules with Sunday-based weekday mask bits.
+- Optional timezone text.
+- Durations from 1 through 86,400 seconds.
+- `last_fired_time` records the end boundary of the last consumed window.
 
-Schedule items are defined in `src/schedule.h`:
+Before P017, recurrence evaluation temporarily changed process-wide `TZ`, called `localtime_r()` and `mktime()`, and inspected nearby dates using 86,400-second offsets. The daemon evaluated definitions at startup and during its event loop. When recovery allowed acquisition, an active window could acquire a new assertion. It marked `last_fired_time` before acquisition and attempted a persistence rollback if acquisition failed. Storage was already bounded and used private temporary files, sync, and atomic rename.
 
-- `SCHED_TYPE_ONETIME`: UTC timestamp (`target_time`).
-- `SCHED_TYPE_DAILY`: Hour (0..23) and Minute (0..59) in local or IANA timezone.
-- `SCHED_TYPE_WEEKLY`: Hour, Minute, and Weekday bitmask (Sun=bit 0, Mon=bit 1..Sat=bit 6).
-- Duration: 1s to 86400s (24 hours).
+These are the recorded legacy semantics. They explain existing data and compatibility behavior; they are not the P017 runtime contract.
 
-State is stored in a bounded JSON file (`/var/lib/ioscaffeinate/schedules.json`) up to 64 schedule definitions.
+## P017 runtime contract
 
-## Evaluation & Dynamic Event Loop Integration
+P017 preserves schema-v1 definitions and their `last_fired_time` values. It replaces recurrence previews with calendar-date enumeration and removes process-wide timezone mutation.
 
-During each iteration of the daemon `poll()` loop:
+The daemon no longer evaluates a due schedule to acquire an assertion. P015 rejects unattended scheduled execution, so a P004 schedule cannot authorize a power assertion. This intentionally stops legacy automatic schedule execution while keeping stored definitions readable and diagnosable. A preview never updates `last_fired_time`.
 
-1. `schedule_store_evaluate()` calculates:
-   - Whether any schedule is currently within an active window (`active_index`, `active_remaining`).
-   - The time until the next upcoming scheduled start (`next_index`, `next_start`).
-2. If an active schedule is found and no assertion is currently held, `ios-caffeinated` acquires a power assertion for `active_remaining` seconds.
-3. The `poll()` timeout is set dynamically to wake up at the exact monotonic/wall deadline for the next event.
+New schedule proposals are limited to 300 seconds. Existing definitions up to 86,400 seconds remain unchanged and are reported as `LEGACY_DURATION_EXCEEDS_POLICY`. P017 does not truncate them or renew them as chained sessions.
 
-## Restart Recovery & Conflict Policy
-
-- **Restart Recovery**: When the daemon starts or restarts, it reloads `schedules.json`. If a scheduled occurrence started in the past but its duration is still active, the daemon acquires an assertion for the remaining duration (`start_time + duration - now`).
-- **Occurrence Reactivation Prevention**: When a schedule triggers or when a manual `STOP` is invoked during an active scheduled window, `last_fired_time` is recorded as `occurrence_start + duration`, preventing immediate re-activation within the same window.
-- **Missed Occurrences**: Occurrences whose end time passed while the daemon was offline are logged and skipped. They are never replayed.
-- **One-Assertion Policy**: Only one native IOPMAssertion is active at any time. Manual holds (`start --for`) take immediate precedence; overlapping schedule triggers are ignored while a hold is active.
+See the P017 architecture, timezone/DST, recurrence, conflict, storage, CLI, recovery, safety, validation, and device-acceptance documents in `docs/v0.2/`.

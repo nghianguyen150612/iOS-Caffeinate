@@ -22,7 +22,7 @@ P004 introduces timed keep-awake scheduling and persistent state management to i
    - Symlink traversal and permission checks fail-closed.
 
 4. **Daemon Restart Recovery & One-Assertion Policy**:
-   - On daemon startup, active schedules are evaluated against current wall clock time.
+   - At P004, active schedules were evaluated on daemon startup and during the event loop. P017 records this legacy behavior but suppresses automatic schedule assertion acquisition because P015 does not authorize unattended execution; use read-only `ic schedule` diagnostics instead.
    - Restarts during active windows recover only the remaining window duration rather than resetting back to zero.
    - Missed occurrences during daemon downtime are skipped and not replayed as late holds.
    - Only one power assertion is active at a time; conflicts and manual holds take deterministic precedence.

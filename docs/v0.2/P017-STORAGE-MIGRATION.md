@@ -1,0 +1,11 @@
+# P017 — Schedule storage and migration
+
+P017 retains `/var/lib/ioscaffeinate/schedules.json`, schema version 1, stable IDs, all valid v1 records and each historical `last_fired_time`. The file remains bounded to 64 schedules and the existing maximum file size. The strict parser rejects malformed records, unknown versions, duplicate JSON keys, unsafe paths, symlinks, hardlinks, ownership/permission failures and duplicate IDs. No data is silently dropped.
+
+No new persistent occurrence fields are required, so P017 does not rewrite files during package installation and defines no automatic migration. `ic schedule validate` is a read-only dry run. It reports schema validity, legacy durations above 300 seconds and timezone-resolution gaps. An unknown timezone does not invalidate otherwise preserved v1 data.
+
+Schedule add/remove/enable/disable operations run through the existing root-only, peer-authenticated daemon socket. The caller supplies the current 64-bit store generation; the daemon rejects stale generations. Mutations are refused unless the recovery journal is trusted and the daemon is idle with no assertion owned or release pending. A successful mutation writes a private temporary file, flushes and syncs it, atomically renames, syncs the containing directory where supported, reloads the file and verifies the committed state. Failure attempts to restore the previous valid store. The CLI reports changed, unchanged or error; dry-run performs no write. There is no direct offline editor while a daemon may own an in-memory copy.
+
+Before any separately authorized future migration, an operator should stop the service through the reviewed service lifecycle, confirm no assertion ownership and clean recovery state, preserve a root-owned mode-0600 copy of the original file and its checksum, run validation and a migration preview, then apply only an explicitly versioned tool. Rollback restores the byte-for-byte backup only while the daemon is stopped, then validates ownership, mode and contents before service start. P017 provides no migration writer; do not hand-edit the JSON.
+
+For legacy holds longer than 300 seconds, preserve the stored value and report `LEGACY_DURATION_EXCEEDS_POLICY`. Do not truncate it, split it into renewals or use P004's 86,400-second storage limit as execution authority. No package upgrade rewrites user schedules.
