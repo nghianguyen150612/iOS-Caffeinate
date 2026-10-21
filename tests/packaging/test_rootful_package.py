@@ -74,9 +74,10 @@ def write_source_inputs(
     path.mkdir(parents=True, exist_ok=True)
     records = []
     for name in ("ios-caffeinate", "ios-caffeinated"):
-        dependencies = ("/usr/lib/libSystem.B.dylib",)
-        if name == "ios-caffeinated":
-            dependencies += ("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",)
+        dependencies = (
+            "/usr/lib/libSystem.B.dylib",
+            "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+        )
         dependencies += extra_dependencies
         executable = path / name
         executable.write_bytes(macho_fixture(cpu_type=cpu_type, subtype=subtype, min_os=min_os, signed=signed, dependencies=dependencies))
@@ -155,7 +156,10 @@ class RootfulPackageTests(unittest.TestCase):
         info = validate_ios12_arm64(
             self.inputs / "ios-caffeinate",
             allow_signature=False,
-            expected_dependencies={"/usr/lib/libSystem.B.dylib"},
+            expected_dependencies={
+                "/usr/lib/libSystem.B.dylib",
+                "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+            },
         )
         self.assertEqual(info.architecture, "arm64")
         self.assertEqual(info.platform, "iOS")

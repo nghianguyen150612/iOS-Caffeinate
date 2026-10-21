@@ -43,9 +43,10 @@ for name in ("ios-caffeinate", "ios-caffeinated"):
     run("xcrun", "vtool", "-show-build", path)
     deps = run("xcrun", "otool", "-L", path)
     libraries = set(re.findall(r"^\s+(/\S+)\s+\(compatibility", deps, re.M))
-    expected = {"/usr/lib/libSystem.B.dylib"}
-    if name == "ios-caffeinated":
-        expected.add("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+    expected = {
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+    }
     require(libraries == expected, f"unexpected linked libraries: {libraries}")
     require("/usr/lib/dyld" in loads, "unexpected dynamic loader")
     require("LC_CODE_SIGNATURE" not in loads, "artifact must be unsigned")

@@ -35,7 +35,10 @@ PAYLOADS = {
     "ios-caffeinated": Path("usr/local/bin/ios-caffeinated"),
 }
 EXPECTED_DEPENDENCIES = {
-    "ios-caffeinate": {"/usr/lib/libSystem.B.dylib"},
+    "ios-caffeinate": {
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+    },
     "ios-caffeinated": {
         "/usr/lib/libSystem.B.dylib",
         "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
