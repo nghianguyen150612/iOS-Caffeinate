@@ -48,7 +48,6 @@ static daemon_state_t daemon_state = DAEMON_STATE_IDLE;
 static bool clock_failed;
 static uint32_t held_id;
 static double deadline, retry_at;
-static double schedule_retry_at;
 static double daemon_started_at;
 static time_t last_acquire_epoch;
 static time_t last_release_epoch;
@@ -67,7 +66,6 @@ static const char *recovery_file_path = RECOVERY_DEFAULT_PATH;
 static recovery_record_t recovery_record;
 static bool recovery_assertions_blocked = true;
 static bool recovery_journal_started;
-static bool recovery_block_logged;
 static volatile sig_atomic_t termination_signal;
 static recovery_exit_class_t process_exit_class = RECOVERY_EXIT_UNKNOWN_UNOBSERVED;
 static int process_exit_signal;
@@ -147,6 +145,13 @@ static void copy_error_token(char *out, size_t cap, const char *error) {
 static bool can_acquire(void) {
     return !recovery_assertions_blocked && held_id == 0 &&
            daemon_state == DAEMON_STATE_IDLE && !is_release_pending();
+}
+
+static const char *schedule_mutation_blocker(void) {
+    if (recovery_assertions_blocked) return "recovery state is not verified";
+    if (state_invariant_failed || held_id != 0 || daemon_state != DAEMON_STATE_IDLE ||
+        is_release_pending()) return "daemon and assertion state must be idle";
+    return NULL;
 }
 
 static const char *recovery_runtime_state(void) {
@@ -248,71 +253,6 @@ static void expire_if_due(void) {
             log_msg("WARN", "Retrying release for assertion %u", held_id);
             (void)clear_hold(error, sizeof(error));
         }
-    }
-}
-
-static void check_and_trigger_schedules(void) {
-    if (!can_acquire()) {
-        if (recovery_assertions_blocked && sched_store.count > 0 && !recovery_block_logged) {
-            recovery_block_logged = true;
-            log_msg("WARN", "Scheduled and manual assertions are blocked: prior cleanup is unverified");
-        }
-        return;
-    }
-
-    time_t now_wall = time(NULL);
-    int active_idx = -1;
-    uint32_t active_remaining = 0;
-    int next_idx = -1;
-    time_t next_start = 0;
-
-    schedule_store_evaluate(&sched_store, now_wall, &active_idx, &active_remaining, &next_idx, &next_start);
-
-    if (active_idx >= 0 && active_remaining > 0) {
-        if (schedule_retry_at > now()) return;
-        time_t occurrence_start = now_wall -
-            (time_t)(sched_store.items[active_idx].duration - active_remaining);
-        time_t previous_fired = sched_store.items[active_idx].last_fired_time;
-        char persist_error[256] = {0};
-        if (schedule_mark_fired(&sched_store, active_idx, occurrence_start,
-                                persist_error, sizeof(persist_error)) != 0) {
-            recent_errors++;
-            log_msg("ERROR", "Refusing scheduled assertion for %s: cannot persist occurrence state: %s",
-                    sched_store.items[active_idx].id, persist_error);
-            schedule_retry_at = now() + 1.0;
-            return;
-        }
-
-        daemon_state = DAEMON_STATE_ACQUIRING;
-        char error[256] = {0};
-        if (power_acquire(&held_id, error, sizeof(error)) != 0) {
-            daemon_state = DAEMON_STATE_IDLE;
-            recent_errors++;
-            log_msg("ERROR", "Failed to acquire scheduled hold for schedule %s: %s",
-                    sched_store.items[active_idx].id, error);
-            held_id = 0;
-            /* Preserve the previous retry behavior only when its rollback is durable. */
-            sched_store.items[active_idx].last_fired_time = previous_fired;
-            if (schedule_store_save(&sched_store, persist_error, sizeof(persist_error)) != 0) {
-                sched_store.items[active_idx].last_fired_time = occurrence_start +
-                    sched_store.items[active_idx].duration;
-                log_msg("ERROR", "Could not persist scheduled acquisition rollback; suppressing this occurrence: %s",
-                        persist_error);
-                schedule_retry_at = 0;
-            } else {
-                schedule_retry_at = now() + 1.0;
-            }
-            return;
-        }
-        daemon_state = DAEMON_STATE_ACTIVE;
-        deadline = now() + (double)active_remaining;
-        last_acquire_epoch = time(NULL);
-        release_attempts = 0;
-        hold_is_trial = false;
-        schedule_retry_at = 0;
-        current_active_sched_idx = active_idx;
-        log_msg("INFO", "Triggered schedule %s: acquired assertion %u for remaining %u seconds",
-                sched_store.items[active_idx].id, held_id, active_remaining);
     }
 }
 
@@ -694,12 +634,69 @@ static void handle_client(int fd) {
         }
         respond(fd, out);
     } else if (strncmp(command, "SCHEDULE REMOVE ", 16) == 0) {
-        const char *id = command + 16;
+        char id[SCHED_ID_LEN] = {0}, generation_text[17] = {0}, extra = '\0';
+        if (sscanf(command + 16, "%31s %16s %c", id, generation_text, &extra) != 2 ||
+            strlen(generation_text) != 16) {
+            respond(fd, "ERR schedule remove requires an ID and generation precondition\n");
+            return;
+        }
+        errno = 0;
+        char *generation_end = NULL;
+        unsigned long long expected = strtoull(generation_text, &generation_end, 16);
+        if (errno || generation_end == generation_text || *generation_end ||
+            schedule_store_generation(&sched_store) != (uint64_t)expected) {
+            respond(fd, "ERR stale schedule generation; reload before editing\n");
+            return;
+        }
+        const char *mutation_blocker = schedule_mutation_blocker();
+        if (mutation_blocker) {
+            char out[192];
+            snprintf(out, sizeof(out), "ERR schedule mutation blocked: %s\n", mutation_blocker);
+            respond(fd, out);
+            return;
+        }
         char err_buf[256] = {0};
         if (schedule_store_remove(&sched_store, id, err_buf, sizeof(err_buf)) != 0) {
             reply_error(fd, "schedule remove", err_buf);
         } else {
-            respond(fd, "OK schedule_removed=yes\n");
+            respond(fd, "OK schedule_removed=yes changed=yes\n");
+        }
+    } else if (strncmp(command, "SCHEDULE SET_ENABLED ", 21) == 0) {
+        char id[SCHED_ID_LEN] = {0}, enabled_text[8] = {0};
+        char generation_text[17] = {0}, extra = '\0';
+        if (sscanf(command + 21, "%31s %7s %16s %c", id, enabled_text,
+                   generation_text, &extra) != 3 || strlen(generation_text) != 16 ||
+            (strcmp(enabled_text, "0") != 0 && strcmp(enabled_text, "1") != 0)) {
+            respond(fd, "ERR invalid schedule enable arguments\n");
+            return;
+        }
+        errno = 0;
+        char *generation_end = NULL;
+        unsigned long long expected = strtoull(generation_text, &generation_end, 16);
+        if (errno || generation_end == generation_text || *generation_end) {
+            respond(fd, "ERR invalid schedule generation precondition\n");
+            return;
+        }
+        const char *mutation_blocker = schedule_mutation_blocker();
+        if (mutation_blocker) {
+            char out[192];
+            snprintf(out, sizeof(out), "ERR schedule mutation blocked: %s\n", mutation_blocker);
+            respond(fd, out);
+            return;
+        }
+        char err_buf[256] = {0};
+        int changed = 0;
+        if (schedule_store_set_enabled(&sched_store, id, strcmp(enabled_text, "1") == 0,
+                                       (uint64_t)expected, &changed,
+                                       err_buf, sizeof(err_buf)) != 0) {
+            reply_error(fd, "schedule enable", err_buf);
+        } else {
+            char out[256];
+            snprintf(out, sizeof(out), "OK schedule_enabled=%s changed=%s generation=%016llx\n",
+                     strcmp(enabled_text, "1") == 0 ? "yes" : "no",
+                     changed ? "yes" : "no",
+                     (unsigned long long)schedule_store_generation(&sched_store));
+            respond(fd, out);
         }
     } else if (strncmp(command, "SCHEDULE ADD ", 13) == 0) {
         const char *sub = command + 13;
@@ -710,8 +707,20 @@ static void handle_client(int fd) {
         if (strncmp(sub, "ONETIME ", 8) == 0) {
             long long target_time = 0;
             unsigned duration = 0;
-            if (sscanf(sub + 8, "%lld %u", &target_time, &duration) != 2 || duration < 1 || duration > 86400) {
+            char generation_text[17] = {0}, extra = '\0';
+            if (sscanf(sub + 8, "%lld %u %16s %c", &target_time, &duration,
+                       generation_text, &extra) != 3 || duration < 1 ||
+                duration > SCHEDULE_MAX_SESSION_SECONDS || strlen(generation_text) != 16 ||
+                (long long)(time_t)target_time != target_time) {
                 respond(fd, "ERR invalid ONETIME schedule arguments\n");
+                return;
+            }
+            errno = 0;
+            char *generation_end = NULL;
+            unsigned long long expected = strtoull(generation_text, &generation_end, 16);
+            if (errno || generation_end == generation_text || *generation_end ||
+                schedule_store_generation(&sched_store) != (uint64_t)expected) {
+                respond(fd, "ERR stale schedule generation; reload before editing\n");
                 return;
             }
             item.type = SCHED_TYPE_ONETIME;
@@ -720,24 +729,45 @@ static void handle_client(int fd) {
         } else if (strncmp(sub, "DAILY ", 6) == 0) {
             int h = 0, m = 0;
             unsigned duration = 0;
-            char tz[TZ_LEN] = {0};
-            int ret = sscanf(sub + 6, "%02d:%02d %u %63s", &h, &m, &duration, tz);
-            if (ret < 3 || duration < 1 || duration > 86400 || h < 0 || h > 23 || m < 0 || m > 59) {
+            char tz[TZ_LEN] = {0}, generation_text[17] = {0}, extra = '\0';
+            int ret = sscanf(sub + 6, "%02d:%02d %u %63s %16s %c",
+                             &h, &m, &duration, tz, generation_text, &extra);
+            if (ret != 5 || duration < 1 || duration > SCHEDULE_MAX_SESSION_SECONDS ||
+                h < 0 || h > 23 || m < 0 || m > 59 || strlen(generation_text) != 16) {
                 respond(fd, "ERR invalid DAILY schedule arguments\n");
+                return;
+            }
+            errno = 0;
+            char *generation_end = NULL;
+            unsigned long long expected = strtoull(generation_text, &generation_end, 16);
+            if (errno || generation_end == generation_text || *generation_end ||
+                schedule_store_generation(&sched_store) != (uint64_t)expected) {
+                respond(fd, "ERR stale schedule generation; reload before editing\n");
                 return;
             }
             item.type = SCHED_TYPE_DAILY;
             item.hour = h;
             item.minute = m;
             item.duration = duration;
-            snprintf(item.tz, sizeof(item.tz), "%s", tz);
+            if (strcmp(tz, "-") != 0) snprintf(item.tz, sizeof(item.tz), "%s", tz);
         } else if (strncmp(sub, "WEEKLY ", 7) == 0) {
             unsigned mask = 0, duration = 0;
             int h = 0, m = 0;
-            char tz[TZ_LEN] = {0};
-            int ret = sscanf(sub + 7, "%u %02d:%02d %u %63s", &mask, &h, &m, &duration, tz);
-            if (ret < 4 || duration < 1 || duration > 86400 || h < 0 || h > 23 || m < 0 || m > 59 || mask == 0 || mask > 127) {
+            char tz[TZ_LEN] = {0}, generation_text[17] = {0}, extra = '\0';
+            int ret = sscanf(sub + 7, "%u %02d:%02d %u %63s %16s %c",
+                             &mask, &h, &m, &duration, tz, generation_text, &extra);
+            if (ret != 6 || duration < 1 || duration > SCHEDULE_MAX_SESSION_SECONDS ||
+                h < 0 || h > 23 || m < 0 || m > 59 || mask == 0 || mask > 127 ||
+                strlen(generation_text) != 16) {
                 respond(fd, "ERR invalid WEEKLY schedule arguments\n");
+                return;
+            }
+            errno = 0;
+            char *generation_end = NULL;
+            unsigned long long expected = strtoull(generation_text, &generation_end, 16);
+            if (errno || generation_end == generation_text || *generation_end ||
+                schedule_store_generation(&sched_store) != (uint64_t)expected) {
+                respond(fd, "ERR stale schedule generation; reload before editing\n");
                 return;
             }
             item.type = SCHED_TYPE_WEEKLY;
@@ -745,9 +775,17 @@ static void handle_client(int fd) {
             item.hour = h;
             item.minute = m;
             item.duration = duration;
-            snprintf(item.tz, sizeof(item.tz), "%s", tz);
+            if (strcmp(tz, "-") != 0) snprintf(item.tz, sizeof(item.tz), "%s", tz);
         } else {
             respond(fd, "ERR unknown schedule add type\n");
+            return;
+        }
+
+        const char *mutation_blocker = schedule_mutation_blocker();
+        if (mutation_blocker) {
+            char out[192];
+            snprintf(out, sizeof(out), "ERR schedule mutation blocked: %s\n", mutation_blocker);
+            respond(fd, out);
             return;
         }
 
@@ -832,21 +870,22 @@ int main(int argc, char **argv) {
         recovery_assertions_blocked = true;
         log_msg("ERROR", "Recovery journal unavailable; new assertions are blocked: %s", recovery_error);
     }
-    log_msg("INFO", "ios-caffeinated starting: socket=%s backend=%s schedules=%zu",
+    log_msg("INFO", "ios-caffeinated starting: socket=%s backend=%s schedules=%zu executor=NOT_AUTHORIZED",
             socket_path, power_backend_name(), sched_store.count);
+    if (sched_store.count > 0)
+        log_msg("WARN", "Persistent schedule definitions are retained for diagnostics; automatic assertion execution is not authorized by P015");
     if (recovery_assertions_blocked)
         log_msg("WARN", "Recovery state is unverified; schedule, probe, trial, and manual assertion acquisition are blocked");
     else
         log_msg("INFO", "Recovery journal confirms prior cleanup; current daemon generation is recorded");
 
-    check_and_trigger_schedules();
-
     while (keep_running) {
         validate_runtime_state();
         expire_if_due();
-        check_and_trigger_schedules();
 
-        int timeout_ms = sched_store.count > 0 ? 1000 : -1;
+        /* A stored future occurrence is not a wake source. Do not poll or
+         * acquire power assertions on behalf of schedule definitions. */
+        int timeout_ms = -1;
         double t_now = now();
         if (daemon_state == DAEMON_STATE_ACTIVE && deadline > t_now) {
             double left = deadline - t_now;
@@ -858,32 +897,6 @@ int main(int argc, char **argv) {
             int ms = (int)(left * 1000.0);
             if (ms < 0) ms = 0;
             timeout_ms = ms;
-        }
-
-        if (sched_store.count > 0 && !recovery_assertions_blocked &&
-            !is_holding() && !is_release_pending()) {
-            time_t now_w = time(NULL);
-            int act_i = -1, nxt_i = -1;
-            uint32_t act_rem = 0;
-            time_t nxt_start = 0;
-            schedule_store_evaluate(&sched_store, now_w, &act_i, &act_rem, &nxt_i, &nxt_start);
-
-            if (act_i >= 0 && act_rem > 0) {
-                if (schedule_retry_at <= t_now) {
-                    timeout_ms = 0;
-                } else {
-                    int ms = (int)((schedule_retry_at - t_now) * 1000.0);
-                    if (ms < 1) ms = 1;
-                    if (timeout_ms < 0 || ms < timeout_ms) timeout_ms = ms;
-                }
-            } else if (nxt_i >= 0 && nxt_start > now_w) {
-                long long diff_sec = (long long)(nxt_start - now_w);
-                if (diff_sec > 0) {
-                    /* Keep P004's one-second schedule recheck bound. */
-                    int ms = diff_sec < 60 ? (int)(diff_sec * 1000) : 1000;
-                    if (timeout_ms < 0 || ms < timeout_ms) timeout_ms = ms;
-                }
-            }
         }
 
         struct pollfd pfd = {.fd = listen_fd, .events = POLLIN};

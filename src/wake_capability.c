@@ -22,8 +22,8 @@ void wake_capability_get(wake_capability_report_t *report) {
     report->platform_identity = "compile_time_target";
     report->timed_awake = "implemented";
     report->timed_awake_backend = "unverified";
-    report->scheduled_awake = "implemented";
-    report->scheduled_awake_backend = "unverified";
+    report->scheduled_awake = "definitions_only";
+    report->scheduled_awake_backend = "not_authorized";
     report->scheduled_wake = "unverified";
     report->scheduled_wake_validated = "no";
     report->hardware_validation = "pending";
@@ -31,7 +31,7 @@ void wake_capability_get(wake_capability_report_t *report) {
     report->read_only_evidence = "none";
     report->wake_guarantee = "no";
     report->limitations =
-        "requires_running_daemon,assertion_is_not_wake_alarm,missed_windows_not_replayed";
+        "schedule_executor_not_authorized,assertion_is_not_wake_alarm,missed_windows_not_replayed";
 }
 
 int wake_capability_write(FILE *stream) {
