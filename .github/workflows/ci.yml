@@ -1022,7 +1022,11 @@ jobs:
               raise SystemExit("schedule recurrence contains forbidden side effects: " + ",".join(found))
           if "schedule_store_evaluate(" in daemon or "check_and_trigger_schedules" in daemon:
               raise SystemExit("daemon still has an automatic schedule execution path")
-          diagnostics = cli.split("static int schedule_diagnostics_command", 1)[1].split(
+          # Anchor the implementation, not its forward declaration. Other CLI
+          # helpers may execute bounded read-only diagnostics before this block.
+          diagnostics = cli.split(
+              "static int schedule_diagnostics_command(int argc, char **argv, const char *socket_path,", 1
+          )[1].split(
               "static int schedule_cli_load_store", 1
           )[0]
           forbidden_cli = ("system(", "popen(", "execv(", "launchctl", "START ", "PROBE\\n")
