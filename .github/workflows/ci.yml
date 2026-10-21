@@ -1292,7 +1292,7 @@ jobs:
           sudo python3 "$tmp/source/scripts/p018_evidence.py" export --output "$tmp/output/bundle" --root "$tmp/evidence" --json | tee build/p018/root-export.json
           sudo python3 "$tmp/source/scripts/p018_validate_export.py" "$tmp/output/bundle" --json | tee build/p018/root-export-validation.json
           grep -q '"hardware_evidence_accepted":"NOT_ESTABLISHED"' build/p018/root-export-validation.json
-          grep -q '"provenance":"MOCK"' "$tmp/output/bundle/manifest.json"
+          sudo grep -q '"provenance":"MOCK"' "$tmp/output/bundle/manifest.json"
           sudo cp -a "$tmp/output/bundle" build/p018/export-created
           sudo chown -R "$(id -u):$(id -g)" build/p018/export-created
           python3 scripts/p018_validate_export.py build/p018/export-created --json | tee build/p018/copied-export-validation.json
