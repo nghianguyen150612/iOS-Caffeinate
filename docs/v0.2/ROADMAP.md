@@ -80,21 +80,21 @@ Feature implementation, physical-device acceptance, and production reliability c
 
 **Depends on:** accepted P011 layout and the interfaces delivered by P013–P017.
 
-**Deliverables:** consistent help and errors, safe manager diagnostics, actionable install/upgrade/removal guidance, and evidence export commands.
+**Deliverables:** contextual help and version identity; stable error fields with legacy exit compatibility; bounded read-only doctor; manager-backed package status, upgrade and rollback review; allowlisted evidence inventory; explicit privacy-filtered export and offline validator; POSIX shell/zsh examples; exact-source CI and operator documentation.
 
-**Safety constraints:** diagnostics stay read-only unless a command name and prompt make the state change explicit; no destructive default or credential capture.
+**Safety constraints:** no automatic package install/removal/rollback, daemon start, launchd activation, assertion acquisition from diagnostics, unattended schedule/server executor, credential capture, generic `/var` archive, or false P009 acceptance. Missing/unverified device facts remain distinct from false/healthy.
 
-**Validation and completion:** CLI golden tests, shell compatibility tests, package-manager simulations, and a supervised upgrade/rollback walkthrough.
+**Validation and completion:** native CLI golden and exit-compatibility tests, P009–P017 regression, package-preflight fixtures, export symlink/hardlink/path/privacy tests, offline validator tests, portable shell/zsh syntax, exact-head Actions, and an attended read-only device runbook. Cloud completion does not establish hardware acceptance. See [P018 validation](P018-VALIDATION.md).
 
 ### P019 — Supervised reliability and endurance validation
 
 **Depends on:** accepted P011 package; P012 protocol; P013/P014 lifecycle; P015 policy; P016 observability; P017 schedules; P018 operating instructions.
 
-**Deliverables:** versioned endurance plan, failure criteria, battery/thermal/network evidence, incident handling, and a P009 evidence bundle.
+**Deliverables:** preregistered endurance plan; explicit duration, charging, screen, route, battery/thermal, and observation criteria; stop/failure criteria; genuine P009 device and independent-observer events; incident handling; and reviewed export bundle.
 
 **Safety constraints:** operator attendance and physical recovery; bounded trials; stop on uncertain assertion cleanup, thermal concern, or state corruption. No unattended testing without a separately reviewed safety plan.
 
-**Validation and completion:** repeated target-device sessions across the agreed duration and conditions, independent evidence review, and explicit limitations. Passing a CI suite or one attended trial does not certify production reliability.
+**Validation and completion:** repeated target-device sessions across the preregistered conditions, exact source/package identity, acquire/release and cleanup records, screen-lock and independent LAN/Tailscale observations when authorized, physical recovery, P009 human review, and explicit limitations. P018 export checks consistency and privacy; it cannot establish physical provenance. Passing CI or one attended trial does not certify production reliability.
 
 ### P020 — Integration, security hardening and v0.2 release
 

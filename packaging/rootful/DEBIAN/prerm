@@ -7,12 +7,20 @@ case "${1:-}" in
 esac
 
 SOCKET='/var/run/ioscaffeinated.sock'
+SOCKET_LOCK='/var/run/ioscaffeinated.sock.lock'
 LIVE_PLIST='/Library/LaunchDaemons/com.ioscaffeinate.daemon.plist'
 CLI='/usr/local/bin/ios-caffeinate'
+MANAGER='/usr/local/libexec/ioscaffeinate-manager'
 if [ -e "$SOCKET" ] || [ -L "$SOCKET" ]; then
     echo "iOS-Caffeinate: refusing package removal or upgrade while the default daemon endpoint exists: $SOCKET" >&2
     echo 'Stop the manually started daemon, verify its IOKit assertion was released, and inspect the endpoint before retrying.' >&2
     echo 'The package script will not remove the endpoint or terminate a process.' >&2
+    exit 1
+fi
+
+if [ -e "$SOCKET_LOCK" ] || [ -L "$SOCKET_LOCK" ]; then
+    echo "iOS-Caffeinate: refusing package removal or upgrade while the default socket lock exists or is unsafe: $SOCKET_LOCK" >&2
+    echo 'Inspect daemon and lock state; the package script will not delete either path.' >&2
     exit 1
 fi
 
@@ -46,9 +54,26 @@ ipc=$(printf '%s\n' "$status" | awk -F= '$1 == "ipc.availability" { print $2; fo
     echo 'iOS-Caffeinate: refusing package removal because daemon IPC state is unknown.' >&2
     exit 1
 }
-if [ "$registration" != 'NOT_REGISTERED' ] || [ "$runtime" != 'NOT_OBSERVED' ] || [ "$ipc" != 'UNAVAILABLE' ]; then
-    echo "iOS-Caffeinate: refusing package removal while service state is active or uncertain (registration=$registration runtime=$runtime ipc=$ipc)." >&2
+assertion=$(printf '%s\n' "$status" | awk -F= '$1 == "assertion.state" { print $2; found=1 } END { if (!found) exit 1 }') || {
+    echo 'iOS-Caffeinate: refusing package removal because assertion ownership is unknown.' >&2
+    exit 1
+}
+recovery=$(printf '%s\n' "$status" | awk -F= '$1 == "recovery.state" { print $2; found=1 } END { if (!found) exit 1 }') || {
+    echo 'iOS-Caffeinate: refusing package removal because P014 recovery state is unknown.' >&2
+    exit 1
+}
+if [ "$registration" != 'NOT_REGISTERED' ] || [ "$runtime" != 'NOT_OBSERVED' ] ||
+   [ "$ipc" != 'UNAVAILABLE' ] || [ "$assertion" != 'NONE' ] || [ "$recovery" != 'HEALTHY' ]; then
+    echo "iOS-Caffeinate: refusing package removal while service state is active or uncertain (registration=$registration runtime=$runtime ipc=$ipc assertion=$assertion recovery=$recovery)." >&2
     echo 'Disable the service explicitly, verify cleanup, then retry package removal.' >&2
+    exit 1
+fi
+
+# The manager also checks package ownership/integrity and persistent-data review.
+# Its nonzero result blocks package changes; this script does not repair state.
+if [ ! -x "$MANAGER" ] || ! "$MANAGER" uninstall-check >/dev/null 2>&1; then
+    echo 'iOS-Caffeinate: refusing package removal because ownership/integrity or persistent-data review is incomplete.' >&2
+    echo 'Inspect ic package uninstall-check and use a separately authorized procedure after review.' >&2
     exit 1
 fi
 

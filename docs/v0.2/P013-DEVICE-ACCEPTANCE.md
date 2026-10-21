@@ -2,6 +2,8 @@
 
 **Status: PENDING.** No P013 physical service operation has been performed. P011 installed-package acceptance and the stable package signature/provenance gate must pass first. Review P012 safety observations where they affect service activation.
 
+P018's initial attended visit is limited to the read-only command set in [P018 device acceptance](P018-DEVICE-ACCEPTANCE.md). The lifecycle sequence below is a later, separately authorized procedure; P018 does not authorize a launchd mutation or daemon activation.
+
 ## Preconditions
 
 - P011 package acceptance passes for the exact installed stable package, including the approved signer provenance check.

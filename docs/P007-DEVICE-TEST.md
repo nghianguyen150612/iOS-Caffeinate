@@ -1,5 +1,7 @@
 # P007 Deferred Device Installation and Runtime Procedure
 
+For the current P018 cloud milestone, use the read-only initial checklist in [P018 device acceptance](v0.2/P018-DEVICE-ACCEPTANCE.md). The package-changing phases below require their own explicit authorization and must not be treated as the initial P018 session.
+
 **P007 snapshot: package procedure not executed at that milestone.** The target iPad was unavailable then. P010 later records operator-reported binary execution and assertion results, but no `.deb` installation has been performed. Do not treat CI output as package acceptance. Do not run an unattended 24/7 test; follow [P010 device acceptance](P010-DEVICE-ACCEPTANCE.md).
 
 ## Pre-install checks

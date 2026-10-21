@@ -36,6 +36,10 @@ REQUIRED_HASHES = {
     "usr/share/ioscaffeinate/launchd/com.ioscaffeinate.daemon.plist",
     "usr/share/ioscaffeinate/SIGNING-STATE",
     "usr/share/ioscaffeinate/package-build.json",
+    "usr/share/doc/ioscaffeinate/tools/p009_evidence.py",
+    "usr/share/doc/ioscaffeinate/tools/p018_evidence.py",
+    "usr/share/doc/ioscaffeinate/tools/p018_validate_export.py",
+    "usr/share/doc/ioscaffeinate/tools/p018_package_preflight.py",
 }
 SIGNING_PROFILE_PATH = "usr/share/ioscaffeinate/signing/amethyst-ios12-rootful.plist"
 EXPECTED_DEPENDENCIES = {
@@ -128,6 +132,10 @@ def expected_package_paths(source_commit_sha: str | None = None, source_tree_cle
         "usr/share/ioscaffeinate/launchd/com.ioscaffeinate.daemon.plist",
         "usr/share/doc/ioscaffeinate/README.md",
         "usr/share/doc/ioscaffeinate/LICENSE",
+        "usr/share/doc/ioscaffeinate/tools/p009_evidence.py",
+        "usr/share/doc/ioscaffeinate/tools/p018_evidence.py",
+        "usr/share/doc/ioscaffeinate/tools/p018_validate_export.py",
+        "usr/share/doc/ioscaffeinate/tools/p018_package_preflight.py",
     }
     document_paths: set[str] = set()
     if source_commit_sha is not None and source_tree_clean is True:
@@ -214,9 +222,11 @@ def check_sha_manifest(root: Path) -> set[str]:
         require(path.is_file() and not path.is_symlink(), f"checksum target missing or not regular: {relative}")
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
         require(actual == digest, f"packaged SHA-256 mismatch: {relative}")
-    expected = set(REQUIRED_HASHES)
-    if (root / SIGNING_PROFILE_PATH).exists():
-        expected.add(SIGNING_PROFILE_PATH)
+    expected = {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file() and not path.is_symlink() and path != manifest
+    }
     require(set(records) == expected, "packaged SHA256SUMS must cover the approved payload and signing metadata")
     return set(records)
 

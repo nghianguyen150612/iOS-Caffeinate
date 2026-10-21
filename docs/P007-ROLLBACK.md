@@ -1,5 +1,7 @@
 # P007 Rollback and State Preservation
 
+**Current operator guidance:** this historical procedure does not authorize package changes. Use the P018 [upgrade/rollback review](v0.2/P018-UPGRADE-ROLLBACK.md) and [supervised device runbook](v0.2/P018-DEVICE-ACCEPTANCE.md). The initial P018 device session is read-only. Any install, removal, downgrade, or rollback trial needs separate explicit authorization.
+
 ## Scope
 
 P007 provides read-only rollback checks and an operator procedure. It does not implement automatic rollback, copy a previous package, restore launchd, restart a daemon, or erase state. A rollback is complete only after the previous package artifact, package status, files, service state, assertion release, and preserved user state have been verified.

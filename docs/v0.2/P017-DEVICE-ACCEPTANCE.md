@@ -2,6 +2,8 @@
 
 Cloud engineering does not connect to or modify the reference iPad. Device scheduling acceptance is pending. Begin with read-only diagnostics only after P011 package acceptance, P012 safety review, P013 launchd compatibility review, P014 recovery acceptance, P015 policy acceptance and P016 telemetry-limit review. Require the operator physically present and an independent local recovery method.
 
+P018's first device session uses the shorter unified read-only checklist in [P018 device acceptance](P018-DEVICE-ACCEPTANCE.md). This P017 runbook remains a later schedule-specific review and does not authorize schedule execution or scheduled wake.
+
 Initial read-only checklist:
 
 1. Record installed binary/package identity and current service state without starting the daemon.

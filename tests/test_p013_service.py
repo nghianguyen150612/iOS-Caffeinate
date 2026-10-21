@@ -83,13 +83,17 @@ class P013ServiceCommandTests(unittest.TestCase):
             live = root / "Library/LaunchDaemons/com.ioscaffeinate.daemon.plist"
             live.parent.mkdir(parents=True)
             cli = root / "ios-caffeinate"
+            manager = root / "ioscaffeinate-manager"
             script = (ROOT / "packaging/rootful/DEBIAN/prerm").read_text()
             script = script.replace("/var/run/ioscaffeinated.sock", str(socket))
             script = script.replace("/Library/LaunchDaemons/com.ioscaffeinate.daemon.plist", str(live))
             script = script.replace("/usr/local/bin/ios-caffeinate", str(cli))
+            script = script.replace("/usr/local/libexec/ioscaffeinate-manager", str(manager))
             prerm = root / "prerm"
             prerm.write_text(script)
             script_path = str(prerm)
+            manager.write_text("#!/bin/sh\n[ \"${1:-}\" = uninstall-check ]\n")
+            manager.chmod(0o755)
 
             state_dir = root / "var/lib/ioscaffeinate"
             log_dir = root / "var/log/ioscaffeinate"
@@ -103,7 +107,7 @@ class P013ServiceCommandTests(unittest.TestCase):
             def run_with_status(registration: str, runtime: str, ipc: str) -> subprocess.CompletedProcess[str]:
                 cli.write_text(
                     "#!/bin/sh\n"
-                    f"printf '%s\\n' 'launchd.registration={registration}' 'runtime.process={runtime}' 'ipc.availability={ipc}'\n"
+                    f"printf '%s\\n' 'launchd.registration={registration}' 'runtime.process={runtime}' 'ipc.availability={ipc}' 'assertion.state=NONE' 'recovery.state=HEALTHY'\n"
                 )
                 cli.chmod(0o755)
                 return subprocess.run(["sh", script_path, "remove"], text=True,
@@ -117,6 +121,25 @@ class P013ServiceCommandTests(unittest.TestCase):
             unknown = run_with_status("UNVERIFIED", "NOT_OBSERVED", "UNAVAILABLE")
             self.assertEqual(unknown.returncode, 1)
 
+            cli.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' 'launchd.registration=NOT_REGISTERED' 'runtime.process=NOT_OBSERVED' 'ipc.availability=UNAVAILABLE' 'assertion.state=UNKNOWN' 'recovery.state=HEALTHY'\n"
+            )
+            cli.chmod(0o755)
+            unresolved_assertion = subprocess.run(["sh", script_path, "remove"], text=True,
+                                                  capture_output=True, timeout=3)
+            self.assertEqual(unresolved_assertion.returncode, 1)
+            self.assertIn("assertion=UNKNOWN", unresolved_assertion.stderr)
+            cli.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' 'launchd.registration=NOT_REGISTERED' 'runtime.process=NOT_OBSERVED' 'ipc.availability=UNAVAILABLE' 'assertion.state=NONE' 'recovery.state=RECOVERY_UNVERIFIED'\n"
+            )
+            cli.chmod(0o755)
+            unresolved_recovery = subprocess.run(["sh", script_path, "remove"], text=True,
+                                                 capture_output=True, timeout=3)
+            self.assertEqual(unresolved_recovery.returncode, 1)
+            self.assertIn("recovery=RECOVERY_UNVERIFIED", unresolved_recovery.stderr)
+
             live.write_text("unrelated content\n")
             collision = run_with_status("NOT_REGISTERED", "NOT_OBSERVED", "UNAVAILABLE")
             self.assertEqual(collision.returncode, 1)
@@ -128,6 +151,19 @@ class P013ServiceCommandTests(unittest.TestCase):
             self.assertIn("default daemon endpoint", endpoint.stderr)
             self.assertEqual(schedule.read_text(), "preserve schedule\n")
             self.assertEqual(log.read_text(), "preserve log\n")
+
+            socket.unlink()
+            (Path(str(socket) + ".lock")).write_text("stale lock\n")
+            stale_lock = run_with_status("NOT_REGISTERED", "NOT_OBSERVED", "UNAVAILABLE")
+            self.assertEqual(stale_lock.returncode, 1)
+            self.assertIn("socket lock", stale_lock.stderr)
+
+            Path(str(socket) + ".lock").unlink()
+            manager.write_text("#!/bin/sh\nexit 1\n")
+            manager.chmod(0o755)
+            manager_incomplete = run_with_status("NOT_REGISTERED", "NOT_OBSERVED", "UNAVAILABLE")
+            self.assertEqual(manager_incomplete.returncode, 1)
+            self.assertIn("persistent-data review", manager_incomplete.stderr)
 
     def test_managed_configuration_disables_crash_relaunch(self) -> None:
         source = (ROOT / "src/service.c").read_text()

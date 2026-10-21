@@ -1174,3 +1174,180 @@ jobs:
             build/p017/p013-tests.txt
             build/p017/p010-tests.txt
             build/p017/package-tests.txt
+
+  p018-cli-package-ux-validation:
+    name: P018 CLI, package, and evidence validation
+    runs-on: ubuntu-latest
+    needs:
+      - linux-protocol
+      - ios-cross-build
+      - ios-artifact-inspection
+      - ios-rootful-package
+      - p009-evidence-validation
+      - p011-release-preflight
+      - p010-signing-release-gate
+      - p012-idle-research-validation
+      - p013-launchd-lifecycle-validation
+      - p014-crash-recovery-validation
+      - p015-server-policy-validation
+      - p016-health-telemetry-validation
+      - p017-scheduling-validation
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Record and verify exact checked-out source SHA
+        env:
+          P018_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/p018
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$P018_SOURCE_SHA"
+          printf '%s\n' "$actual_sha" | tee build/p018/source-commit.txt
+      - name: Build the explicit C11 mock target
+        run: ./scripts/build-linux-test.sh
+      - name: Run CLI, error, package-preflight, and evidence-export regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -v 2>&1 | tee build/p018/python-tests.txt
+          python3 -m unittest discover -s tests/packaging -v 2>&1 | tee build/p018/packaging-tests.txt
+          python3 tests/integration.py 2>&1 | tee build/p018/protocol-integration.txt
+      - name: Run root-owned export tests in isolated temporary directories
+        run: |
+          set -euo pipefail
+          sudo python3 -m unittest \
+            tests.test_p018_export.P018EvidenceInventoryTests.test_opt_in_operator_files_are_untrusted_and_sensitive_ids_are_rejected \
+            tests.test_p018_export.P018EvidenceInventoryTests.test_interrupted_export_removes_partial_bundle -v \
+            2>&1 | tee build/p018/root-export-tests.txt
+      - name: Check POSIX shell and zsh documentation examples
+        run: |
+          set -euo pipefail
+          command -v zsh
+          python3 scripts/check_p018_docs_shell.py | tee build/p018/shell-examples.txt
+          sh -n packaging/rootful/manager
+          sh -n packaging/rootful/DEBIAN/preinst
+          sh -n packaging/rootful/DEBIAN/prerm
+      - name: Verify P013–P017 and package-script safety gates
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee build/p018/safety-gates.txt
+          import re
+          from pathlib import Path
+
+          manager = Path("packaging/rootful/manager").read_text()
+          preinst = Path("packaging/rootful/DEBIAN/preinst").read_text()
+          prerm = Path("packaging/rootful/DEBIAN/prerm").read_text()
+          cli = Path("src/cli.c").read_text()
+          service = Path("src/service.c").read_text()
+          daemon = Path("src/daemon.c").read_text()
+          schedule = Path("src/schedule.c").read_text()
+          server_policy = Path("src/server_policy.c").read_text()
+          forbidden_manager = re.compile(r"\bdpkg\s+(?:-i|--remove)\b|\blaunchctl\s+(?:load|bootstrap|enable|kickstart|start|restart|bootout)\b|\bkill\s+-9\b|\brm\s+-rf\b", re.I)
+          for name, text in (("manager", manager), ("preinst", preinst), ("prerm", prerm)):
+              if forbidden_manager.search(text):
+                  raise SystemExit(f"unsafe package mutation found in {name}")
+          doctor = cli.split("static int doctor_command", 1)[1].split("static int package_status_json", 1)[0]
+          if any(token in doctor for token in ("power_acquire", "PROBE\\n", "launchctl load", "system(", "execv(")):
+              raise SystemExit("read-only doctor contains an acquisition or mutation path")
+          for required in ("launchd.mutating_compatibility=UNVERIFIED", "automatic_restart=no",
+                           "SCHEDULE_EXECUTOR_NOT_AUTHORIZED", "schedule.execution=BLOCKED_POLICY"):
+              source = service + cli + daemon + schedule + server_policy
+              if required not in source:
+                  raise SystemExit(f"safety gate missing: {required}")
+          print("p013_launchd_mutation=UNVERIFIED_FAIL_CLOSED")
+          print("p014_automatic_restart=NO")
+          print("p015_unattended_execution=NOT_AUTHORIZED")
+          print("p017_schedule_executor=NOT_AUTHORIZED")
+          print("package_install_remove_rollback=NOT_EXECUTED")
+          PY
+          test "$(git rev-parse HEAD)" = "$(cat build/p018/source-commit.txt)"
+      - name: Exercise real export creation with isolated MOCK-only sources
+        run: |
+          set -euo pipefail
+          tmp="$RUNNER_TEMP/p018-export-test"
+          mkdir -p "$tmp/source/scripts" "$tmp/source/docs/evidence" "$tmp/evidence/p011" "$tmp/output"
+          cp scripts/p018_evidence.py scripts/p018_validate_export.py "$tmp/source/scripts/"
+          cat > "$tmp/source/docs/evidence/P010-OPERATOR-REPORTED.json" <<'JSON'
+          {"schema_version":1,"record_type":"p018-export-fixture","evidence_origin":"MOCK","review_status":"UNREVIEWED","fixture_kind":"CI_ONLY","hardware_evidence_accepted":"NOT_ESTABLISHED"}
+          JSON
+          cat > "$tmp/evidence/p011/package-acceptance.json" <<'JSON'
+          {"schema_version":1,"record_type":"p018-export-fixture","evidence_origin":"MOCK","review_status":"UNREVIEWED","fixture_kind":"CI_ONLY","hardware_evidence_accepted":"NOT_ESTABLISHED"}
+          JSON
+          sudo chown -R root:root "$tmp/source" "$tmp/evidence" "$tmp/output"
+          sudo chmod 755 "$tmp/source" "$tmp/source/scripts" "$tmp/source/docs" "$tmp/source/docs/evidence"
+          sudo chmod 644 "$tmp/source/scripts/p018_evidence.py" "$tmp/source/scripts/p018_validate_export.py" "$tmp/source/docs/evidence/P010-OPERATOR-REPORTED.json"
+          sudo chmod 755 "$tmp/evidence/p011"
+          sudo chmod 644 "$tmp/evidence/p011/package-acceptance.json"
+          source_sha="$(git rev-parse HEAD)"
+          sudo python3 "$tmp/source/scripts/p018_evidence.py" export --output "$tmp/output/bundle" --root "$tmp/evidence" --json | tee build/p018/root-export.json
+          sudo python3 "$tmp/source/scripts/p018_validate_export.py" "$tmp/output/bundle" --json | tee build/p018/root-export-validation.json
+          grep -q '"hardware_evidence_accepted":"NOT_ESTABLISHED"' build/p018/root-export-validation.json
+          grep -q '"provenance":"MOCK"' "$tmp/output/bundle/manifest.json"
+          sudo cp -a "$tmp/output/bundle" build/p018/export-created
+          sudo chown -R "$(id -u):$(id -g)" build/p018/export-created
+          python3 scripts/p018_validate_export.py build/p018/export-created --json | tee build/p018/copied-export-validation.json
+          python3 tests/create_p018_fixture_bundle.py --output "$RUNNER_TEMP/p018-deterministic-fixture" --source-sha "$source_sha" | tee build/p018/deterministic-fixture.txt
+          python3 scripts/p018_validate_export.py "$RUNNER_TEMP/p018-deterministic-fixture" --json | tee build/p018/deterministic-fixture-validation.json
+      - name: Write P018 exact-source validation summary
+        env:
+          P018_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path("build/p018")
+          source_sha = os.environ["P018_SOURCE_SHA"]
+          if (root / "source-commit.txt").read_text().strip() != source_sha:
+              raise SystemExit("P018 validation artifact SHA mismatch")
+          suites = {}
+          for key, filename in (("python", "python-tests.txt"),
+                                ("packaging", "packaging-tests.txt")):
+              text = (root / filename).read_text()
+              count = re.search(r"Ran (\d+) tests? in ", text)
+              if not count or not re.search(r"^OK(?: \(skipped=\d+\))?$", text, re.MULTILINE):
+                  raise SystemExit(f"{key} suite did not pass")
+              suites[key] = {"tests": int(count.group(1)), "result": "PASS"}
+          summary = {
+              "manifest_version": 1,
+              "milestone": "P018",
+              "source_sha": source_sha,
+              "status": "P018_CLOUD_COMPLETE_DEVICE_UX_PENDING",
+              "validation_scope": "C11_MOCK_PYTHON_STANDARD_LIBRARY_POSIX_SH_ZSH_SYNTAX",
+              "upstream_p009_p017": "PASS",
+              "suites": suites,
+              "package_install_remove_rollback": "NOT_EXECUTED",
+              "launchd_mutation": "NOT_PERFORMED",
+              "daemon_start": "NOT_PERFORMED",
+              "assertion_acquisition": "NOT_PERFORMED",
+              "device_access": "NOT_PERFORMED",
+              "export_fixture_provenance": "MOCK_ONLY",
+              "hardware_evidence_accepted": "NOT_ESTABLISHED",
+          }
+          (root / "P018-VALIDATION.json").write_text(
+              json.dumps(summary, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P018-CLI-Package-Evidence-Validation
+          if-no-files-found: error
+          path: |
+            build/p018/source-commit.txt
+            build/p018/P018-VALIDATION.json
+            build/p018/python-tests.txt
+            build/p018/packaging-tests.txt
+            build/p018/root-export-tests.txt
+            build/p018/protocol-integration.txt
+            build/p018/shell-examples.txt
+            build/p018/safety-gates.txt
+            build/p018/root-export.json
+            build/p018/root-export-validation.json
+            build/p018/copied-export-validation.json
+            build/p018/export-created/**
+            build/p018/deterministic-fixture.txt
+            build/p018/deterministic-fixture-validation.json
