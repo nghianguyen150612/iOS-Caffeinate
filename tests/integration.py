@@ -945,9 +945,16 @@ class Integration(unittest.TestCase):
                 if data:
                     client.sendall(data)
             time.sleep(.05)
-        self.call("status")
-        time.sleep(1.2)
-        self.assertIn("active=no", self.call("status").stdout)
+        status = self.call("status")
+        self.assertEqual(status.returncode, 0, status.stdout)
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            status = self.call("status")
+            if "active=no" in status.stdout:
+                break
+            time.sleep(.05)
+        else:
+            self.fail(f"bounded hold did not expire after client disconnect: {status.stdout}")
 
     def test_signal_cleanup(self):
         for sig in (signal.SIGTERM, signal.SIGINT):
