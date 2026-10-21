@@ -273,6 +273,41 @@ class Integration(unittest.TestCase):
         self.assertIn("check.launchd_template=DISABLED", doctor.stdout)
         self.assertIn("check.battery_telemetry=UNAVAILABLE", doctor.stdout)
         self.assertIn("check.thermal_telemetry=UNAVAILABLE", doctor.stdout)
+
+    def test_health_status_reuses_read_only_daemon_ipc(self):
+        self.start()
+        schedule_path = Path(self.sched_path)
+        schedule_before = schedule_path.read_bytes() if schedule_path.exists() else None
+        idle = self.call("health", "status")
+        self.assertEqual(idle.returncode, 0, (idle.stdout, idle.stderr))
+        self.assertIn("daemon.status=AVAILABLE", idle.stdout)
+        self.assertIn("daemon.source=existing_SERVER_STATUS_IPC", idle.stdout)
+        self.assertIn("daemon.assertion_owned=no", idle.stdout)
+        self.assertIn("daemon.state=IDLE", idle.stdout)
+        self.assertRegex(idle.stdout, r"daemon.uptime_seconds=\d+")
+        self.assertIn("daemon.recovery_status=HEALTHY", idle.stdout)
+        self.assertIn("daemon.recovery_cleanup=CONFIRMED", idle.stdout)
+        self.assertIn("daemon.recovery_restart_eligibility=BLOCKED_SUPERVISOR_UNVERIFIED", idle.stdout)
+        self.assertIn("daemon.supervisor=UNVERIFIED", idle.stdout)
+        self.assertIn("daemon.read_only_query=yes", idle.stdout)
+        self.assertIn("active=no", self.call("status").stdout)
+
+        self.call("start", "--for", "1m")
+        active = self.call("health", "status")
+        self.assertIn("daemon.state=ACTIVE", active.stdout)
+        self.assertIn("daemon.assertion_owned=yes", active.stdout)
+        self.assertRegex(active.stdout, r"daemon.remaining_hold_seconds=\d+")
+        self.assertRegex(active.stdout, r"daemon.last_acquisition_epoch=\d+")
+        self.assertIn("active=yes", self.call("status").stdout)
+
+        self.call("stop")
+        stopped = self.call("health", "status")
+        self.assertIn("daemon.state=IDLE", stopped.stdout)
+        self.assertIn("daemon.assertion_owned=no", stopped.stdout)
+        self.assertRegex(stopped.stdout, r"daemon.last_release_epoch=\d+")
+        self.assertIn("daemon.last_release_error=none", stopped.stdout)
+        self.assertIn("daemon.recent_errors=0", stopped.stdout)
+        doctor = self.server_call("doctor")
         self.assertIn("readiness=BLOCKED", doctor.stdout)
 
         plan = self.server_call("plan")
@@ -281,7 +316,9 @@ class Integration(unittest.TestCase):
         self.assertEqual(sum(line.startswith("gate.") for line in plan.stdout.splitlines()), 10)
         self.assertIn("gate.screen_locked_lan_verified=PENDING", plan.stdout)
         self.assertIn("gate.screen_locked_tailscale_verified=PENDING", plan.stdout)
-        self.assertEqual(Path(self.sched_path).read_bytes(), schedule_before)
+        self.assertEqual(schedule_path.exists(), schedule_before is not None)
+        if schedule_before is not None:
+            self.assertEqual(schedule_path.read_bytes(), schedule_before)
         self.assertFalse(Path(self.server_config_path).exists())
 
     def test_server_daemon_unavailable_is_not_backend_failure(self):

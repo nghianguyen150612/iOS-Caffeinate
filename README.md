@@ -165,7 +165,37 @@ evidence.thermal_safety.state=PENDING
 next_safe_step=resolve the P014 recovery blocker and review recovery status
 ```
 
-P015 cloud completion is `P015_CLOUD_COMPLETE_DEVICE_POLICY_PENDING` until hardware evidence is separately reviewed. P016 should provide battery percentage, charging, thermal state, observation time, freshness, source, and confidence through a supported read-only interface. Unknown values must stay unavailable; P016 must not enable unattended operation. See [P015 architecture](docs/v0.2/P015-ARCHITECTURE.md), [schema](docs/v0.2/P015-POLICY-SCHEMA.md), [states](docs/v0.2/P015-POLICY-STATES.md), [decision matrix](docs/v0.2/P015-DECISION-MATRIX.md), [migration](docs/v0.2/P015-CONFIG-MIGRATION.md), [recovery integration](docs/v0.2/P015-RECOVERY-INTEGRATION.md), [security](docs/v0.2/P015-SECURITY.md), [device procedure](docs/v0.2/P015-DEVICE-ACCEPTANCE.md), [validation](docs/v0.2/P015-VALIDATION.md), and [manifest](docs/v0.2/P015-MANIFEST.md).
+P015 cloud completion is `P015_CLOUD_COMPLETE_DEVICE_POLICY_PENDING` until hardware evidence is separately reviewed. The P016 adapter supplies explicit source, freshness, and availability metadata to P015 diagnostics without turning a sensor value into reviewed P009 evidence. See [P015 architecture](docs/v0.2/P015-ARCHITECTURE.md), [schema](docs/v0.2/P015-POLICY-SCHEMA.md), [states](docs/v0.2/P015-POLICY-STATES.md), [decision matrix](docs/v0.2/P015-DECISION-MATRIX.md), [migration](docs/v0.2/P015-CONFIG-MIGRATION.md), [recovery integration](docs/v0.2/P015-RECOVERY-INTEGRATION.md), [security](docs/v0.2/P015-SECURITY.md), [device procedure](docs/v0.2/P015-DEVICE-ACCEPTANCE.md), [validation](docs/v0.2/P015-VALIDATION.md), and [manifest](docs/v0.2/P015-MANIFEST.md).
+
+## P016 health diagnostics
+
+P016 adds on-demand, read-only health diagnostics:
+
+```sh
+ic health status
+ic health battery
+ic health thermal
+ic health doctor
+ic health sources
+```
+
+For an explicitly associated P012 observation outside a quiet interval, use `ic health status --trial-id <id> --condition-id A|B|C|D --outside-quiet-interval`. This labels the output only; it does not save a P012 record or supply the independent host timestamp.
+
+For an available current observation, `scripts/p016_p009_adapter.py` can print a P009 v1 `BATTERY_OBSERVATION` or `THERMAL_OBSERVATION` event fragment with `--event-id` and `--sequence`. The optional P012 association also requires `--outside-quiet-interval`. The adapter never writes a session or marks evidence accepted; current iOS battery and thermal sources return unavailable and therefore produce no event.
+
+The iOS adapter reports device uptime through `mach_continuous_time` and uses the existing `SERVER STATUS` IPC for daemon lifecycle details. Battery and charging remain `UNAVAILABLE` because UIKit reports unknown when monitoring is disabled and enabling it would mutate process state. Thermal remains `UNAVAILABLE` because the iOS 12 `NSProcessInfo.thermalState` API maps unknown or unsupported state to `NOMINAL`. No temperature is inferred. `battery` and `thermal` return exit code 3 when their source is unavailable. All target API runtime behavior remains unverified until the iPad procedure is completed.
+
+Simulated host output (Linux `MOCK`; not device evidence):
+
+```text
+health.platform=MOCK_NO_SENSOR_DATA
+battery.percentage=UNAVAILABLE
+battery.charging=UNKNOWN
+thermal.state=UNKNOWN
+health.polling=ON_DEMAND
+```
+
+P016 cloud engineering status is `P016_CLOUD_COMPLETE_DEVICE_TELEMETRY_PENDING`. It does not poll in the background, persist measurements, acquire assertions, activate launchd, or enable unattended Server Mode. P009 v1 and P012 remain unchanged. See [P016 architecture](docs/v0.2/P016-ARCHITECTURE.md), [schema](docs/v0.2/P016-TELEMETRY-SCHEMA.md), [iOS 12 capabilities](docs/v0.2/P016-IOS12-CAPABILITY-MATRIX.md), [battery](docs/v0.2/P016-BATTERY.md), [thermal](docs/v0.2/P016-THERMAL.md), [freshness](docs/v0.2/P016-FRESHNESS.md), [policy integration](docs/v0.2/P016-POLICY-INTEGRATION.md), [security](docs/v0.2/P016-SECURITY.md), [device acceptance](docs/v0.2/P016-DEVICE-ACCEPTANCE.md), [validation](docs/v0.2/P016-VALIDATION.md), and [manifest](docs/v0.2/P016-MANIFEST.md).
 
 ## Scope and evidence
 

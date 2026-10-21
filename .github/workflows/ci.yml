@@ -832,3 +832,124 @@ jobs:
             build/p015/p013-native-tests.txt
             build/p015/daemon-readonly-tests.txt
             build/p015/package-tests.txt
+
+  p016-health-telemetry-validation:
+    needs: [p015-server-policy-validation, ios-cross-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Compile native health model and run deterministic observation cases
+        env:
+          P016_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$P016_SOURCE_SHA"
+          mkdir -p build/p016
+          cc -std=c11 -Wall -Wextra -Werror -O2 -DIOSCAFFEINATE_TEST_MOCK -Isrc \
+            tests/p016_health_unit.c src/health.c src/health_ios.c src/health_mock.c \
+            src/health_policy.c src/server_policy.c src/server_mode.c src/recovery.c \
+            -o build/p016/health-unit
+          build/p016/health-unit 2>&1 | tee build/p016/native-tests.txt
+          git rev-parse HEAD > build/p016/source-commit.txt
+      - name: Build CLI and run health, P015 policy, and compatibility tests
+        run: |
+          set -euo pipefail
+          ./scripts/build-linux-test.sh
+          python3 -m unittest discover -s tests -p 'test_p016_health.py' -v 2>&1 | tee build/p016/health-cli-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p015_policy_cli.py' -v 2>&1 | tee build/p016/p015-cli-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p009_evidence.py' -v 2>&1 | tee build/p016/p009-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p012_research.py' -v 2>&1 | tee build/p016/p012-tests.txt
+          python3 tests/integration.py 2>&1 | tee build/p016/integration-tests.txt
+      - name: Write deterministic exact-source validation report
+        env:
+          P016_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path("build/p016")
+          source_sha = os.environ["P016_SOURCE_SHA"]
+          if (root / "source-commit.txt").read_text().strip() != source_sha:
+              raise SystemExit("P016 report source SHA differs from checked out source")
+
+          def suite(filename, label):
+              content = (root / filename).read_text()
+              match = re.search(r"Ran (\d+) tests? in ", content)
+              if not match or "\nOK\n" not in content:
+                  raise SystemExit(f"{label} suite did not pass")
+              return {"tests": int(match.group(1)), "result": "PASS"}
+
+          native = re.search(r"P016 health/native checks: (\d+) passed",
+                             (root / "native-tests.txt").read_text())
+          if not native:
+              raise SystemExit("P016 native checks did not report a pass count")
+          base_sha = "ef46cdc467128bf658c81dc891915aa91a2ddbca"
+          document = {
+              "manifest_version": 1,
+              "milestone": "P016",
+              "status": "P016_CLOUD_COMPLETE_DEVICE_TELEMETRY_PENDING",
+              "branch": "ios/p016-health-telemetry",
+              "integration_base": "ios/p015-server-mode-v2",
+              "base_sha": base_sha,
+              "source_sha": source_sha,
+              "validation_class": "SIMULATED_AND_MOCK_ONLY",
+              "suites": {
+                  "native_c11_health": {"checks": int(native.group(1)), "result": "PASS"},
+                  "health_cli_and_safety": suite("health-cli-tests.txt", "P016 CLI"),
+                  "p015_policy_cli": suite("p015-cli-tests.txt", "P015 policy CLI"),
+                  "p009_schema_compatibility": suite("p009-tests.txt", "P009"),
+                  "p012_offline_protocol_compatibility": suite("p012-tests.txt", "P012"),
+                  "linux_protocol_regression": {"result": "PASS"},
+                  "ios_arm64_cross_build": {"result": "PASS", "job": "ios-cross-build"},
+                  "p014_recovery_gate_regression": {"result": "PASS", "job": "p015-server-policy-validation"},
+              },
+              "battery_observation": "UNAVAILABLE_READ_ONLY_API_NOT_ESTABLISHED",
+              "charging_observation": "UNAVAILABLE_READ_ONLY_API_NOT_ESTABLISHED",
+              "thermal_observation": "UNAVAILABLE_NSProcessInfo_FALLBACK_IS_AMBIGUOUS",
+              "device_uptime_runtime": "RUNTIME_UNVERIFIED",
+              "daemon_observation": "EXISTING_READ_ONLY_SERVER_STATUS_IPC",
+              "background_polling": "NOT_IMPLEMENTED",
+              "network_probe": "NOT_PERFORMED",
+              "launchd_activation": "NOT_PERFORMED",
+              "power_assertion_acquisition": "NOT_PERFORMED",
+              "automatic_server_mode": "NOT_IMPLEMENTED",
+              "p009_schema_modified": False,
+              "device_acceptance": "PENDING",
+          }
+          (root / "P016-VALIDATION.json").write_text(
+              json.dumps(document, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+          )
+          lines = [
+              f"status={document['status']}",
+              f"branch={document['branch']}",
+              f"integration_base={document['integration_base']}",
+              f"base_sha={base_sha}",
+              f"source_sha={source_sha}",
+              f"validation_class={document['validation_class']}",
+              f"battery={document['battery_observation']}",
+              f"thermal={document['thermal_observation']}",
+              f"device_acceptance={document['device_acceptance']}",
+          ]
+          (root / "P016-VALIDATION.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P016-health-telemetry-validation
+          if-no-files-found: error
+          path: |
+            build/p016/P016-VALIDATION.json
+            build/p016/P016-VALIDATION.txt
+            build/p016/source-commit.txt
+            build/p016/native-tests.txt
+            build/p016/health-cli-tests.txt
+            build/p016/p015-cli-tests.txt
+            build/p016/p009-tests.txt
+            build/p016/p012-tests.txt
+            build/p016/integration-tests.txt
