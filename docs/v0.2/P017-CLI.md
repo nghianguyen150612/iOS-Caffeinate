@@ -1,5 +1,7 @@
 # P017 — Schedule CLI
 
+For unified discovery, use `ic help schedule` or the [P018 CLI contract](P018-CLI-CONTRACT.md). P017's command behavior and execution gate below remain unchanged.
+
 Read-only schedule diagnostics load persisted definitions directly. They do not start the daemon. Global path overrides are available for fixtures: `--schedule-state /absolute/path`, `--recovery-state /absolute/path`, `--server-config /absolute/path`, and `--socket /absolute/path.sock`.
 
 ```sh

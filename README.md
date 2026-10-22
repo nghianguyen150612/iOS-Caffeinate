@@ -1,6 +1,8 @@
 # iOS-Caffeinate
 
-Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds read-only scheduled-wake diagnostics. P006 adds server diagnostics, bounded trials, health observations, readiness gates, and connectivity evidence. P007 adds rootful Debian packaging. P008 integrates P001–P007; P009 adds offline evidence review. The public GitHub stable release **v0.1.0** has shipped with package `com.ioscaffeinate.cli` version `0.1.0-1`; this release-channel designation does not mean the installed Debian package passed hardware acceptance. On October 18, 2026, the operator reported successful target-device execution with an explicit private no-container entitlement, IOKit assertion lifecycle, cleanup, and locked-screen LAN/Tailscale SSH observations. Those results still need P009 evidence review. Stable package installation, installed-binary execution, rollback, the no-assertion comparison, battery/thermal behavior, scheduled wake, and long-duration reliability remain pending or unverified. The project is not production reliability certified.
+Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule definitions. P005 adds read-only scheduled-wake diagnostics. P006 adds server diagnostics, bounded trials, health observations, readiness gates, and connectivity evidence. P007 adds rootful Debian packaging. P008 integrates P001–P007; P009 adds offline evidence review. P018 unifies command discovery, package preflight, diagnostics, and evidence export. The public GitHub stable release **v0.1.0** has shipped with package `com.ioscaffeinate.cli` version `0.1.0-1`; this release-channel designation does not mean the installed Debian package passed hardware acceptance. On October 18, 2026, the operator reported successful target-device execution with an explicit private no-container entitlement, IOKit assertion lifecycle, cleanup, and locked-screen LAN/Tailscale SSH observations. Those results still need P009 evidence review. Stable package installation, installed-binary execution, rollback, the no-assertion comparison, battery/thermal behavior, scheduled wake, and long-duration reliability remain pending or unverified. The project is not production reliability certified.
+
+For current command discovery and supervised inspection, start with the [P018 operator guide](docs/v0.2/OPERATOR-GUIDE.md). Cloud validation is separate from physical acceptance; no P018 cloud check establishes device behavior.
 
 Executables: **ios-caffeinate** (CLI), **ios-caffeinated** (daemon). **ic** is a filesystem symlink to the CLI, never a second executable or shell alias. The socket remains `/var/run/ioscaffeinated.sock`.
 
@@ -112,6 +114,10 @@ The subsequent public [v0.1.0 stable release](https://github.com/nghianguyen1506
 ## P011 and v0.2 roadmap
 
 P011 verifies the published stable artifact and prepares a read-only device preflight and supervised acceptance procedure. Its physical installation, installed-binary, rollback, power, and reliability gates remain pending. See the [v0.2 roadmap](docs/v0.2/ROADMAP.md), [P011 device procedure](docs/v0.2/P011-DEVICE-ACCEPTANCE.md), [evidence matrix](docs/v0.2/P011-EVIDENCE-MATRIX.md), and [validation commands](docs/v0.2/P011-VALIDATION.md).
+
+## P018 operator experience
+
+P018 adds `ic help`, `ic --version`, read-only `ic doctor`, manager-backed package status and upgrade/rollback readiness, evidence inventory, and explicit privacy-filtered export. Package operations do not install/remove packages, and evidence export does not establish P009 acceptance. Current status is `P018_CLOUD_COMPLETE_DEVICE_UX_PENDING`; see the [operator guide](docs/v0.2/OPERATOR-GUIDE.md), [CLI contract](docs/v0.2/P018-CLI-CONTRACT.md), and [device runbook](docs/v0.2/P018-DEVICE-ACCEPTANCE.md).
 
 ## P012 controlled idle research
 

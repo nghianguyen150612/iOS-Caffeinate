@@ -48,6 +48,12 @@ LAUNCHD_SOURCE = ROOT / "packaging/com.ioscaffeinate.daemon.plist"
 MANAGER_SOURCE = ROOT / "packaging/rootful/manager"
 PREINST_SOURCE = ROOT / "packaging/rootful/DEBIAN/preinst"
 PRERM_SOURCE = ROOT / "packaging/rootful/DEBIAN/prerm"
+TOOL_SOURCES = (
+    "p009_evidence.py",
+    "p018_evidence.py",
+    "p018_validate_export.py",
+    "p018_package_preflight.py",
+)
 
 
 def sha256(path: Path) -> str:
@@ -299,13 +305,24 @@ def main() -> int:
         docs_root = stage / "usr/share/doc/ioscaffeinate"
         copy_regular(ROOT / "README.md", docs_root / "README.md", 0o644)
         copy_regular(ROOT / "LICENSE", docs_root / "LICENSE", 0o644)
+        payload_hash_paths.extend((
+            (docs_root / "README.md").relative_to(stage).as_posix(),
+            (docs_root / "LICENSE").relative_to(stage).as_posix(),
+        ))
         docs_source = ROOT / "docs"
         for source in sorted(docs_source.rglob("*")):
             if source.is_symlink():
                 fail(f"symlink is not allowed in packaged documentation: {source}")
             if source.is_file():
                 relative = source.relative_to(docs_source)
-                copy_regular(source, docs_root / "docs" / relative, 0o644)
+                target = docs_root / "docs" / relative
+                copy_regular(source, target, 0o644)
+                payload_hash_paths.append(target.relative_to(stage).as_posix())
+        tools_root = docs_root / "tools"
+        for name in TOOL_SOURCES:
+            target = tools_root / name
+            copy_regular(ROOT / "scripts" / name, target, 0o644)
+            payload_hash_paths.append(target.relative_to(stage).as_posix())
 
         # These are package files, never default runtime configuration.
         if (stage / "var/lib/ioscaffeinate/schedules.json").exists() or (stage / "var/lib/ioscaffeinate/server-mode.json").exists():

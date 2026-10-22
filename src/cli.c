@@ -11,6 +11,7 @@
 #include "server_policy.h"
 #include "wake_capability.h"
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
@@ -21,11 +22,47 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/utsname.h>
 
 #define DEFAULT_SOCKET "/var/run/ioscaffeinated.sock"
 #define DEFAULT_SCHEDULE_STATE "/var/lib/ioscaffeinate/schedules.json"
+#ifndef IOSCAFFEINATE_MANAGER_PATH
+#define IOSCAFFEINATE_MANAGER_PATH "/usr/local/libexec/ioscaffeinate-manager"
+#endif
+#ifndef IOSCAFFEINATE_EVIDENCE_TOOL_PATH
+#define IOSCAFFEINATE_EVIDENCE_TOOL_PATH "/usr/share/doc/ioscaffeinate/tools/p018_evidence.py"
+#endif
+#ifndef IOSCAFFEINATE_PYTHON_PATH
+#define IOSCAFFEINATE_PYTHON_PATH "/usr/bin/python3"
+#endif
+#ifndef IOSCAFFEINATE_PACKAGE_VERSION
+#define IOSCAFFEINATE_PACKAGE_VERSION "UNAVAILABLE"
+#endif
+#ifndef IOSCAFFEINATE_BUILD_SHA
+#define IOSCAFFEINATE_BUILD_SHA "UNAVAILABLE"
+#endif
+#ifndef IOSCAFFEINATE_BUILD_KIND
+#define IOSCAFFEINATE_BUILD_KIND "UNIDENTIFIED"
+#endif
+#ifndef IOSCAFFEINATE_RELEASE_CHANNEL
+#define IOSCAFFEINATE_RELEASE_CHANNEL "UNKNOWN"
+#endif
+
+static int server_policy_explain(FILE *out, const char *socket_path,
+                                 const char *config_path, int include_plan);
+static int server_doctor(FILE *out, const char *socket_path,
+                         const char *config_path, const char *schedule_path);
+static int health_command(FILE *out, const char *command, const char *socket_path,
+                          const char *trial_id, const char *condition_id,
+                          int outside_quiet_interval);
+static int schedule_diagnostics_command(int argc, char **argv,
+                                        const char *socket_path,
+                                        const char *schedule_path,
+                                        const char *server_config_path,
+                                        const char *recovery_path);
 
 typedef enum {
     SERVER_DAEMON_UNAVAILABLE = 0,
@@ -35,33 +72,709 @@ typedef enum {
 } server_daemon_result_t;
 
 static void usage(void) {
-    puts("ios-caffeinate — jailbreak iOS server power-management CLI\n"
+    puts("iOS-Caffeinate — bounded power operations and read-only diagnostics\n"
          "\n"
-         "Usage:\n"
-         "  ios-caffeinate [--socket /absolute/path.sock] probe\n"
-         "  ios-caffeinate [--socket /absolute/path.sock] status\n"
-         "  ios-caffeinate [--socket /absolute/path.sock] start --for 5m\n"
-         "  ios-caffeinate [--socket /absolute/path.sock] start --until 2026-10-18T23:00:00+07:00\n"
-         "  ios-caffeinate [--socket /absolute/path.sock] stop\n"
-         "  ios-caffeinate [--socket /absolute/path.sock] schedule add --at <ISO-8601> --for <duration>\n"
-         "  ios-caffeinate [--socket /absolute/path.sock] schedule add --daily <HH:MM> --for <duration> [--tz <TZ>]\n"
-         "  ios-caffeinate [--socket /absolute/path.sock] schedule add --weekly <days> --at <HH:MM> --for <duration> [--tz <TZ>]\n"
-         "  ios-caffeinate [--schedule-state /absolute/path] [--recovery-state /absolute/path] schedule list|next|doctor|conflicts|validate\n"
-         "  ios-caffeinate [--schedule-state /absolute/path] [--recovery-state /absolute/path] schedule explain <id> [--at <ISO-8601>]\n"
-         "  ios-caffeinate [--socket /absolute/path.sock] schedule enable|disable|remove <schedule-id> [--if-generation <hex>] [--dry-run]\n"
-         "  ios-caffeinate wake status\n"
-         "  ios-caffeinate health status|battery|thermal|doctor|sources\n"
-         "  ios-caffeinate health status [--trial-id ID --condition-id A|B|C|D --outside-quiet-interval]\n"
-         "  ios-caffeinate server status|doctor|plan\n"
-         "  ios-caffeinate server policy show|validate|explain|plan|migrate --dry-run\n"
-         "  ios-caffeinate service status|doctor|plan|recovery status|recovery plan|recovery reset --reviewed-cleanup --reviewed-supervisor-state|enable|disable|start|stop|restart\n"
-         "  ios-caffeinate server trial start --for 1s..5m\n"
-         "  ios-caffeinate server trial stop\n"
-         "  ios-caffeinate [--server-config /absolute/path] [--schedule-state /absolute/path] server status|doctor|plan\n"
+         "Usage: ic [global options] <command> [arguments]\n"
          "\n"
-         "Duration: seconds (s), minutes (m), or hours (h), maximum 24h.\n"
-         "Alias: ic (filesystem symlink to ios-caffeinate).\n"
-         "Only root can access the default daemon socket.\n");
+         "Read-only diagnostics:\n"
+         "  ic status | doctor [--json] | --version\n"
+         "  ic wake status\n"
+         "  ic schedule list|next|validate|doctor|conflicts|explain ...\n"
+         "  ic server status|doctor|plan|policy ...\n"
+         "  ic service status|doctor|plan|recovery status|recovery plan\n"
+         "  ic health status|battery|thermal|doctor|sources\n"
+         "  ic package status|verify|upgrade-check|rollback-check|uninstall-check ...\n"
+         "  ic evidence status|inventory|validate|export ...\n"
+         "\n"
+         "Configuration changes:\n"
+         "  ic schedule add|enable|disable|remove ...  (requires explicit arguments)\n"
+         "  ic service enable|disable|start|stop|restart and recovery reset ...\n"
+         "\n"
+         "Bounded power and assertion operations:\n"
+         "  ic probe  (brief assertion acquire/release check)\n"
+         "  ic start --for <duration> | --until <ISO-8601>  (maximum 24 hours)\n"
+         "  ic server trial start --for <duration>  (maximum 300 seconds)\n"
+         "  ic stop\n"
+         "\n"
+         "Unavailable or unverified: unattended Server Mode execution, scheduled assertion\n"
+         "execution, scheduled wake, automatic restart, and launchd activation semantics.\n"
+         "Battery and thermal sources may be unavailable on this iOS build.\n"
+         "\n"
+         "Device acceptance is separate from package or diagnostic readiness. Run `ic help`\n"
+         "for topics. Global options: --socket, --server-config, --schedule-state,\n"
+         "--recovery-state. Alias: ic -> ios-caffeinate.");
+}
+
+static void report_cli_error(const char *code, const char *operation,
+                             const char *reason, const char *changed,
+                             const char *next_step) {
+    fprintf(stderr,
+            "error.code=%s\nerror.operation=%s\nerror.reason=%s\n"
+            "changed=%s\ncleanup=not_applicable\nnext_safe_step=%s\n",
+            code, operation, reason, changed, next_step);
+}
+
+static int help_topic(const char *topic) {
+    if (!topic || !*topic || strcmp(topic, "help") == 0) {
+        usage();
+    } else if (strcmp(topic, "schedule") == 0) {
+        puts("ic schedule — diagnostics are read-only and do not start the daemon.\n"
+             "  list [--at ISO-8601] | next [--at ISO-8601] | validate\n"
+             "  doctor [--at ISO-8601] | conflicts [--at ISO-8601]\n"
+             "  explain <id> [--at ISO-8601]\n"
+             "  add --at ISO-8601|--daily HH:MM|--weekly days --at HH:MM --for duration [--tz TZ]\n"
+             "  enable|disable|remove <id> [--if-generation hex] [--dry-run]\n"
+             "New definitions are capped at 300 seconds. Existing longer records are preserved.\n"
+             "Execution remains unauthorized; scheduled wake is unverified.");
+    } else if (strcmp(topic, "service") == 0) {
+        puts("ic service — status, doctor, plan, and recovery status/plan are read-only.\n"
+             "enable/disable/start/restart remain fail-closed while iOS 12 launchd mutation\n"
+             "semantics are unverified. stop requires acknowledged cleanup. recovery reset\n"
+             "records an operator review; it does not perform physical cleanup. See P013/P014.");
+    } else if (strcmp(topic, "server") == 0) {
+        puts("ic server — status/doctor/plan and policy show/validate/explain/plan are diagnostic.\n"
+             "trial start/stop are explicit bounded assertion operations (maximum 300 seconds).\n"
+             "Policy eligibility is not execution authorization. No unattended executor exists.");
+    } else if (strcmp(topic, "package") == 0) {
+        puts("ic package — status, verify, upgrade-check, rollback-check, and uninstall-check\n"
+             "are read-only. Preflight never invokes dpkg installation/removal or maintainer\n"
+             "scripts. READY_FOR_OPERATOR_REVIEW is not an installation authorization.");
+    } else if (strcmp(topic, "evidence") == 0) {
+        puts("ic evidence — status/inventory/validate are read-only.\n"
+             "export --dry-run writes nothing; export --output <absolute-new-directory> is\n"
+             "explicit and creates a privacy-filtered bundle. A valid export is not accepted\n"
+             "hardware evidence. Additional files require --include-operator-file and are\n"
+             "validated as UNKNOWN/UNREVIEWED. Review P009 provenance and privacy before sharing.");
+    } else if (strcmp(topic, "health") == 0) {
+        puts("ic health status/doctor/sources are on-demand diagnostics. Battery and thermal\n"
+             "values may be UNAVAILABLE; no value is fabricated and no background polling occurs.");
+    } else if (strcmp(topic, "power") == 0) {
+        puts("Manual start holds accept 1 second through 24 hours. Server trials and new schedule\n"
+             "definitions have a maximum of 300 seconds. Explicit start/trial commands can acquire\n"
+             "an assertion; status, doctor, plans, and previews do not.");
+    } else {
+        fprintf(stderr, "error.code=INVALID_ARGUMENT\nerror.operation=help\n"
+                        "error.reason=UNKNOWN_HELP_TOPIC\nchanged=no\ncleanup=not_applicable\n"
+                        "next_safe_step=run_ic_help\n");
+        return 2;
+    }
+    return 0;
+}
+
+static void version_report(void) {
+    struct utsname platform;
+    const char *system = uname(&platform) == 0 ? platform.sysname : "UNAVAILABLE";
+    printf("version.schema_version=1\n"
+           "cli.name=ios-caffeinate\n"
+           "package.identifier=com.ioscaffeinate.cli\n"
+           "package.version=%s\n"
+           "source.commit=%s\n"
+           "build.kind=%s\n"
+           "release.channel=%s\n"
+           "platform=%s\n"
+           "schema.p009=1\n"
+           "schema.p011=1\n"
+           "schema.p012=1\n"
+           "schema.p014=1\n"
+           "schema.p015=2\n"
+           "schema.p016=1\n"
+           "schema.p017=1\n"
+           "schema.p018=1\n",
+           IOSCAFFEINATE_PACKAGE_VERSION, IOSCAFFEINATE_BUILD_SHA,
+           IOSCAFFEINATE_BUILD_KIND, IOSCAFFEINATE_RELEASE_CHANNEL,
+           system);
+}
+
+#define DIAGNOSTIC_CAPTURE_MAX (32U * 1024U)
+
+typedef enum {
+    DIAG_SERVICE,
+    DIAG_SERVER,
+    DIAG_POLICY,
+    DIAG_HEALTH,
+    DIAG_SCHEDULE
+} diagnostic_kind_t;
+
+typedef struct {
+    const char *socket_path;
+    const char *server_config_path;
+    const char *schedule_path;
+    const char *recovery_path;
+} diagnostic_context_t;
+
+static int diagnostic_child(diagnostic_kind_t kind,
+                            const diagnostic_context_t *context) {
+    if (kind == DIAG_SERVICE) {
+        char *args[] = {(char *)"status", NULL};
+        return service_command(1, args, stdout, stderr);
+    }
+    if (kind == DIAG_SERVER)
+        return server_doctor(stdout, context->socket_path,
+                             context->server_config_path, context->schedule_path);
+    if (kind == DIAG_POLICY)
+        return server_policy_explain(stdout, context->socket_path,
+                                     context->server_config_path, 0);
+    if (kind == DIAG_HEALTH)
+        return health_command(stdout, "status", context->socket_path,
+                              NULL, NULL, 0);
+    char *args[] = {(char *)"doctor", NULL};
+    return schedule_diagnostics_command(1, args, context->socket_path,
+                                       context->schedule_path,
+                                       context->server_config_path,
+                                       context->recovery_path);
+}
+
+static int capture_child_output(pid_t child, int read_fd, char *output,
+                                size_t output_cap, unsigned timeout_ms,
+                                int *exit_code, int *timed_out) {
+    if (!output || output_cap < 2) return -1;
+    output[0] = '\0';
+    size_t used = 0;
+    int eof = 0;
+    int status = 0;
+    int child_done = 0;
+    *timed_out = 0;
+    struct timespec started = {0}, current = {0};
+    if (clock_gettime(CLOCK_MONOTONIC, &started) != 0) {
+        close(read_fd);
+        (void)kill(child, SIGTERM);
+        (void)waitpid(child, NULL, 0);
+        return -1;
+    }
+    int flags = fcntl(read_fd, F_GETFL, 0);
+    if (flags >= 0) (void)fcntl(read_fd, F_SETFL, flags | O_NONBLOCK);
+    while (!eof || !child_done) {
+        if (clock_gettime(CLOCK_MONOTONIC, &current) != 0) break;
+        long long elapsed_ms = (long long)(current.tv_sec - started.tv_sec) * 1000LL +
+            (long long)(current.tv_nsec - started.tv_nsec) / 1000000LL;
+        if ((unsigned long long)elapsed_ms >= timeout_ms) {
+            *timed_out = 1;
+            (void)kill(child, SIGTERM);
+            break;
+        }
+        struct pollfd pfd = {.fd = read_fd, .events = POLLIN | POLLHUP};
+        int wait_ms = (int)(timeout_ms - (unsigned)elapsed_ms);
+        if (wait_ms > 100) wait_ms = 100;
+        int ready = poll(&pfd, 1, wait_ms);
+        if (ready < 0 && errno != EINTR) break;
+        if (ready > 0 && !eof) {
+            for (;;) {
+                char chunk[2048];
+                ssize_t n = read(read_fd, chunk, sizeof(chunk));
+                if (n < 0 && errno == EINTR) continue;
+                if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+                if (n <= 0) { eof = 1; break; }
+                size_t count = (size_t)n;
+                if (used + count >= output_cap) {
+                    size_t copy = output_cap - used - 1;
+                    if (copy) memcpy(output + used, chunk, copy);
+                    used += copy;
+                } else {
+                    memcpy(output + used, chunk, count);
+                    used += count;
+                }
+                output[used] = '\0';
+            }
+        }
+        pid_t result = waitpid(child, &status, WNOHANG);
+        if (result == child) child_done = 1;
+        else if (result < 0 && errno != EINTR) { child_done = 1; status = 0; }
+    }
+    if (!child_done) {
+        if (!*timed_out) (void)kill(child, SIGTERM);
+        for (unsigned i = 0; i < 20; ++i) {
+            pid_t result = waitpid(child, &status, WNOHANG);
+            if (result == child) { child_done = 1; break; }
+            struct timespec pause = {.tv_sec = 0, .tv_nsec = 50000000};
+            (void)nanosleep(&pause, NULL);
+        }
+        if (!child_done) (void)waitpid(child, &status, 0);
+    }
+    close(read_fd);
+    *exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+    return 0;
+}
+
+static int capture_diagnostic(diagnostic_kind_t kind,
+                              const diagnostic_context_t *context,
+                              char *output, size_t output_cap,
+                              unsigned timeout_ms, int *exit_code,
+                              int *timed_out) {
+    int descriptors[2];
+    if (pipe(descriptors) != 0) return -1;
+    pid_t child = fork();
+    if (child < 0) {
+        close(descriptors[0]); close(descriptors[1]);
+        return -1;
+    }
+    if (child == 0) {
+        close(descriptors[0]);
+        if (dup2(descriptors[1], STDOUT_FILENO) < 0 ||
+            dup2(descriptors[1], STDERR_FILENO) < 0) _exit(125);
+        close(descriptors[1]);
+        int result = diagnostic_child(kind, context);
+        fflush(stdout); fflush(stderr);
+        _exit(result < 0 ? 1 : result);
+    }
+    close(descriptors[1]);
+    return capture_child_output(child, descriptors[0], output, output_cap,
+                                timeout_ms, exit_code, timed_out);
+}
+
+static int capture_program(const char *program, char *const argv[],
+                           char *output, size_t output_cap,
+                           unsigned timeout_ms, int *exit_code,
+                           int *timed_out) {
+    int descriptors[2];
+    if (pipe(descriptors) != 0) return -1;
+    pid_t child = fork();
+    if (child < 0) {
+        close(descriptors[0]); close(descriptors[1]);
+        return -1;
+    }
+    if (child == 0) {
+        static const char missing[] = "error.code=NOT_INSTALLED\nerror.operation=diagnostic_helper\nerror.reason=REQUIRED_TOOL_UNAVAILABLE\nchanged=no\ncleanup=not_applicable\nnext_safe_step=install_the_declared_procursus_tool\n";
+        close(descriptors[0]);
+        if (dup2(descriptors[1], STDOUT_FILENO) < 0) _exit(125);
+        close(descriptors[1]);
+        execv(program, argv);
+        size_t missing_length = sizeof(missing) - 1;
+        const char *missing_cursor = missing;
+        while (missing_length > 0) {
+            ssize_t written = write(STDOUT_FILENO, missing_cursor, missing_length);
+            if (written < 0 && errno == EINTR) continue;
+            if (written <= 0) break;
+            missing_cursor += (size_t)written;
+            missing_length -= (size_t)written;
+        }
+        _exit(127);
+    }
+    close(descriptors[1]);
+    int result = capture_child_output(child, descriptors[0], output,
+                                      output_cap, timeout_ms, exit_code,
+                                      timed_out);
+    return result;
+}
+
+static int output_value(const char *output, const char *key,
+                        char *value, size_t value_cap) {
+    if (!output || !key || !value || value_cap == 0) return -1;
+    size_t key_length = strlen(key);
+    int found = 0;
+    const char *cursor = output;
+    while (*cursor) {
+        const char *end = strchr(cursor, '\n');
+        if (!end) end = cursor + strlen(cursor);
+        if ((size_t)(end - cursor) > key_length &&
+            memcmp(cursor, key, key_length) == 0 && cursor[key_length] == '=') {
+            size_t length = (size_t)(end - cursor) - key_length - 1;
+            if (found || length >= value_cap) return -1;
+            memcpy(value, cursor + key_length + 1, length);
+            value[length] = '\0';
+            found = 1;
+        }
+        cursor = *end ? end + 1 : end;
+    }
+    return found ? 0 : -1;
+}
+
+static void json_string(FILE *out, const char *value) {
+    fputc('"', out);
+    for (const unsigned char *p = (const unsigned char *)(value ? value : ""); *p; ++p) {
+        if (*p == '"' || *p == '\\') { fputc('\\', out); fputc(*p, out); }
+        else if (*p < 0x20) fprintf(out, "\\u%04x", (unsigned)*p);
+        else fputc(*p, out);
+    }
+    fputc('"', out);
+}
+
+static const char *doctor_status_for(const char *value) {
+    if (!value) return "UNKNOWN";
+    if (strcmp(value, "INVALID") == 0 || strcmp(value, "ERROR") == 0 ||
+        strcmp(value, "INCONSISTENT") == 0 || strcmp(value, "FAILED") == 0 ||
+        strcmp(value, "UNSAFE") == 0 || strcmp(value, "CLEANUP_UNVERIFIED") == 0 ||
+        strcmp(value, "RECOVERY_UNVERIFIED") == 0 || strcmp(value, "RESTART_BLOCKED") == 0 ||
+        strcmp(value, "RELEASE_FAILED") == 0 || strcmp(value, "BLOCKED") == 0)
+        return "UNSAFE";
+    if (strcmp(value, "UNAVAILABLE") == 0 || strcmp(value, "UNKNOWN") == 0 ||
+        strcmp(value, "UNKNOWN_RUNTIME_UNAVAILABLE") == 0 || strcmp(value, "NOT_INSTALLED") == 0 ||
+        strcmp(value, "MISSING") == 0)
+        return "UNAVAILABLE";
+    if (strstr(value, "UNVERIFIED") || strstr(value, "PENDING") ||
+        strstr(value, "NOT_AUTHORIZED") || strstr(value, "BLOCKED"))
+        return "PENDING_VERIFICATION";
+    if (strcmp(value, "AVAILABLE") == 0 || strcmp(value, "RESPONSIVE") == 0 ||
+        strcmp(value, "VALID") == 0 || strcmp(value, "HEALTHY") == 0 ||
+        strcmp(value, "NONE") == 0 || strcmp(value, "NOT_REGISTERED") == 0 ||
+        strcmp(value, "PRESENT") == 0 || strcmp(value, "INSTALLED") == 0 ||
+        strcmp(value, "VERIFIED") == 0 || strcmp(value, "PASS_READ_ONLY") == 0 ||
+        strcmp(value, "NO") == 0 || strcmp(value, "no") == 0)
+        return "HEALTHY";
+    return "UNKNOWN";
+}
+
+typedef struct {
+    const char *component;
+    const char *status;
+    const char *reason;
+    const char *next;
+} doctor_check_t;
+
+static void doctor_add(doctor_check_t *checks, size_t *count,
+                       const char *component, const char *status,
+                       const char *reason, const char *next) {
+    if (*count >= 16) return;
+    checks[*count].component = component;
+    checks[*count].status = status;
+    checks[*count].reason = reason;
+    checks[*count].next = next;
+    (*count)++;
+}
+
+static void doctor_render(FILE *out, int as_json, const doctor_check_t *checks,
+                          size_t count) {
+    if (as_json) {
+        fputs("{\"schema_version\":1,\"command\":\"doctor\",\"read_only\":true,\"changed\":\"no\",\"checks\":[", out);
+        for (size_t i = 0; i < count; ++i) {
+            if (i) fputc(',', out);
+            fputs("{\"component\":", out); json_string(out, checks[i].component);
+            fputs(",\"status\":", out); json_string(out, checks[i].status);
+            fputs(",\"reason\":", out); json_string(out, checks[i].reason);
+            fputs(",\"next_safe_step\":", out); json_string(out, checks[i].next);
+            fputc('}', out);
+        }
+        fputs("]}\n", out);
+        return;
+    }
+    fputs("doctor.schema_version=1\ndoctor.read_only=yes\n", out);
+    for (size_t i = 0; i < count; ++i) {
+        fprintf(out, "check.%s.status=%s\ncheck.%s.reason=%s\n"
+                     "check.%s.next_safe_step=%s\n",
+                checks[i].component, checks[i].status,
+                checks[i].component, checks[i].reason,
+                checks[i].component, checks[i].next);
+    }
+    fputs("doctor.changed=no\nhardware_acceptance=PENDING\n"
+          "unattended_operation_authorized=no\n", out);
+}
+
+static int doctor_command(int argc, char **argv, const diagnostic_context_t *context) {
+    int as_json = 0;
+    if (argc > 1 || (argc == 1 && strcmp(argv[0], "--json") != 0)) {
+        fprintf(stderr, "error.code=INVALID_ARGUMENT\nerror.operation=doctor\n"
+                        "error.reason=EXPECTED_OPTIONAL_JSON_FORMAT\nchanged=no\ncleanup=not_applicable\n"
+                        "next_safe_step=run_ic_help\n");
+        return 2;
+    }
+    if (argc == 1) as_json = 1;
+    doctor_check_t checks[16];
+    size_t count = 0;
+    struct utsname platform;
+    const char *platform_status = uname(&platform) == 0 && strcmp(platform.sysname, "Darwin") == 0
+        ? "PENDING_VERIFICATION" : "UNKNOWN";
+    doctor_add(checks, &count, "platform", platform_status,
+               "target identity is not independently verified by this query",
+               "review_the_target_platform_and_hardware_runbook");
+
+    char service[DIAGNOSTIC_CAPTURE_MAX] = {0};
+    char server[DIAGNOSTIC_CAPTURE_MAX] = {0};
+    char policy[DIAGNOSTIC_CAPTURE_MAX] = {0};
+    char health[DIAGNOSTIC_CAPTURE_MAX] = {0};
+    char schedule[DIAGNOSTIC_CAPTURE_MAX] = {0};
+    int code = 1, timeout = 0;
+    if (capture_diagnostic(DIAG_SERVICE, context, service, sizeof(service),
+                          2500, &code, &timeout) != 0 || timeout) service[0] = '\0';
+    char value[256];
+    if (output_value(service, "package.installation", value, sizeof(value)) == 0) {
+        const char *state = strcmp(value, "INSTALLED") == 0 ? "PRESENT" :
+            strcmp(value, "MISSING") == 0 ? "NOT_INSTALLED" : value;
+        doctor_add(checks, &count, "installed_package", doctor_status_for(state),
+                   "installed package identity is reported independently of runtime state",
+                   "run_ic_package_status");
+    } else {
+        doctor_add(checks, &count, "installed_package", "UNKNOWN",
+                   "package metadata could not be read from the service snapshot",
+                   "run_ic_package_status");
+    }
+    struct stat st;
+    const char *binary_state = stat("/usr/local/bin/ios-caffeinate", &st) == 0 && S_ISREG(st.st_mode)
+        ? "PRESENT" : "NOT_INSTALLED";
+    struct stat daemon_st, alias_st;
+    int daemon_present = stat("/usr/local/bin/ios-caffeinated", &daemon_st) == 0 && S_ISREG(daemon_st.st_mode);
+    int alias_present = lstat("/usr/local/bin/ic", &alias_st) == 0 && S_ISLNK(alias_st.st_mode);
+    doctor_add(checks, &count, "installed_binaries", doctor_status_for(
+                   strcmp(binary_state, "PRESENT") == 0 && daemon_present && alias_present ? "PRESENT" : "NOT_INSTALLED"),
+               "CLI, daemon, and alias paths are checked without executing or changing them",
+               "run_ic_package_verify");
+    const char *ipc = output_value(service, "ipc.availability", value, sizeof(value)) == 0
+        ? doctor_status_for(value) : "UNKNOWN";
+    doctor_add(checks, &count, "daemon_ipc", ipc,
+               "daemon IPC is queried read-only; absence does not start the daemon",
+               "inspect_ic_service_status_without_starting_the_daemon");
+    const char *assertion = output_value(service, "assertion.state", value, sizeof(value)) == 0
+        ? doctor_status_for(value) : "UNKNOWN";
+    doctor_add(checks, &count, "assertion_ownership", assertion,
+               "ownership is reported only when the daemon supplies an observation",
+               "inspect_ic_service_recovery_status_and_physical_cleanup");
+    const char *recovery = output_value(service, "recovery.state", value, sizeof(value)) == 0
+        ? doctor_status_for(value) : "UNKNOWN";
+    doctor_add(checks, &count, "p014_recovery", recovery,
+               "recovery state is not reset or repaired by doctor",
+               "inspect_ic_service_recovery_status_and_complete_attended_cleanup_review");
+    doctor_add(checks, &count, "p013_launchd", service[0] ? "PENDING_VERIFICATION" : "UNKNOWN",
+               "registration observation does not verify iOS 12 mutation semantics",
+               "review_P013_launchd_compatibility_without_running_mutation_commands");
+
+    if (capture_diagnostic(DIAG_SERVER, context, server, sizeof(server),
+                          2500, &code, &timeout) != 0 || timeout) server[0] = '\0';
+    if (capture_diagnostic(DIAG_POLICY, context, policy, sizeof(policy),
+                          2500, &code, &timeout) != 0 || timeout) policy[0] = '\0';
+    if (output_value(policy, "decision", value, sizeof(value)) == 0) {
+        const char *state = strcmp(value, "OBSERVE_ONLY") == 0 || strcmp(value, "DISABLED") == 0
+            ? "HEALTHY" : "PENDING_VERIFICATION";
+        doctor_add(checks, &count, "p015_server_policy", state,
+                   "policy decision is diagnostic and grants no execution authorization",
+                   "run_ic_server_policy_explain_and_follow_its_next_safe_step");
+    } else {
+        doctor_add(checks, &count, "p015_server_policy", "UNKNOWN",
+                   "policy inputs could not be fully observed",
+                   "run_ic_server_policy_explain");
+    }
+    if (capture_diagnostic(DIAG_HEALTH, context, health, sizeof(health),
+                          2500, &code, &timeout) != 0 || timeout) health[0] = '\0';
+    doctor_add(checks, &count, "p016_telemetry",
+               strstr(health, "battery.percentage=UNAVAILABLE") ||
+               strstr(health, "thermal.state=UNKNOWN") ? "UNAVAILABLE" :
+               health[0] ? "UNKNOWN" : "UNAVAILABLE",
+               "battery or thermal sources may be unavailable on this platform",
+               "run_ic_health_sources_and_report_unavailable_values_as_unknown");
+    if (capture_diagnostic(DIAG_SCHEDULE, context, schedule, sizeof(schedule),
+                          2500, &code, &timeout) != 0 || timeout) schedule[0] = '\0';
+    const char *storage = output_value(schedule, "schedule.storage", value, sizeof(value)) == 0
+        ? doctor_status_for(value) : "UNKNOWN";
+    doctor_add(checks, &count, "p017_scheduling", storage,
+               "schedule execution is not authorized and previews do not imply wake",
+               "run_ic_schedule_doctor_and_use_preview_commands_only");
+    doctor_add(checks, &count, "schedule_executor", schedule[0] ? "UNSUPPORTED" : "UNKNOWN",
+               "P017 intentionally has no unattended schedule executor",
+               "do_not_enable_unattended_schedule_execution");
+
+    int manager_code = 127;
+    int manager_timeout = 0;
+    char *const manager_args[] = {(char *)IOSCAFFEINATE_MANAGER_PATH, (char *)"status", NULL};
+    if (capture_program(IOSCAFFEINATE_MANAGER_PATH, manager_args, server,
+                        sizeof(server), 3000, &manager_code, &manager_timeout) != 0 || manager_timeout)
+        server[0] = '\0';
+    const char *manager_state = manager_timeout ? "UNKNOWN" : manager_code == 0 ? "HEALTHY" :
+        manager_code == 127 ? "UNAVAILABLE" : "FAILED";
+    doctor_add(checks, &count, "p011_package_integrity", manager_state,
+               manager_code == 0 ? "read-only package manager checks completed" :
+                   "package manager checks are incomplete or unavailable",
+               "run_ic_package_status_and_ic_package_verify");
+    const char *signature_status = "UNKNOWN";
+    if (manager_timeout) signature_status = "UNKNOWN";
+    else if (output_value(server, "signing_state", value, sizeof(value)) == 0) {
+        if (strstr(value, "SIGNATURE_PRESENT")) signature_status = "PENDING_VERIFICATION";
+        else if (strstr(value, "UNSIGNED")) signature_status = "UNVERIFIED";
+    } else if (manager_code == 127) signature_status = "UNAVAILABLE";
+    doctor_add(checks, &count, "signature_metadata", signature_status,
+               "signature metadata does not establish exact signer provenance or iOS acceptance",
+               "run_ic_package_verify_and_review_the_P010_signer_manifest");
+    int evidence_code = 127, evidence_timeout = 0;
+    char *const evidence_args[] = {(char *)IOSCAFFEINATE_PYTHON_PATH,
+        (char *)IOSCAFFEINATE_EVIDENCE_TOOL_PATH, (char *)"status", (char *)"--json", NULL};
+    if (capture_program(IOSCAFFEINATE_PYTHON_PATH, evidence_args, health,
+                        sizeof(health), 3000, &evidence_code, &evidence_timeout) != 0 || evidence_timeout)
+        health[0] = '\0';
+    doctor_add(checks, &count, "p009_evidence", evidence_code == 0 ? "PENDING_VERIFICATION" :
+                   evidence_code == 127 ? "UNAVAILABLE" : "UNKNOWN",
+               "parsing or export consistency does not establish physical provenance or acceptance",
+               "run_ic_evidence_inventory_and_follow_P009_review_requirements");
+    doctor_add(checks, &count, "hardware_acceptance", "PENDING_VERIFICATION",
+               "cloud diagnostics cannot establish physical iPad acceptance",
+               "complete_the_attended_device_runbook_after_P011_and_P013_P014_gates");
+    doctor_render(stdout, as_json, checks, count);
+    return ferror(stdout) ? 1 : 0;
+}
+
+static int package_status_json(const char *command) {
+    char output[DIAGNOSTIC_CAPTURE_MAX] = {0};
+    int code = 127, timeout = 0;
+    char *const args[] = {(char *)IOSCAFFEINATE_MANAGER_PATH, (char *)command, NULL};
+    if (capture_program(IOSCAFFEINATE_MANAGER_PATH, args, output, sizeof(output),
+                        5000, &code, &timeout) != 0) code = 127;
+    if (timeout) {
+        output[0] = '\0';
+        code = 1;
+    }
+    char package_metadata[256], architecture[64], signing_state[64];
+    int have_metadata = output_value(output, "package_metadata", package_metadata,
+                                     sizeof(package_metadata)) == 0;
+    int have_arch = output_value(output, "dpkg_architecture", architecture,
+                                 sizeof(architecture)) == 0;
+    int have_signing = output_value(output, "signing_state", signing_state,
+                                   sizeof(signing_state)) == 0;
+    fputs("{\"schema_version\":1,\"command\":", stdout);
+    json_string(stdout, strcmp(command, "verify") == 0 ? "package.verify" : "package.status");
+    fputs(",\"package_identifier\":\"com.ioscaffeinate.cli\",\"status\":", stdout);
+    json_string(stdout, timeout ? "UNKNOWN" : code == 0 ? "VERIFIED" :
+                code == 127 ? "UNAVAILABLE" : "INCOMPLETE");
+    printf(",\"manager_exit_code\":%d,\"timed_out\":%s,\"error_code\":",
+           code, timeout ? "true" : "false");
+    if (timeout) json_string(stdout, "IO_ERROR");
+    else if (code == 127) json_string(stdout, "NOT_INSTALLED");
+    else if (code != 0) json_string(stdout, "INTEGRITY_FAILED");
+    else fputs("null", stdout);
+    fputs(",\"error_reason\":", stdout);
+    if (timeout) json_string(stdout, "BOUNDED_QUERY_TIMEOUT");
+    else if (code == 127) json_string(stdout, "MANAGER_NOT_INSTALLED");
+    else if (code != 0) json_string(stdout, "PACKAGE_MANAGER_CHECK_FAILED");
+    else fputs("null", stdout);
+    fputs(",\"next_safe_step\":", stdout);
+    if (timeout) json_string(stdout, "retry_the_read_only_query_after_inspection");
+    else if (code == 127) json_string(stdout, "verify_the_package_installation");
+    else if (code != 0) json_string(stdout, "inspect_package_manager_output_and_verify_integrity");
+    else fputs("null", stdout);
+    fputs(",\"manager_output\":", stdout);
+    json_string(stdout, output);
+    fputs(",\"package_metadata\":", stdout);
+    if (have_metadata) json_string(stdout, package_metadata); else fputs("null", stdout);
+    fputs(",\"architecture\":", stdout);
+    if (have_arch) json_string(stdout, architecture); else fputs("null", stdout);
+    fputs(",\"signing_state\":", stdout);
+    if (have_signing) json_string(stdout, signing_state); else fputs("null", stdout);
+    fputs(",\"hardware_acceptance\":\"NOT_ESTABLISHED\",\"changed\":\"no\",\"cleanup\":\"not_applicable\"}\n", stdout);
+    return ferror(stdout) ? 1 : code;
+}
+
+static int package_command(int argc, char **argv) {
+    if (argc < 1) {
+        report_cli_error("INVALID_ARGUMENT", "package", "MISSING_SUBCOMMAND", "no",
+                         "run_ic_help_package");
+        return 2;
+    }
+    const char *subcommand = argv[0];
+    if (argc == 2 && strcmp(argv[1], "--json") == 0 &&
+        (strcmp(subcommand, "status") == 0 || strcmp(subcommand, "verify") == 0))
+        return package_status_json(subcommand);
+    const char *manager_command = NULL;
+    if (strcmp(subcommand, "status") == 0 || strcmp(subcommand, "verify") == 0 ||
+        strcmp(subcommand, "doctor") == 0) manager_command = subcommand;
+    else if (strcmp(subcommand, "upgrade-check") == 0) manager_command = "upgrade-check";
+    else if (strcmp(subcommand, "rollback-check") == 0) manager_command = "rollback-check";
+    else if (strcmp(subcommand, "uninstall-check") == 0) manager_command = "uninstall-check";
+    else {
+        report_cli_error("INVALID_ARGUMENT", "package", "UNKNOWN_SUBCOMMAND", "no",
+                         "run_ic_help_package");
+        return 2;
+    }
+    if ((strcmp(manager_command, "upgrade-check") == 0 ||
+         strcmp(manager_command, "rollback-check") == 0) && argc < 2) {
+        report_cli_error("INVALID_ARGUMENT", "package_preflight", "MISSING_ARTIFACT_PATH", "no",
+                         "provide_an_absolute_package_artifact_path");
+        return 2;
+    }
+    if (strcmp(manager_command, "upgrade-check") == 0 && argc != 2 && argc != 4) {
+        report_cli_error("INVALID_ARGUMENT", "package_upgrade_check", "UNEXPECTED_ARGUMENTS", "no",
+                         "run_ic_help_package");
+        return 2;
+    }
+    if (strcmp(manager_command, "upgrade-check") == 0 && argc == 4 &&
+        strcmp(argv[2], "--rollback-artifact") != 0) {
+        report_cli_error("INVALID_ARGUMENT", "package_upgrade_check", "UNKNOWN_OPTION", "no",
+                         "run_ic_help_package");
+        return 2;
+    }
+    if (strcmp(manager_command, "rollback-check") == 0 && argc != 2) {
+        report_cli_error("INVALID_ARGUMENT", "package_rollback_check", "UNEXPECTED_ARGUMENTS", "no",
+                         "run_ic_help_package");
+        return 2;
+    }
+    if ((strcmp(manager_command, "status") == 0 || strcmp(manager_command, "verify") == 0 ||
+         strcmp(manager_command, "doctor") == 0 || strcmp(manager_command, "uninstall-check") == 0) && argc != 1)
+    {
+        report_cli_error("INVALID_ARGUMENT", "package", "UNEXPECTED_ARGUMENTS", "no",
+                         "run_ic_help_package");
+        return 2;
+    }
+    if ((strcmp(manager_command, "upgrade-check") == 0 || strcmp(manager_command, "rollback-check") == 0) &&
+        (argv[1][0] != '/' || strstr(argv[1], "\n") || strstr(argv[1], "\r") ||
+         (argc == 4 && (argv[3][0] != '/' || strstr(argv[3], "\n") || strstr(argv[3], "\r"))))) {
+        fprintf(stderr, "error.code=INVALID_ARGUMENT\nerror.operation=package_preflight\n"
+                        "error.reason=PACKAGE_PATH_MUST_BE_ABSOLUTE\nchanged=no\ncleanup=not_applicable\n"
+                        "next_safe_step=use_an_absolute_artifact_path\n");
+        return 2;
+    }
+    char *manager_argv[7] = {(char *)IOSCAFFEINATE_MANAGER_PATH,
+                             (char *)manager_command, NULL, NULL, NULL, NULL, NULL};
+    if (argc >= 2) manager_argv[2] = argv[1];
+    if (argc == 4) {
+        manager_argv[3] = argv[2];
+        manager_argv[4] = argv[3];
+    }
+    char output[DIAGNOSTIC_CAPTURE_MAX] = {0};
+    int code = 127, timed_out = 0;
+    if (capture_program(IOSCAFFEINATE_MANAGER_PATH, manager_argv, output,
+                        sizeof(output), 12000, &code, &timed_out) != 0) code = 127;
+    if (timed_out) {
+        report_cli_error("IO_ERROR", "package_manager", "BOUNDED_READ_ONLY_QUERY_TIMEOUT",
+                         "no", "retry_the_read_only_query_after_inspection");
+        return 1;
+    }
+    if (output[0]) fputs(output, stdout);
+    if (code == 127 && !strstr(output, "error.code=NOT_INSTALLED"))
+        fprintf(stderr, "error.code=NOT_INSTALLED\nerror.operation=package_manager\n"
+                        "error.reason=MANAGER_NOT_INSTALLED\nchanged=no\ncleanup=not_applicable\n"
+                        "next_safe_step=verify_the_package_installation\n");
+    return code;
+}
+
+static int evidence_command(int argc, char **argv) {
+    if (argc < 1) {
+        report_cli_error("INVALID_ARGUMENT", "evidence", "MISSING_SUBCOMMAND", "no",
+                         "run_ic_help_evidence");
+        return 2;
+    }
+    const char *subcommand = argv[0];
+    if (strcmp(subcommand, "status") != 0 && strcmp(subcommand, "inventory") != 0 &&
+        strcmp(subcommand, "validate") != 0 && strcmp(subcommand, "export") != 0) {
+        report_cli_error("INVALID_ARGUMENT", "evidence", "UNKNOWN_SUBCOMMAND", "no",
+                         "run_ic_help_evidence");
+        return 2;
+    }
+    char *tool_argv[12];
+    size_t used = 0;
+    tool_argv[used++] = (char *)IOSCAFFEINATE_PYTHON_PATH;
+    tool_argv[used++] = (char *)IOSCAFFEINATE_EVIDENCE_TOOL_PATH;
+    tool_argv[used++] = (char *)subcommand;
+    for (int i = 1; i < argc; ++i) {
+        if (used + 1 >= sizeof(tool_argv) / sizeof(tool_argv[0])) return 2;
+        tool_argv[used++] = argv[i];
+    }
+    tool_argv[used] = NULL;
+    char output[DIAGNOSTIC_CAPTURE_MAX] = {0};
+    int code = 127, timeout = 0;
+    unsigned timeout_ms = strcmp(subcommand, "export") == 0 ? 30000 : 8000;
+    if (capture_program(IOSCAFFEINATE_PYTHON_PATH, tool_argv, output,
+                        sizeof(output), timeout_ms, &code, &timeout) != 0) code = 127;
+    if (timeout) {
+        if (strcmp(subcommand, "export") == 0) {
+            fprintf(stderr, "error.code=IO_ERROR\nerror.operation=evidence_export\n"
+                            "error.reason=BOUNDED_EXPORT_TIMEOUT\nchanged=unknown\n"
+                            "cleanup=unknown\n"
+                            "next_safe_step=inspect_the_destination_for_partial_export_files\n");
+        } else {
+            report_cli_error("IO_ERROR", "evidence_diagnostic", "BOUNDED_QUERY_TIMEOUT",
+                             "no", "retry_the_read_only_query_after_inspection");
+        }
+        return 1;
+    }
+    if (output[0]) fputs(output, stdout);
+    if (code == 127 && !strstr(output, "error.code=NOT_INSTALLED"))
+        fprintf(stderr, "error.code=UNSUPPORTED\nerror.operation=evidence\n"
+                        "error.reason=PYTHON3_OR_EVIDENCE_TOOL_UNAVAILABLE\nchanged=no\ncleanup=not_applicable\n"
+                        "next_safe_step=install_the_declared_Procursus_Python3_runtime\n");
+    return code;
 }
 
 static int parse_duration(const char *str, unsigned *result) {
@@ -1601,18 +2314,61 @@ int main(int argc, char **argv) {
     const char *recovery_path = RECOVERY_DEFAULT_PATH;
     int i = 1;
     while (i < argc && argv[i][0] == '-' && argv[i][1] == '-' &&
-           strcmp(argv[i], "--help") != 0) {
+           strcmp(argv[i], "--help") != 0 && strcmp(argv[i], "--version") != 0) {
         if (i + 1 >= argc) { usage(); return 2; }
         if (strcmp(argv[i], "--socket") == 0) path = argv[i + 1];
         else if (strcmp(argv[i], "--server-config") == 0) server_config_path = argv[i + 1];
         else if (strcmp(argv[i], "--schedule-state") == 0) schedule_path = argv[i + 1];
         else if (strcmp(argv[i], "--recovery-state") == 0) recovery_path = argv[i + 1];
-        else { usage(); return 2; }
+        else {
+            fprintf(stderr, "error.code=INVALID_ARGUMENT\nerror.operation=global_options\n"
+                            "error.reason=UNKNOWN_OR_MISSING_OPTION_VALUE\nchanged=no\ncleanup=not_applicable\n"
+                            "next_safe_step=run_ic_help\n");
+            return 2;
+        }
         i += 2;
     }
-    if (i == argc || strcmp(argv[i], "help") == 0 || strcmp(argv[i], "--help") == 0) {
-        usage(); return i + 1 == argc ? 0 : 2;
+    if (i == argc) {
+        usage();
+        return 2;
     }
+    if (strcmp(argv[i], "--help") == 0) {
+        if (i + 1 != argc) {
+            report_cli_error("INVALID_ARGUMENT", "help", "UNEXPECTED_ARGUMENTS", "no",
+                             "run_ic_help");
+            return 2;
+        }
+        usage();
+        return 0;
+    }
+    if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "version") == 0) {
+        if (i + 1 != argc) return 2;
+        version_report();
+        return ferror(stdout) ? 1 : 0;
+    }
+    if (strcmp(argv[i], "help") == 0) {
+        if (i + 2 < argc) {
+            fprintf(stderr, "error.code=INVALID_ARGUMENT\nerror.operation=help\n"
+                            "error.reason=TOO_MANY_HELP_ARGUMENTS\nchanged=no\ncleanup=not_applicable\n"
+                            "next_safe_step=run_ic_help\n");
+            return 2;
+        }
+        return help_topic(i + 1 < argc ? argv[i + 1] : NULL);
+    }
+
+    diagnostic_context_t diagnostic_context = {
+        .socket_path = path,
+        .server_config_path = server_config_path,
+        .schedule_path = schedule_path,
+        .recovery_path = recovery_path,
+    };
+
+    if (strcmp(argv[i], "doctor") == 0)
+        return doctor_command(argc - i - 1, argv + i + 1, &diagnostic_context);
+    if (strcmp(argv[i], "package") == 0)
+        return package_command(argc - i - 1, argv + i + 1);
+    if (strcmp(argv[i], "evidence") == 0)
+        return evidence_command(argc - i - 1, argv + i + 1);
 
     if (strcmp(argv[i], "schedule") == 0) {
         int diagnostic = schedule_diagnostics_command(argc - i - 1, argv + i + 1,
@@ -1856,7 +2612,12 @@ int main(int argc, char **argv) {
                          (long long)target_utc, duration, (unsigned long long)generation);
             } else { usage(); return 2; }
         } else { usage(); return 2; }
-    } else { usage(); return 2; }
+    } else {
+        report_cli_error("INVALID_ARGUMENT", "command", "UNKNOWN_SUBCOMMAND", "no",
+                         "run_ic_help");
+        usage();
+        return 2;
+    }
 
     if (*path != '/' || strlen(path) >= sizeof(((struct sockaddr_un *)0)->sun_path)) {
         fprintf(stderr, "Invalid socket path\n");

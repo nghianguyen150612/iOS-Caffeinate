@@ -1,5 +1,7 @@
 # P007 Rootful Debian Packaging
 
+**Current operator guidance:** P018 adds manager-backed preflight and a read-only first-session runbook. The P007 device commands below are historical package procedures, not authorization to mutate the current device. Follow [P018 device acceptance](v0.2/P018-DEVICE-ACCEPTANCE.md) and obtain separate explicit authorization before installation or removal.
+
 ## Package identity and support boundary
 
 P007 established package `com.ioscaffeinate.cli` and Debian architecture `iphoneos-arm`. P010's RC package uses version `0.1.0~rc1-1`; stable `0.1.0-1` remains the intended subsequent package version. The packaged executable files are thin ARM64 Mach-O binaries built for iOS 12.0. The package architecture describes the rootful package-manager convention; it is not the executable CPU architecture. Theos documents `iphoneos-arm` for rootful iOS and `iphoneos-arm64` for rootless iOS in its [packaging guide](https://theos.dev/docs/packaging). P010 continues to use the former.
@@ -20,12 +22,12 @@ The package installs these files and directories as root-owned entries:
 | `/usr/local/libexec/ioscaffeinate-manager` | `0755` executable | Read-only package and device checks |
 | `/var/lib/ioscaffeinate/` | `0750` directory | Persistent schedules and optional server policy; no files are seeded |
 | `/var/log/ioscaffeinate/` | `0750` directory | Operator and daemon logs; no files are seeded |
-| `/usr/share/ioscaffeinate/SHA256SUMS` | `0644` file | Checksums for packaged executables and package metadata |
+| `/usr/share/ioscaffeinate/SHA256SUMS` | `0644` file | Checksums for packaged executables, package metadata, documentation, and P009/P018 tools |
 | `/usr/share/ioscaffeinate/SIGNING-STATE` | `0644` file | Separate signature, integrity, device-execution, and package-acceptance states |
 | `/usr/share/ioscaffeinate/package-build.json` | `0644` file | Source/final hashes and signing provenance record |
 | `/usr/share/ioscaffeinate/signing/amethyst-ios12-rootful.plist` | `0644` file when signed | The opt-in P010 profile used for this candidate |
 | `/usr/share/ioscaffeinate/launchd/com.ioscaffeinate.daemon.plist` | `0644` file | Inert launchd template, staged outside active LaunchDaemons |
-| `/usr/share/doc/ioscaffeinate/README.md`, `LICENSE`, `docs/**` | `0644` files | Project documentation and validation procedures |
+| `/usr/share/doc/ioscaffeinate/README.md`, `LICENSE`, `docs/**`, `tools/*.py` | `0644` files | Project documentation, P009 validator, and P018 preflight/inventory/export tools |
 
 The launchd template has `Disabled=true` and `RunAtLoad=false`. It is not installed at `/Library/LaunchDaemons/com.ioscaffeinate.daemon.plist`. Installing the package does not load, bootstrap, enable, or start a service. Activation requires separate authorization after device validation.
 

@@ -3,12 +3,18 @@
 set -u
 
 PACKAGE='com.ioscaffeinate.cli'
+EXPECTED_ARCH='iphoneos-arm'
 CLI='/usr/local/bin/ios-caffeinate'
 DAEMON='/usr/local/bin/ios-caffeinated'
 ALIAS='/usr/local/bin/ic'
 MANAGER='/usr/local/libexec/ioscaffeinate-manager'
 MANIFEST='/usr/share/ioscaffeinate/SHA256SUMS'
 SIGNING_STATE='/usr/share/ioscaffeinate/SIGNING-STATE'
+P018_PREFLIGHT='/usr/share/doc/ioscaffeinate/tools/p018_package_preflight.py'
+P009_EVIDENCE_TOOL='/usr/share/doc/ioscaffeinate/tools/p009_evidence.py'
+P018_EVIDENCE_TOOL='/usr/share/doc/ioscaffeinate/tools/p018_evidence.py'
+P018_EXPORT_VALIDATOR='/usr/share/doc/ioscaffeinate/tools/p018_validate_export.py'
+PYTHON='/usr/bin/python3'
 TEMPLATE='/usr/share/ioscaffeinate/launchd/com.ioscaffeinate.daemon.plist'
 LIVE_PLIST='/Library/LaunchDaemons/com.ioscaffeinate.daemon.plist'
 SOCKET='/var/run/ioscaffeinated.sock'
@@ -27,6 +33,15 @@ hash_file() {
         shasum -a 256 "$path" 2>/dev/null | awk '{print $1}'
     else
         return 1
+    fi
+}
+
+link_count() {
+    path=$1
+    if stat -c '%h' "$path" >/dev/null 2>&1; then
+        stat -c '%h' "$path" 2>/dev/null
+    else
+        stat -f '%l' "$path" 2>/dev/null
     fi
 }
 
@@ -178,16 +193,28 @@ run_checks() {
     check_owned "$MANIFEST"
     check_owned "$TEMPLATE"
     check_owned "$SIGNING_STATE"
+    check_owned "$P009_EVIDENCE_TOOL"
+    check_owned "$P018_EVIDENCE_TOOL"
+    check_owned "$P018_EXPORT_VALIDATOR"
+    check_owned "$P018_PREFLIGHT"
     check_hash "$CLI" 'usr/local/bin/ios-caffeinate'
     check_hash "$DAEMON" 'usr/local/bin/ios-caffeinated'
     check_hash "$MANAGER" 'usr/local/libexec/ioscaffeinate-manager'
     check_hash "$TEMPLATE" 'usr/share/ioscaffeinate/launchd/com.ioscaffeinate.daemon.plist'
     check_hash "$SIGNING_STATE" 'usr/share/ioscaffeinate/SIGNING-STATE'
+    check_hash "$P009_EVIDENCE_TOOL" 'usr/share/doc/ioscaffeinate/tools/p009_evidence.py'
+    check_hash "$P018_EVIDENCE_TOOL" 'usr/share/doc/ioscaffeinate/tools/p018_evidence.py'
+    check_hash "$P018_EXPORT_VALIDATOR" 'usr/share/doc/ioscaffeinate/tools/p018_validate_export.py'
+    check_hash "$P018_PREFLIGHT" 'usr/share/doc/ioscaffeinate/tools/p018_package_preflight.py'
     check_owner_mode "$CLI" 755
     check_owner_mode "$DAEMON" 755
     check_owner_mode "$MANAGER" 755
     check_owner_mode "$TEMPLATE" 644
     check_owner_mode "$SIGNING_STATE" 644
+    check_owner_mode "$P009_EVIDENCE_TOOL" 644
+    check_owner_mode "$P018_EVIDENCE_TOOL" 644
+    check_owner_mode "$P018_EXPORT_VALIDATOR" 644
+    check_owner_mode "$P018_PREFLIGHT" 644
     check_owner_mode "$MANIFEST" 644
     check_owner_mode /var/lib/ioscaffeinate 750
     check_owner_mode /var/log/ioscaffeinate 750
@@ -203,7 +230,229 @@ run_checks() {
         fail 'ic is not the expected symlink to ios-caffeinate'
     fi
     check_runtime_and_launchd
+    if [ "$FAILURES" -eq 0 ]; then
+        echo 'manager.result=PASS_READ_ONLY'
+    else
+        echo "manager.result=INCOMPLETE failures=$FAILURES"
+    fi
     return "$FAILURES"
+}
+
+field_value() {
+    key=$1
+    printf '%s\n' "$2" | awk -F= -v wanted="$key" '$1 == wanted { value=$2; count++ } END { if (count != 1) exit 1; print value }'
+}
+
+upgrade_check() {
+    if [ "$#" -ne 1 ] && [ "$#" -ne 3 ]; then
+        echo 'Usage: ioscaffeinate-manager upgrade-check /absolute/path/to/new.deb [--rollback-artifact /absolute/path/to/previous.deb]' >&2
+        echo 'This command is read-only; it never invokes dpkg installation or package scripts.' >&2
+        return 2
+    fi
+    deb=$1
+    rollback_artifact=''
+    if [ "$#" -eq 3 ]; then
+        [ "$2" = '--rollback-artifact' ] || { echo 'upgrade_check=INVALID_ARGUMENT' >&2; return 2; }
+        rollback_artifact=$3
+    fi
+    case "$deb" in /*) ;; *)
+        echo 'error.code=INVALID_ARGUMENT'
+        echo 'error.operation=package_upgrade_check'
+        echo 'error.reason=PACKAGE_PATH_MUST_BE_ABSOLUTE'
+        echo 'changed=no'
+        echo 'cleanup=not_applicable'
+        echo 'next_safe_step=use_an_absolute_artifact_path'
+        echo 'readiness=BLOCKED'
+        return 2
+        ;; esac
+    case "$rollback_artifact" in ''|/*) ;; *)
+        echo 'error.code=INVALID_ARGUMENT'
+        echo 'error.operation=package_upgrade_check'
+        echo 'error.reason=ROLLBACK_PATH_MUST_BE_ABSOLUTE'
+        echo 'changed=no'
+        echo 'cleanup=not_applicable'
+        echo 'next_safe_step=use_an_absolute_rollback_artifact_path'
+        echo 'readiness=BLOCKED'
+        return 2
+        ;; esac
+
+    blockers=0
+    blocked=0
+    unverified=0
+    readiness='INCOMPLETE'
+    block() {
+        echo "blocker=$1"
+        blockers=$((blockers + 1))
+        if [ "${2:-INCOMPLETE}" = 'BLOCKED' ]; then
+            blocked=1
+        fi
+    }
+    echo 'upgrade.operation=READ_ONLY_PREFLIGHT'
+    echo 'upgrade.installation_performed=no'
+    echo 'upgrade.maintainer_scripts_executed=no'
+    echo 'upgrade.archive_extracted=no'
+    echo 'upgrade.launchd_mutation_performed=no'
+    echo 'service.custom_socket_and_manual_process=UNVERIFIED'
+    block 'CUSTOM_SOCKET_OR_MANUAL_DAEMON_STATE_NOT_REVIEWED' BLOCKED
+
+    current=''
+    if command -v dpkg-query >/dev/null 2>&1; then
+        current=$(dpkg-query -W -f='${Version}' "$PACKAGE" 2>/dev/null || true)
+    fi
+    if [ -n "$current" ]; then
+        echo "current.version=$current"
+    else
+        echo 'current.version=UNAVAILABLE'
+        block 'CURRENT_PACKAGE_STATE_UNKNOWN'
+    fi
+    if run_checks; then
+        echo 'current.integrity=VERIFIED'
+    else
+        echo 'current.integrity=INCONSISTENT'
+        block 'CURRENT_PACKAGE_INTEGRITY_FAILED' BLOCKED
+    fi
+
+    if [ -x "$PYTHON" ] && [ -r "$P018_PREFLIGHT" ]; then
+        if [ -n "$current" ]; then
+            helper_output=$("$PYTHON" "$P018_PREFLIGHT" "$deb" --installed-version "$current" 2>/dev/null)
+            helper_status=$?
+        else
+            helper_output=$("$PYTHON" "$P018_PREFLIGHT" "$deb" 2>/dev/null)
+            helper_status=$?
+        fi
+        [ -z "$helper_output" ] || printf '%s\n' "$helper_output"
+        helper_decision=$(field_value 'package.decision' "$helper_output" 2>/dev/null || true)
+        if [ "$helper_status" -eq 0 ] && [ "$helper_decision" = 'READY_FOR_OPERATOR_REVIEW' ]; then
+            echo 'candidate.preflight=READY_FOR_OPERATOR_REVIEW'
+        else
+            echo "candidate.preflight=${helper_decision:-INCOMPLETE} exit=$helper_status"
+            if [ "$helper_decision" = 'UNVERIFIED' ]; then
+                unverified=1
+                block 'EXACT_SIGNER_PROVENANCE_OR_DEVICE_ACCEPTANCE_UNVERIFIED'
+            elif [ "$helper_decision" = 'BLOCKED' ]; then
+                block 'CANDIDATE_ARTIFACT_OR_PROVENANCE_BLOCKED' BLOCKED
+            else
+                block 'CANDIDATE_ARTIFACT_OR_PROVENANCE_INCOMPLETE'
+            fi
+        fi
+    else
+        echo 'candidate.preflight=UNAVAILABLE'
+        block 'PINNED_P018_PREFLIGHT_TOOL_UNAVAILABLE'
+    fi
+
+    if [ -e "$LIVE_PLIST" ] || [ -L "$LIVE_PLIST" ]; then
+        echo 'service.live_plist=PRESENT'
+        block 'LIVE_LAUNCHD_PLIST_REQUIRES_REVIEW' BLOCKED
+    else
+        echo 'service.live_plist=ABSENT'
+    fi
+    if [ -e "$SOCKET" ] || [ -L "$SOCKET" ]; then
+        echo 'service.default_socket=PRESENT_OR_UNSAFE'
+        block 'DEFAULT_SOCKET_PRESENT_OR_UNSAFE' BLOCKED
+    else
+        echo 'service.default_socket=ABSENT'
+    fi
+    lock_path="${SOCKET}.lock"
+    if [ -e "$lock_path" ] || [ -L "$lock_path" ]; then
+        echo 'service.socket_lock=PRESENT_REQUIRES_OPERATOR_REVIEW'
+        block 'SOCKET_LOCK_STATE_UNVERIFIED' BLOCKED
+    else
+        echo 'service.socket_lock=ABSENT'
+    fi
+
+    service_status=''
+    if [ -x "$CLI" ]; then
+        service_status=$("$CLI" service status 2>/dev/null) || service_status=''
+    fi
+    if [ -z "$service_status" ]; then
+        echo 'service.observation=UNAVAILABLE'
+        block 'SERVICE_STATE_UNKNOWN' BLOCKED
+    else
+        registration=$(field_value 'launchd.registration' "$service_status" 2>/dev/null || true)
+        runtime=$(field_value 'runtime.process' "$service_status" 2>/dev/null || true)
+        ipc=$(field_value 'ipc.availability' "$service_status" 2>/dev/null || true)
+        assertion=$(field_value 'assertion.state' "$service_status" 2>/dev/null || true)
+        recovery=$(field_value 'recovery.state' "$service_status" 2>/dev/null || true)
+        echo "service.launchd_registration=${registration:-UNKNOWN}"
+        echo "service.runtime=${runtime:-UNKNOWN}"
+        echo "service.ipc=${ipc:-UNKNOWN}"
+        echo "service.assertion=${assertion:-UNKNOWN}"
+        echo "service.recovery=${recovery:-UNKNOWN}"
+        [ "$registration" = 'NOT_REGISTERED' ] || block 'LAUNCHD_REGISTRATION_NOT_CONFIRMED_ABSENT' BLOCKED
+        [ "$runtime" = 'NOT_OBSERVED' ] || block 'DAEMON_RUNTIME_NOT_CONFIRMED_STOPPED' BLOCKED
+        [ "$ipc" = 'UNAVAILABLE' ] || block 'DAEMON_IPC_NOT_CONFIRMED_UNAVAILABLE' BLOCKED
+        [ "$assertion" = 'NONE' ] || block 'ASSERTION_OWNERSHIP_NOT_CONFIRMED_CLEAR' BLOCKED
+        [ "$recovery" = 'HEALTHY' ] || block 'P014_RECOVERY_NOT_CONFIRMED_HEALTHY' BLOCKED
+    fi
+
+    if [ -x "$CLI" ]; then
+        schedule_status=$("$CLI" schedule validate 2>/dev/null) || schedule_status=''
+        if printf '%s\n' "$schedule_status" | awk -F= '$1 == "schedule.validation" && $2 == "PASS" {ok=1} END {exit !ok}'; then
+            echo 'state.schedules=VALID_READ_ONLY'
+        else
+            echo 'state.schedules=UNKNOWN_OR_INVALID'
+            block 'P017_SCHEDULE_STATE_COMPATIBILITY_UNKNOWN' BLOCKED
+        fi
+        policy_status=$("$CLI" server policy validate 2>/dev/null) || policy_status=''
+        if [ -f /var/lib/ioscaffeinate/server-mode.json ] || [ -L /var/lib/ioscaffeinate/server-mode.json ]; then
+            if printf '%s\n' "$policy_status" | awk -F= '$1 == "policy.config_valid" && $2 == "yes" {ok=1} END {exit !ok}'; then
+                echo 'state.server_policy=VALID_READ_ONLY'
+            else
+                echo 'state.server_policy=INVALID_OR_UNKNOWN'
+                block 'P015_POLICY_STATE_COMPATIBILITY_UNKNOWN' BLOCKED
+            fi
+        else
+            echo 'state.server_policy=MISSING_DEFAULT_DISABLED'
+        fi
+    else
+        echo 'state.persistent_data=UNKNOWN'
+        block 'PERSISTENT_STATE_VALIDATOR_UNAVAILABLE'
+    fi
+
+    if [ -n "$rollback_artifact" ]; then
+        echo 'rollback.artifact=OPERATOR_SUPPLIED'
+        if rollback_check "$rollback_artifact"; then
+            if [ -x "$PYTHON" ] && [ -r "$P018_PREFLIGHT" ] && [ -n "$current" ]; then
+                if "$PYTHON" "$P018_PREFLIGHT" "$rollback_artifact" --installed-version "$current" --rollback-for-current-version; then
+                    echo 'rollback.provenance=VERIFIED_FOR_OPERATOR_REVIEW'
+                else
+                    echo 'rollback.provenance=INCOMPLETE'
+                    block 'ROLLBACK_PROVENANCE_NOT_VERIFIED'
+                fi
+            else
+                echo 'rollback.provenance=UNAVAILABLE'
+                block 'ROLLBACK_PROVENANCE_TOOL_OR_CURRENT_VERSION_UNAVAILABLE'
+            fi
+        else
+            echo 'rollback.artifact=INVALID'
+            block 'ROLLBACK_ARTIFACT_NOT_VERIFIED'
+        fi
+    else
+        echo 'rollback.artifact=NOT_SUPPLIED'
+        block 'ROLLBACK_ARTIFACT_NOT_SUPPLIED'
+    fi
+
+    echo 'persistent_data_preservation=REVIEW_REQUIRED'
+    block 'PERSISTENT_DATA_PRESERVATION_REQUIRES_OPERATOR_REVIEW' BLOCKED
+
+    if [ "$blockers" -eq 0 ]; then
+        readiness='READY_FOR_OPERATOR_REVIEW'
+    elif [ "$blocked" -gt 0 ]; then
+        readiness='BLOCKED'
+    elif [ "$unverified" -gt 0 ]; then
+        readiness='UNVERIFIED'
+    else
+        readiness='INCOMPLETE'
+    fi
+    echo "readiness=$readiness"
+    echo 'operator_install_authorization=NOT_GRANTED'
+    echo 'persistent_data_preservation=REVIEW_REQUIRED'
+    echo 'changed=no'
+    if [ "$blockers" -eq 0 ]; then
+        return 0
+    fi
+    echo 'next_safe_step=resolve_each_reported_prerequisite_then_repeat_preflight'
+    return 1
 }
 
 rollback_check() {
@@ -222,15 +471,24 @@ rollback_check() {
         echo 'rollback_artifact=NOT_VERIFIED (package or matching .sha256 sidecar is missing)'
         return 1
     fi
+    deb_links=$(link_count "$deb" 2>/dev/null || true)
+    sidecar_links=$(link_count "$sidecar" 2>/dev/null || true)
+    if [ "$deb_links" != 1 ] || [ "$sidecar_links" != 1 ]; then
+        echo 'rollback_artifact=NOT_VERIFIED (package or sidecar has unsafe hard links)'
+        return 1
+    fi
     if ! command -v dpkg-deb >/dev/null 2>&1; then
         echo 'rollback_artifact=NOT_VERIFIED (dpkg-deb is unavailable)'
         return 1
     fi
-    set -- $(cat "$sidecar")
-    expected=${1:-}
-    sidecar_name=${2:-}
+    base=$(basename "$deb")
+    case "$base" in ''|*[!A-Za-z0-9._+-]*)
+        echo 'rollback_artifact=NOT_VERIFIED (artifact filename is unsupported)'
+        return 1
+        ;; esac
+    expected=$(awk -v base="$base" 'NR == 1 && NF == 2 && length($1) == 64 && $1 ~ /^[0-9a-f]+$/ && $2 == base { value=$1; ok=1; next } { ok=0 } END { if (!ok) exit 1; print value }' "$sidecar" 2>/dev/null || true)
     actual=$(hash_file "$deb" 2>/dev/null || true)
-    [ "$#" -eq 2 ] && [ "$sidecar_name" = "$(basename "$deb")" ] && [ -n "$expected" ] && [ "$expected" = "$actual" ] || {
+    [ -n "$expected" ] && [ "$expected" = "$actual" ] || {
         echo 'rollback_artifact=NOT_VERIFIED (package SHA-256 mismatch or no hash tool)'
         return 1
     }
@@ -250,20 +508,163 @@ rollback_check() {
     fi
     echo 'rollback_action=NOT_PERFORMED; verify service stop, assertion release, file state, and persistent data separately'
     echo 'rollback_signature=presence_and_device_acceptance_not_checked_by_this_command'
+    echo 'rollback_artifact_readiness=INCOMPLETE exact P010 signer provenance and device acceptance remain separate gates'
+}
+
+rollback_review() {
+    rollback_check "$@"
+    rollback_status=$?
+    if [ "$rollback_status" -ne 0 ]; then
+        return "$rollback_status"
+    fi
+    blockers=0
+    blocked=0
+    unverified=0
+    review_block() {
+        echo "rollback.blocker=$1"
+        blockers=$((blockers + 1))
+        if [ "${2:-INCOMPLETE}" = 'BLOCKED' ]; then blocked=1; fi
+        if [ "${2:-INCOMPLETE}" = 'UNVERIFIED' ]; then unverified=1; fi
+    }
+    echo 'rollback.operation=READ_ONLY_PREFLIGHT'
+    echo 'rollback.package_mutation_performed=no'
+    echo 'rollback.custom_socket_and_manual_process=UNVERIFIED'
+    review_block 'CUSTOM_SOCKET_OR_MANUAL_DAEMON_STATE_NOT_REVIEWED' BLOCKED
+
+    current=''
+    if command -v dpkg-query >/dev/null 2>&1; then
+        current=$(dpkg-query -W -f='${Version}' "$PACKAGE" 2>/dev/null || true)
+    fi
+    if [ -z "$current" ]; then
+        echo 'rollback.current_version=UNAVAILABLE'
+        review_block 'CURRENT_PACKAGE_STATE_UNKNOWN' BLOCKED
+    else
+        echo "rollback.current_version=$current"
+        if [ -x "$PYTHON" ] && [ -r "$P018_PREFLIGHT" ]; then
+            preflight_output=$("$PYTHON" "$P018_PREFLIGHT" "$1" --installed-version "$current" --rollback-for-current-version 2>/dev/null)
+            preflight_status=$?
+            [ -z "$preflight_output" ] || printf '%s\n' "$preflight_output"
+            preflight_decision=$(field_value 'package.decision' "$preflight_output" 2>/dev/null || true)
+            case "$preflight_decision" in
+                READY_FOR_OPERATOR_REVIEW) echo 'rollback.artifact_provenance=READY_FOR_OPERATOR_REVIEW' ;;
+                UNVERIFIED) echo 'rollback.artifact_provenance=UNVERIFIED'; review_block 'EXACT_SIGNER_PROVENANCE_OR_DEVICE_ACCEPTANCE_UNVERIFIED' UNVERIFIED ;;
+                BLOCKED) echo 'rollback.artifact_provenance=BLOCKED'; review_block 'ROLLBACK_PACKAGE_OR_PATH_IS_UNSAFE' BLOCKED ;;
+                *) echo "rollback.artifact_provenance=INCOMPLETE exit=$preflight_status"; review_block 'ROLLBACK_PACKAGE_PREFLIGHT_INCOMPLETE' ;;
+            esac
+        else
+            echo 'rollback.artifact_provenance=UNAVAILABLE'
+            review_block 'PINNED_P018_PREFLIGHT_TOOL_UNAVAILABLE'
+        fi
+    fi
+
+    if [ -e "$LIVE_PLIST" ] || [ -L "$LIVE_PLIST" ]; then
+        echo 'rollback.live_plist=PRESENT'
+        review_block 'LIVE_LAUNCHD_PLIST_REQUIRES_OPERATOR_REVIEW' BLOCKED
+    else
+        echo 'rollback.live_plist=ABSENT'
+    fi
+    if [ -e "$SOCKET" ] || [ -L "$SOCKET" ] || [ -e "${SOCKET}.lock" ] || [ -L "${SOCKET}.lock" ]; then
+        echo 'rollback.socket_state=PRESENT_OR_UNSAFE'
+        review_block 'SOCKET_OR_LOCK_STATE_NOT_CLEAR' BLOCKED
+    else
+        echo 'rollback.socket_state=ABSENT'
+    fi
+    service_status=''
+    if [ -x "$CLI" ]; then service_status=$("$CLI" service status 2>/dev/null) || service_status=''; fi
+    if [ -z "$service_status" ]; then
+        echo 'rollback.service_state=UNKNOWN'
+        review_block 'DAEMON_LAUNCHD_IPC_ASSERTION_AND_RECOVERY_STATE_UNKNOWN' BLOCKED
+    else
+        registration=$(field_value 'launchd.registration' "$service_status" 2>/dev/null || true)
+        runtime=$(field_value 'runtime.process' "$service_status" 2>/dev/null || true)
+        ipc=$(field_value 'ipc.availability' "$service_status" 2>/dev/null || true)
+        assertion=$(field_value 'assertion.state' "$service_status" 2>/dev/null || true)
+        recovery=$(field_value 'recovery.state' "$service_status" 2>/dev/null || true)
+        echo "rollback.launchd_registration=${registration:-UNKNOWN}"
+        echo "rollback.runtime=${runtime:-UNKNOWN}"
+        echo "rollback.ipc=${ipc:-UNKNOWN}"
+        echo "rollback.assertion=${assertion:-UNKNOWN}"
+        echo "rollback.recovery=${recovery:-UNKNOWN}"
+        [ "$registration" = 'NOT_REGISTERED' ] || review_block 'LAUNCHD_REGISTRATION_NOT_CONFIRMED_ABSENT' BLOCKED
+        [ "$runtime" = 'NOT_OBSERVED' ] || review_block 'DAEMON_RUNTIME_NOT_CONFIRMED_STOPPED' BLOCKED
+        [ "$ipc" = 'UNAVAILABLE' ] || review_block 'DAEMON_IPC_NOT_CONFIRMED_UNAVAILABLE' BLOCKED
+        [ "$assertion" = 'NONE' ] || review_block 'ASSERTION_OWNERSHIP_NOT_CONFIRMED_CLEAR' BLOCKED
+        [ "$recovery" = 'HEALTHY' ] || review_block 'P014_RECOVERY_NOT_CONFIRMED_HEALTHY' BLOCKED
+    fi
+    if [ -x "$CLI" ]; then
+        schedule_status=$("$CLI" schedule validate 2>/dev/null) || schedule_status=''
+        if printf '%s\n' "$schedule_status" | awk -F= '$1 == "schedule.validation" && $2 == "PASS" {ok=1} END {exit !ok}'; then
+            echo 'rollback.schedules=VALID_READ_ONLY'
+        else
+            echo 'rollback.schedules=UNKNOWN_OR_INVALID'
+            review_block 'P017_SCHEDULE_STATE_COMPATIBILITY_UNKNOWN' BLOCKED
+        fi
+    else
+        echo 'rollback.schedules=UNKNOWN'
+        review_block 'P017_SCHEDULE_VALIDATOR_UNAVAILABLE' BLOCKED
+    fi
+    review_block 'PERSISTENT_DATA_PRESERVATION_REQUIRES_OPERATOR_REVIEW' BLOCKED
+
+    if [ "$blockers" -eq 0 ]; then
+        readiness='READY_FOR_OPERATOR_REVIEW'
+    elif [ "$blocked" -gt 0 ]; then
+        readiness='BLOCKED'
+    elif [ "$unverified" -gt 0 ]; then
+        readiness='UNVERIFIED'
+    else
+        readiness='INCOMPLETE'
+    fi
+    echo "rollback.readiness=$readiness"
+    echo 'rollback.authorization=NOT_GRANTED'
+    echo 'rollback.changed=no'
+    echo 'rollback.next_safe_step=review_all_blockers_and_use_a_separately_authorized_device_procedure'
+    # Preserve the historical exit contract: zero means the artifact hash and basic
+    # Debian metadata passed; rollback.readiness carries the P018 full review state.
+    return 0
 }
 
 uninstall_check() {
     run_checks || true
+    if [ -e "$LIVE_PLIST" ] || [ -L "$LIVE_PLIST" ]; then
+        fail "live launchd plist exists and must be reviewed before removal: $LIVE_PLIST"
+    fi
     if [ -e "$SOCKET" ] || [ -L "$SOCKET" ]; then
         fail "default daemon endpoint exists at $SOCKET; package removal is unsafe until the operator stops the daemon and confirms assertion release"
     else
         echo 'uninstall_default_endpoint=ABSENT'
     fi
+    if [ -e "${SOCKET}.lock" ] || [ -L "${SOCKET}.lock" ]; then
+        fail 'default socket lock exists or is unsafe; package removal is blocked'
+    else
+        echo 'uninstall_default_socket_lock=ABSENT'
+    fi
+    echo 'uninstall_custom_socket_and_manual_process=UNVERIFIED'
+    fail 'custom socket and manually launched daemon state require an attended operator inspection'
+    service_status=''
+    if [ -x "$CLI" ]; then
+        service_status=$("$CLI" service status 2>/dev/null) || service_status=''
+    fi
+    if [ -z "$service_status" ]; then
+        fail 'service, assertion, and recovery state cannot be observed; package removal is blocked'
+    else
+        registration=$(field_value 'launchd.registration' "$service_status" 2>/dev/null || true)
+        runtime=$(field_value 'runtime.process' "$service_status" 2>/dev/null || true)
+        ipc=$(field_value 'ipc.availability' "$service_status" 2>/dev/null || true)
+        assertion=$(field_value 'assertion.state' "$service_status" 2>/dev/null || true)
+        recovery=$(field_value 'recovery.state' "$service_status" 2>/dev/null || true)
+        [ "$registration" = 'NOT_REGISTERED' ] || fail "launchd registration is ${registration:-UNKNOWN}; removal is blocked"
+        [ "$runtime" = 'NOT_OBSERVED' ] || fail "daemon runtime is ${runtime:-UNKNOWN}; removal is blocked"
+        [ "$ipc" = 'UNAVAILABLE' ] || fail "daemon IPC is ${ipc:-UNKNOWN}; removal is blocked"
+        [ "$assertion" = 'NONE' ] || fail "assertion cleanup is ${assertion:-UNKNOWN}; removal is blocked"
+        [ "$recovery" = 'HEALTHY' ] || fail "P014 recovery state is ${recovery:-UNKNOWN}; removal is blocked"
+    fi
     echo 'ordinary_remove=dpkg removes package-owned executables, manager, documentation, staged template, and empty package directories'
     echo 'persistent_data=preserved; schedules.json and server-mode.json are not package payload'
+    echo 'persistent_data_preservation=REVIEW_REQUIRED'
     echo 'logs=preserved; package removal does not erase operator-generated log files'
     echo 'launchd=not unloaded, disabled, enabled, or started by package scripts'
     echo 'uninstall_action=NOT_PERFORMED'
+    fail 'persistent data preservation has not been reviewed by this read-only check; package removal remains blocked pending a separately authorized procedure'
     return "$FAILURES"
 }
 
@@ -274,13 +675,14 @@ case "$command" in
         [ "$#" -eq 0 ] || { echo 'This command takes no arguments.' >&2; exit 2; }
         run_checks
         ;;
-    rollback-check) rollback_check "$@" ;;
+    rollback-check) rollback_review "$@" ;;
+    upgrade-check) upgrade_check "$@" ;;
     uninstall-check)
         [ "$#" -eq 0 ] || { echo 'This command takes no arguments.' >&2; exit 2; }
         uninstall_check
         ;;
     *)
-        echo 'Usage: ioscaffeinate-manager [status|verify|doctor|rollback-check /path/to/previous.deb|uninstall-check]' >&2
+        echo 'Usage: ioscaffeinate-manager [status|verify|doctor|upgrade-check /path/to/new.deb [--rollback-artifact /path/to/previous.deb]|rollback-check /path/to/previous.deb|uninstall-check]' >&2
         exit 2
         ;;
 esac
