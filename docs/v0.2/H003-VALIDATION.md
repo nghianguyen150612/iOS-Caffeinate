@@ -23,7 +23,7 @@ The successful JSON result is [H003-P011-HOST-PREFLIGHT.json](H003-P011-HOST-PRE
 
 | Command/suite | Result |
 |---|---|
-| `python3 -m unittest discover -s tests -v` | PASS — 339 tests, 3 skipped |
+| `python3 -m unittest discover -s tests -v` | PASS — 340 tests, 3 skipped |
 | P011 tests with authentic release assets and signer | PASS — 63 tests, no skips |
 | H003 signer and stack tests | PASS — 19 tests |
 | P010 signing/profile tests | PASS — 13 tests |

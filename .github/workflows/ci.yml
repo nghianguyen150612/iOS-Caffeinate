@@ -1547,11 +1547,13 @@ jobs:
   p020-release-readiness-validation:
     name: P020 release readiness validation
     runs-on: ubuntu-latest
+    if: ${{ always() && !cancelled() }}
     permissions:
       contents: read
       pull-requests: read
       actions: read
     needs:
+      - p008-release-attestation
       - linux-protocol
       - ios-cross-build
       - ios-artifact-inspection

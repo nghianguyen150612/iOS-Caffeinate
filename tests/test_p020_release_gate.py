@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,18 @@ class P020ReleaseGateTests(unittest.TestCase):
 
     def write_manifest(self) -> None:
         self.manifest_path.write_text(json.dumps(self.manifest, sort_keys=True, indent=2) + "\n")
+
+    def test_ci_p020_readiness_waits_for_p008_guard_result(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        match = re.search(
+            r"(?ms)^  p020-release-readiness-validation:\n(.*?)(?=^  [a-z0-9_-]+:|\Z)",
+            workflow,
+        )
+        self.assertIsNotNone(match)
+        job = match.group(1)
+        self.assertIn("if: ${{ always() && !cancelled() }}", job)
+        needs = job.split("    needs:\n", 1)[1].split("\n    env:", 1)[0]
+        self.assertRegex(needs, r"(?m)^      - p008-release-attestation$")
 
     def test_current_missing_hardware_evidence_blocks_release(self) -> None:
         result = gate.assess(self.manifest_path, self.source_sha)
