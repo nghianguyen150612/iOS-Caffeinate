@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from macho_ios import validate_ios12_arm64  # noqa: E402
 from validate_rootful_package import (  # noqa: E402
+    check_sha_manifest,
     check_script_safety,
     inspect_package,
     normalized_member_path,
@@ -156,6 +157,18 @@ class RootfulPackageTests(unittest.TestCase):
         self.assertEqual(candidate.name, "ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_UNSIGNED-DEVICE-UNVERIFIED.deb")
         report = inspect_package(candidate, expected_version="0.2.0~rc1-1")
         self.assertIn("version=0.2.0~rc1-1", report)
+
+        # A complete current candidate passes. Dropping even one regular-file
+        # record still fails the strict validator for a v0.2 candidate.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(["dpkg-deb", "--extract", str(candidate), str(root)], check=True)
+            sums_path = root / "usr/share/ioscaffeinate/SHA256SUMS"
+            records = sums_path.read_text().splitlines()
+            self.assertGreater(len(records), 1)
+            sums_path.write_text("\n".join(records[:-1]) + "\n")
+            with self.assertRaisesRegex(ValueError, "cover the approved payload"):
+                check_sha_manifest(root)
 
     def test_canonical_cli_daemon_and_real_alias(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

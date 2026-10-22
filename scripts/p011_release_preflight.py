@@ -2,10 +2,10 @@
 """Read-only verification of the published iOS-Caffeinate v0.1.0 release.
 
 The verifier checks the pinned GitHub release identity, package checksum,
-package sidecars, P010 manifests, signing profile identity, and the existing
-P010 rootful package validator. It never installs a package or runs maintainer
-scripts. A successful result is cloud artifact verification, not cryptographic
-trust, device acceptance, or release authorization.
+published sidecars, P010 manifests, signing profile identity, and the isolated
+historical package validator. Current package validation remains strict. It
+never installs a package or runs maintainer scripts. A successful result is
+host artifact verification, not device acceptance or release authorization.
 """
 
 from __future__ import annotations
@@ -29,7 +29,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from signing_profile import PROFILE_ID, PROFILE_RELATIVE_PATH, load_approved_profile  # noqa: E402
 from validate_rootful_package import PACKAGE as DEBIAN_PACKAGE  # noqa: E402
-from validate_rootful_package import inspect_package  # noqa: E402
+from p011_legacy_package_validator import (  # noqa: E402
+    EXPECTED_ASSET_SIZES,
+    LegacyValidationError,
+    inspect_official_package,
+)
 
 
 REPOSITORY = "nghianguyen150612/iOS-Caffeinate"
@@ -57,6 +61,7 @@ EXPECTED_ASSETS = (
 MAX_ASSET_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_ASSET_BYTES = 16 * 1024 * 1024
 API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/tags/{TAG}"
+SOURCE_TAG_API_URL = f"https://api.github.com/repos/{REPOSITORY}/git/ref/tags/{TAG}"
 ALLOWED_DOWNLOAD_HOSTS = {
     "github.com",
     "release-assets.githubusercontent.com",
@@ -132,6 +137,7 @@ def validate_release_identity(document: dict[str, Any]) -> dict[str, dict[str, A
     for name, item in by_name.items():
         size = item.get("size")
         require(type(size) is int and 0 < size <= MAX_ASSET_BYTES, f"GitHub release asset has an invalid size: {name}")
+        require(size == EXPECTED_ASSET_SIZES[name], f"GitHub release asset size differs from pinned v0.1.0 metadata: {name}")
         require(item.get("state") == "uploaded", f"GitHub release asset is not fully uploaded: {name}")
         expected_url = f"https://github.com/{REPOSITORY}/releases/download/{TAG}/{urllib.parse.quote(name, safe='')}"
         require(item.get("browser_download_url") == expected_url, f"GitHub release asset URL is unexpected: {name}")
@@ -175,7 +181,17 @@ def fetch_bytes(url: str, *, accept: str, limit: int, allowed_hosts: set[str]) -
 def fetch_release_metadata() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     raw = fetch_bytes(API_URL, accept="application/vnd.github+json", limit=MAX_ASSET_BYTES, allowed_hosts={"api.github.com"})
     document = parse_json(raw, "GitHub release API response")
-    return document, validate_release_identity(document)
+    assets = validate_release_identity(document)
+    tag_raw = fetch_bytes(SOURCE_TAG_API_URL, accept="application/vnd.github+json", limit=MAX_ASSET_BYTES, allowed_hosts={"api.github.com"})
+    validate_source_tag_identity(parse_json(tag_raw, "GitHub source tag API response"))
+    return document, assets
+
+
+def validate_source_tag_identity(document: dict[str, Any]) -> None:
+    require(document.get("ref") == f"refs/tags/{TAG}", "GitHub source tag ref does not match v0.1.0")
+    target = document.get("object")
+    require(isinstance(target, dict), "GitHub source tag object is malformed")
+    require(target.get("type") == "commit" and target.get("sha") == SOURCE_COMMIT, "GitHub v0.1.0 source tag does not resolve to the pinned historical commit")
 
 
 def download_release_assets(output_dir: Path) -> dict[str, Any]:
@@ -195,7 +211,7 @@ def download_release_assets(output_dir: Path) -> dict[str, Any]:
         destination = output_dir / name
         with destination.open("xb") as stream:
             stream.write(content)
-    return {"release_api": "VERIFIED", "downloaded_assets": len(assets), "download_directory": str(output_dir)}
+    return {"release_api": "VERIFIED", "source_tag_commit": "VERIFIED", "downloaded_assets": len(assets), "download_directory": str(output_dir)}
 
 
 def validate_debian_identity(fields: dict[str, str]) -> None:
@@ -380,25 +396,28 @@ def verify_local_assets(package_path: Path, asset_dir: Path, ldid: Path | None) 
     candidate = validate_release_manifests(asset_dir, actual_package_sha, package_sidecar)
     validation_report = validate_human_validation_report(asset_dir, actual_package_sha)
 
-    if ldid is not None:
-        require(ldid.is_absolute() and not ldid.is_symlink() and ldid.is_file(), "--ldid must be an absolute regular executable path")
-    require(shutil.which("dpkg-deb") is not None, "dpkg-deb is required by the existing P010 package validator")
-    p010_status = "PASS"
-    p010_report_lines: list[str] = []
-    p010_blocker = None
-    try:
-        p010_report_lines = inspect_package(package_path, ldid).splitlines()
-    except ValueError as error:
-        detail = str(error)
-        exact_signer_gate = detail.startswith((
-            "BLOCKED:",
-            "validator ldid SHA-256 differs from signing tool recorded by builder",
-            "validator ldid version differs from signing tool recorded by builder",
-        ))
-        if not exact_signer_gate:
-            raise
-        p010_status = "BLOCKED"
-        p010_blocker = detail if detail.startswith("BLOCKED:") else f"BLOCKED: {detail}"
+    legacy_validation = inspect_official_package(package_path, asset_dir, ldid)
+    p010_status = "PASS" if legacy_validation["validation_status"] == "PASS" else "BLOCKED"
+    if p010_status == "BLOCKED":
+        p010_blocker = (
+            "BLOCKED: verified H001 ldid executable is unavailable; embedded entitlement reinspection "
+            "requires version 2.1.5-procursus7 with SHA-256 " + EXPECTED_SIGNER_SHA256
+            if ldid is None
+            else "BLOCKED: historical package validation did not complete"
+        )
+    else:
+        p010_blocker = None
+    integrity_levels = legacy_validation["integrity_levels"]
+    p010_report_lines = [
+        "historical_archive=VERIFIED",
+        "legacy_checksum_manifest=VERIFIED",
+        "checksum_coverage=HISTORICALLY_PARTIAL",
+        "package_structure=VERIFIED",
+        f"signer_provenance={integrity_levels['signer_provenance']}",
+        f"embedded_entitlements={integrity_levels['embedded_entitlements']}",
+        f"signature_integrity={integrity_levels['signature_integrity']}",
+        f"device_acceptance={integrity_levels['device_package_acceptance']}",
+    ]
     return {
         "package_sha256": actual_package_sha,
         "package_size_bytes": package_path.stat().st_size,
@@ -415,6 +434,15 @@ def verify_local_assets(package_path: Path, asset_dir: Path, ldid: Path | None) 
         "p010_validator": p010_status,
         "p010_blocker": p010_blocker,
         "p010_report": p010_report_lines,
+        "legacy_validation": legacy_validation,
+        "historical_archive": integrity_levels["archive_sha256"],
+        "legacy_checksum_manifest": "VERIFIED",
+        "checksum_coverage": "HISTORICALLY_PARTIAL",
+        "package_structure": legacy_validation["package_structure"],
+        "signer_provenance": integrity_levels["signer_provenance"],
+        "embedded_entitlements": integrity_levels["embedded_entitlements"],
+        "signature_integrity": integrity_levels["signature_integrity"],
+        "device_acceptance": integrity_levels["device_package_acceptance"],
         "p010_signed_candidate_manifest": candidate["release_candidate"],
         "signed_validation_report": validation_report["result"],
     }
@@ -444,6 +472,18 @@ def human_report(report: dict[str, Any]) -> str:
         f"release={report['release']['repository']}@{report['release']['tag']} ({report['release']['release_channel']})",
         f"status={report['status']}",
     ]
+    verified = report.get("verified_package")
+    if isinstance(verified, dict):
+        lines.extend([
+            f"historical_archive={verified.get('historical_archive', 'UNVERIFIED')}",
+            f"legacy_checksum_manifest={verified.get('legacy_checksum_manifest', 'UNVERIFIED')}",
+            f"checksum_coverage={verified.get('checksum_coverage', 'UNKNOWN')}",
+            f"package_structure={verified.get('package_structure', 'UNVERIFIED')}",
+            f"signer_provenance={verified.get('signer_provenance', 'UNVERIFIED')}",
+            f"embedded_entitlements={verified.get('embedded_entitlements', 'PENDING')}",
+            f"signature_integrity={verified.get('signature_integrity', 'PENDING')}",
+            f"device_acceptance={verified.get('device_acceptance', 'PENDING')}",
+        ])
     package = report.get("verified_package")
     if isinstance(package, dict):
         lines.extend([
@@ -499,20 +539,25 @@ def main(argv: list[str] | None = None) -> int:
             require(not package_path.is_symlink(), "package path must not be a symlink")
             package_path = package_path.absolute()
             asset_dir = asset_dir.absolute()
+            _release_document, _release_assets = fetch_release_metadata()
+            report["checks"]["release_api"] = "VERIFIED"
+            report["checks"]["source_tag_commit"] = "VERIFIED"
         verified = verify_local_assets(package_path, asset_dir, args.ldid.absolute() if args.ldid else None)
         report["verified_package"] = verified
         report["checks"].update({
-            "stable_release_identity": "VERIFIED_BY_PINNED_TAG_AND_ASSETS",
+            "stable_release_identity": "VERIFIED_BY_GITHUB_RELEASE_API_AND_PINNED_ASSET_DIGESTS",
+            "source_tag_commit": "VERIFIED",
             "expected_package_sha256": "MATCH",
             "debian_identity": "MATCH",
             "package_sidecars_and_manifests": "MATCH",
             "approved_signing_profile_identity": "MATCH",
             "p010_package_validation": verified["p010_validator"],
         })
+        verified["legacy_validation"]["integrity_levels"]["publisher_release_identity"] = "VERIFIED_BY_GITHUB_RELEASE_API_AND_PINNED_ASSET_DIGESTS"
         if verified["p010_validator"] == "PASS":
-            report["status"] = "CLOUD_VERIFIED_DEVICE_ACCEPTANCE_PENDING"
+            report["status"] = "P011_HOST_PREFLIGHT_PASS_DEVICE_ACCEPTANCE_PENDING"
         else:
-            report["status"] = "CLOUD_ARTIFACT_VERIFIED_P010_VALIDATION_BLOCKED"
+            report["status"] = "P011_HOST_PREFLIGHT_BLOCKED"
             report["errors"].append(verified["p010_blocker"] or "P010 package validation is blocked")
     except (PreflightError, OSError, subprocess.SubprocessError, tarfile.TarError, ValueError) as error:
         message = str(error).strip() or type(error).__name__
@@ -525,7 +570,7 @@ def main(argv: list[str] | None = None) -> int:
             report["status"] = "BLOCKED"
     output = json.dumps(report, indent=2, sort_keys=True) if args.json else human_report(report)
     print(output)
-    return 0 if report["status"] == "CLOUD_VERIFIED_DEVICE_ACCEPTANCE_PENDING" else 1
+    return 0 if report["status"] == "P011_HOST_PREFLIGHT_PASS_DEVICE_ACCEPTANCE_PENDING" else 1
 
 
 if __name__ == "__main__":

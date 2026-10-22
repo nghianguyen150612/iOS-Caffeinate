@@ -18,6 +18,12 @@
 
 A failed safety, cleanup, provenance, or critical security gate stops progression. Do not convert a missing observation to success, infer continuous awake time from SSH responses, or use mock/simulated data as device acceptance.
 
+## H002/P011 compatibility result
+
+The official v0.1.0 release API and all eight asset digests were checked. The exact package archive SHA, seven historical checksum records, complete historical layout, Debian metadata, original build/signing metadata, profile bytes, Mach-O properties, and maintainer-script safety passed host inspection. The release never contained a complete payload checksum manifest; H002 uses a post-publication derived inventory only to verify the byte-pinned archive's layout and expose its 52 historically uncovered regular members. P020's strict full-file coverage rule remains required for v0.2 candidates.
+
+P011 remains blocked because the exact H001 `ldid` executable and receipt files were not present in the engineering workspace. Its published version/SHA metadata matches the pinned H001 identity, but independent signer executable verification and embedded entitlement extraction are pending. Signature integrity remains `PENDING`; P011 device package acceptance remains `PENDING`. No iPad inspection or package installation was performed.
+
 ## Current hardware state
 
 - P010 signer provenance: unresolved; exact executable/origin not verified.
