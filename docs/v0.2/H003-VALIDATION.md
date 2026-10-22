@@ -23,9 +23,9 @@ The successful JSON result is [H003-P011-HOST-PREFLIGHT.json](H003-P011-HOST-PRE
 
 | Command/suite | Result |
 |---|---|
-| `python3 -m unittest discover -s tests -v` | PASS — 336 tests, 3 skipped |
+| `python3 -m unittest discover -s tests -v` | PASS — 337 tests, 3 skipped |
 | P011 tests with authentic release assets and signer | PASS — 62 tests, no skips |
-| H003 signer and stack tests | PASS — 17 tests |
+| H003 signer and stack tests | PASS — 18 tests |
 | P010 signing/profile tests | PASS — 13 tests |
 | Rootful packaging test suite | PASS — 35 tests |
 | P018 package-preflight/export/manager and P020 provenance/candidate/release-gate tests | PASS — 59 tests, 2 skipped for root ownership |

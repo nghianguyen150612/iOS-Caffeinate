@@ -8,7 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -111,6 +111,17 @@ class H003SignerTests(unittest.TestCase):
         self.assertEqual(result["sha256"], digest)
         self.assertEqual(result["architecture"], "x86_64")
         version_reader.assert_called_once_with(binary)
+
+    def test_version_banner_is_found_after_usage_lines(self) -> None:
+        binary = self.write_executable("ldid", elf64_pie_fixture())
+        result = Mock(
+            stdout="Usage: ldid [options] binary",
+            stderr="Link Identity Editor 2.1.5-procursus7\n",
+        )
+        with patch.object(signer.subprocess, "run", return_value=result) as run:
+            banner = signer.read_version_banner(binary)
+        self.assertEqual(banner, "Link Identity Editor 2.1.5-procursus7")
+        run.assert_called_once()
 
     def test_hash_mismatch_aborts_before_executing_signer(self) -> None:
         binary = self.write_executable("ldid", elf64_pie_fixture())
