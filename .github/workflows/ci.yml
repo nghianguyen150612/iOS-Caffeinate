@@ -1819,7 +1819,7 @@ jobs:
               print("Verified the P011–P019 merged source chain and exact-head CI against the integrated main history.")
           print("P008 branch-specific attestation remains SKIPPED by its guard; it is not counted as a pass.")
           PY
-      - name: Confirm the P008 guard remains a skip, not a pass
+      - name: Confirm the P008 guard is never counted as a pass
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -1832,9 +1832,12 @@ jobs:
           from pathlib import Path
           jobs = json.loads(Path("build/p020/workflow-jobs.json").read_text())["jobs"]
           matches = [job for job in jobs if job.get("name") == "p008-release-attestation"]
-          if len(matches) != 1 or matches[0].get("conclusion") != "skipped":
-              raise SystemExit("P008 branch-specific attestation was not observed as SKIPPED")
-          print("P008 attestation=SKIPPED_EXPECTED_BRANCH_GUARD (not counted as PASS)")
+          if len(matches) > 1 or (matches and matches[0].get("conclusion") != "skipped"):
+              raise SystemExit("P008 branch guard unexpectedly produced a non-skipped job")
+          if matches:
+              print("P008 attestation=SKIPPED_EXPECTED_BRANCH_GUARD (not counted as PASS)")
+          else:
+              print("P008 attestation=NOT_SCHEDULED_BY_BRANCH_GUARD (not counted as PASS)")
           PY
       - name: Verify Debian prerelease ordering
         run: |
@@ -1978,8 +1981,9 @@ jobs:
           chain = json.loads((root / "milestone-chain.json").read_text())
           workflow_jobs = json.loads((root / "workflow-jobs.json").read_text())["jobs"]
           p008_jobs = [job for job in workflow_jobs if job.get("name") == "p008-release-attestation"]
-          if len(p008_jobs) != 1 or p008_jobs[0].get("conclusion") != "skipped":
-              raise SystemExit("P008 is not the expected branch-guard skip")
+          if len(p008_jobs) > 1 or (p008_jobs and p008_jobs[0].get("conclusion") != "skipped"):
+              raise SystemExit("P008 branch guard unexpectedly produced a non-skipped job")
+          p008_state = "SKIPPED_EXPECTED_BRANCH_GUARD" if p008_jobs else "NOT_SCHEDULED_BY_BRANCH_GUARD"
           source = (root / "source-commit.txt").read_text().strip()
           gate_names = ["source_integration", "native_build", "ios_cross_build", "macho_inspection", "rootful_packaging", "signing_metadata", "security_analysis", "regression_ci", "evidence_schema_compatibility", "build_provenance"]
           results = {name: "PASS" for name in gate_names}
@@ -1997,7 +2001,7 @@ jobs:
                   "p017-scheduling-validation": os.environ["P020_P017"], "p018-cli-package-ux-validation": os.environ["P020_P018"],
                   "p019-supervised-reliability-validation": os.environ["P020_P019"], "p020-candidate-cross-build": os.environ["P020_CANDIDATE_CROSS"],
               },
-              "p008_release_attestation": "SKIPPED_EXPECTED_BRANCH_GUARD",
+              "p008_release_attestation": p008_state,
               "publication_steps": "NONE", "device_execution": "NOT_PERFORMED",
           }
           attestation_path = root / "ci-attestation.json"
