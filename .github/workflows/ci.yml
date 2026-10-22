@@ -1492,3 +1492,487 @@ jobs:
             build/p019/p012-compatibility-tests.txt
             build/p019/p018-export-compatibility-tests.txt
             build/p019/simulation/**
+
+  p020-candidate-cross-build:
+    name: P020 isolated unsigned v0.2 candidate cross-builds
+    runs-on: macos-latest
+    needs: [ios-cross-build]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify source and build two isolated unsigned candidates
+        env:
+          P020_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          IOSCAFFEINATE_PACKAGE_VERSION: 0.2.0~rc1-1
+        run: |
+          set -euo pipefail
+          mkdir -p dist/p020-first dist/p020-second
+          test "$(git rev-parse HEAD)" = "$P020_SOURCE_SHA"
+          IOSCAFFEINATE_OUTPUT_DIR="$GITHUB_WORKSPACE/dist/p020-first" ./scripts/build-macos.sh
+          git worktree add --detach "$RUNNER_TEMP/p020-independent-source" "$P020_SOURCE_SHA"
+          IOSCAFFEINATE_OUTPUT_DIR="$GITHUB_WORKSPACE/dist/p020-second" \
+            "$RUNNER_TEMP/p020-independent-source/scripts/build-macos.sh"
+          for directory in dist/p020-first dist/p020-second; do
+            test "$(jq -r .source_commit_sha "$directory/build-info.json")" = "$P020_SOURCE_SHA"
+            test "$(jq -r .package_version "$directory/build-info.json")" = '0.2.0~rc1-1'
+            test "$(jq -r .signing_status "$directory/build-info.json")" = 'UNSIGNED'
+            (cd "$directory" && shasum -a 256 -c SHA256SUMS)
+            python3 scripts/inspect-ios.py --directory "$directory" | tee "$directory/inspection.txt"
+          done
+          test "$(git -C "$RUNNER_TEMP/p020-independent-source" status --porcelain)" = ''
+          test "$(git status --porcelain --untracked-files=no)" = ''
+          git worktree remove --force "$RUNNER_TEMP/p020-independent-source"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P020-v0.2.0-rc1-UNSIGNED-DEVICE-UNVERIFIED
+          if-no-files-found: error
+          path: |
+            dist/p020-first/ios-caffeinate
+            dist/p020-first/ios-caffeinated
+            dist/p020-first/SHA256SUMS
+            dist/p020-first/build-info.json
+            dist/p020-first/inspection.txt
+            dist/p020-second/ios-caffeinate
+            dist/p020-second/ios-caffeinated
+            dist/p020-second/SHA256SUMS
+            dist/p020-second/build-info.json
+            dist/p020-second/inspection.txt
+
+  p020-release-readiness-validation:
+    name: P020 release readiness validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    needs:
+      - linux-protocol
+      - ios-cross-build
+      - ios-artifact-inspection
+      - ios-rootful-package
+      - p009-evidence-validation
+      - p011-release-preflight
+      - p010-signing-release-gate
+      - p012-idle-research-validation
+      - p013-launchd-lifecycle-validation
+      - p014-crash-recovery-validation
+      - p015-server-policy-validation
+      - p016-health-telemetry-validation
+      - p017-scheduling-validation
+      - p018-cli-package-ux-validation
+      - p019-supervised-reliability-validation
+      - p020-candidate-cross-build
+    env:
+      P020_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      P020_LINUX: ${{ needs.linux-protocol.result }}
+      P020_IOS_CROSS: ${{ needs.ios-cross-build.result }}
+      P020_IOS_INSPECTION: ${{ needs.ios-artifact-inspection.result }}
+      P020_PACKAGE: ${{ needs.ios-rootful-package.result }}
+      P020_P009: ${{ needs.p009-evidence-validation.result }}
+      P020_P011: ${{ needs.p011-release-preflight.result }}
+      P020_P010: ${{ needs.p010-signing-release-gate.result }}
+      P020_P012: ${{ needs.p012-idle-research-validation.result }}
+      P020_P013: ${{ needs.p013-launchd-lifecycle-validation.result }}
+      P020_P014: ${{ needs.p014-crash-recovery-validation.result }}
+      P020_P015: ${{ needs.p015-server-policy-validation.result }}
+      P020_P016: ${{ needs.p016-health-telemetry-validation.result }}
+      P020_P017: ${{ needs.p017-scheduling-validation.result }}
+      P020_P018: ${{ needs.p018-cli-package-ux-validation.result }}
+      P020_P019: ${{ needs.p019-supervised-reliability-validation.result }}
+      P020_CANDIDATE_CROSS: ${{ needs.p020-candidate-cross-build.result }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-P019-SIMULATED-Cloud-Validation
+          path: build/p019
+      - name: Record and verify exact checked-out source SHA
+        run: |
+          set -euo pipefail
+          mkdir -p build/p020
+          test "$(git rev-parse HEAD)" = "$P020_SOURCE_SHA"
+          git merge-base --is-ancestor 7d5723fca2595b8928ed3e1717ca872906d48538 "$P020_SOURCE_SHA"
+          git rev-parse HEAD > build/p020/source-commit.txt
+          git rev-parse 'HEAD^{tree}' > build/p020/source-tree.txt
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - name: Validate current P011 through P019 PR dependency chain
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          P020_CURRENT_PR: ${{ github.event.pull_request.number || '' }}
+          P020_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          expected = [
+              (10, "P011", "ios/p011-signed-package-acceptance", "1fed3d15f44099d4f862ac1ff422da287b78b0b3", "main", "0cfdc645dc1d67ddc4320a00bb114763b9669b66", "16f3ea06e2c100bc1caa208f5d539bb9620222c0"),
+              (11, "P012", "ios/p012-controlled-idle-power-research", "f459e332deefb134b6725c1455c5721830d0bb3a", "main", "16f3ea06e2c100bc1caa208f5d539bb9620222c0", "50f96891b8369583c7b86576bd198854283edc0c"),
+              (12, "P013", "ios/p013-launchd-lifecycle", "3d7b5d4c700194ab71713c51577e7a7cf0acd48c", "main", "50f96891b8369583c7b86576bd198854283edc0c", "077b62bcf167a7b54ddf6f56c8bd3895c4f2da19"),
+              (13, "P014", "ios/p014-crash-recovery", "5dbf08176f3219c082e5b8f48bac43461b3fdd96", "main", "077b62bcf167a7b54ddf6f56c8bd3895c4f2da19", "4abecae5ce4baf69de159b648fb07a9e0ff8a446"),
+              (14, "P015", "ios/p015-server-mode-v2", "ef46cdc467128bf658c81dc891915aa91a2ddbca", "main", "4abecae5ce4baf69de159b648fb07a9e0ff8a446", "938c7c87f84090ecebbe2e2bbb9e8116f263e5be"),
+              (15, "P016", "ios/p016-health-telemetry", "1b0e258b136f6325c4720bf55c569449935418c3", "main", "938c7c87f84090ecebbe2e2bbb9e8116f263e5be", "12228ac832f77243e4d87c5a0178208cf3f3eef6"),
+              (16, "P017", "ios/p017-scheduling-v2", "15861c0f9b765731c7dee506fd147ca7e53cbf7e", "main", "12228ac832f77243e4d87c5a0178208cf3f3eef6", "84277473bbbad2c2d2df977f559840f13db6c25b"),
+              (17, "P018", "ios/p018-cli-package-ux", "e9d94c9abdfb63ccabd96e11ea2f667c33918e90", "main", "84277473bbbad2c2d2df977f559840f13db6c25b", "9083f9265ddcb0cc9f6c75edce0e0c473d74897b"),
+              (18, "P019", "ios/p019-supervised-reliability", "7d5723fca2595b8928ed3e1717ca872906d48538", "main", "9083f9265ddcb0cc9f6c75edce0e0c473d74897b", "7dbd47e4500c0ddf3d65d282d8e6a8881d6c8703"),
+          ]
+          pulls = json.loads(subprocess.run(
+              ["gh", "api", f"repos/{repo}/pulls?state=all&per_page=100"],
+              check=True, capture_output=True, text=True).stdout)
+          by_number = {item["number"]: item for item in pulls}
+          records = []
+          for number, milestone, branch, head, base_branch, base_sha, merge_sha in expected:
+              item = by_number.get(number)
+              if item is None:
+                  raise SystemExit(f"missing {milestone} PR #{number}")
+              state = "MERGED" if item.get("merged_at") else item["state"].upper()
+              if item["head"]["ref"] != branch or item["head"]["sha"] != head:
+                  raise SystemExit(f"{milestone} PR #{number} head differs from the verified chain")
+              if item["base"]["ref"] != base_branch:
+                  raise SystemExit(f"{milestone} PR #{number} base branch differs from the verified chain")
+              if item["base"]["sha"] != base_sha:
+                  raise SystemExit(f"{milestone} PR #{number} base SHA differs from the verified chain")
+              if state != "MERGED" or item.get("merge_commit_sha") != merge_sha:
+                  raise SystemExit(f"{milestone} PR #{number} merge commit differs from the verified integration DAG")
+              if state not in ("OPEN", "MERGED"):
+                  raise SystemExit(f"{milestone} PR #{number} is {state}")
+              mergeable = item.get("mergeable")
+              mergeability = "UNKNOWN" if state == "MERGED" else "MERGEABLE" if mergeable is True else "CONFLICTING" if mergeable is False else "UNKNOWN"
+              view = json.loads(subprocess.run(
+                  ["gh", "pr", "view", str(number), "--repo", repo, "--json", "reviewDecision,statusCheckRollup"],
+                  check=True, capture_output=True, text=True).stdout)
+              checks = view.get("statusCheckRollup") or []
+              failed = []
+              pending = []
+              for check in checks:
+                  name = check.get("name") or check.get("context") or "unknown"
+                  conclusion = check.get("conclusion") or check.get("state") or check.get("status")
+                  if conclusion in ("SUCCESS", "success"):
+                      continue
+                  if conclusion in ("SKIPPED", "skipped") and name == "p008-release-attestation":
+                      continue
+                  if conclusion in ("PENDING", "IN_PROGRESS", "QUEUED", "EXPECTED", "pending"):
+                      pending.append(name)
+                  else:
+                      failed.append(f"{name}={conclusion}")
+              if failed or pending or not checks:
+                  detail = failed or pending or ["no exact-head checks returned"]
+                  raise SystemExit(f"{milestone} PR #{number} exact-head CI is not green: {detail}")
+              decision = view.get("reviewDecision") or "NONE"
+              review_state = decision if decision in ("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED") else "UNKNOWN" if decision != "NONE" else "NONE"
+              if review_state in ("CHANGES_REQUESTED", "REVIEW_REQUIRED", "UNKNOWN"):
+                  raise SystemExit(f"{milestone} PR #{number} has unresolved review state {review_state}")
+              records.append({
+                  "milestone": milestone, "pr": number, "branch": branch, "head_sha": head,
+                  "base_branch": base_branch, "base_sha": base_sha, "merge_sha": merge_sha, "state": state,
+                  "mergeability": mergeability, "review_state": review_state, "exact_head_ci": "PASS",
+              })
+          p019_run = json.loads(subprocess.run(
+              ["gh", "api", f"repos/{repo}/actions/runs/39696560499"],
+              check=True, capture_output=True, text=True).stdout)
+          if (p019_run.get("head_sha") != "7d5723fca2595b8928ed3e1717ca872906d48538"
+                  or p019_run.get("status") != "completed" or p019_run.get("conclusion") != "success"):
+              raise SystemExit("recorded P019 successful CI run does not match its exact source head")
+          Path("build/p020/milestone-chain.json").write_text(json.dumps(records, sort_keys=True, indent=2) + "\n")
+          p020_pr = os.environ.get("P020_CURRENT_PR")
+          if p020_pr:
+              current = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/pulls/{p020_pr}"], check=True, capture_output=True, text=True).stdout)
+              if current["head"]["sha"] != os.environ["P020_SOURCE_SHA"]:
+                  raise SystemExit("P020 PR head does not match the exact checked-out source SHA")
+              if current["base"]["ref"] != "main":
+                  raise SystemExit("P020 PR base is not integrated main")
+              integration_base = {"branch": current["base"]["ref"], "sha": current["base"]["sha"]}
+          else:
+              branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/main"], check=True, capture_output=True, text=True).stdout)
+              integration_base = {"branch": "main", "sha": branch["commit"]["sha"]}
+          Path("build/p020/integration-base.json").write_text(json.dumps(integration_base, sort_keys=True, indent=2) + "\n")
+          if integration_base["branch"] != "main":
+              raise SystemExit("P020 integration base branch is not main")
+          subprocess.run(["git", "merge-base", "--is-ancestor", "7dbd47e4500c0ddf3d65d282d8e6a8881d6c8703", integration_base["sha"]], check=True)
+          actual_merge_base = subprocess.run(["git", "merge-base", os.environ["P020_SOURCE_SHA"], integration_base["sha"]], check=True, capture_output=True, text=True).stdout.strip()
+          if actual_merge_base != "7d5723fca2595b8928ed3e1717ca872906d48538":
+              raise SystemExit("P020 source/base merge-base is not the exact P019 source head")
+          print("Verified the P011–P019 merged source chain and exact-head CI against the integrated main history.")
+          print("P008 branch-specific attestation remains SKIPPED by its guard; it is not counted as a pass.")
+          PY
+      - name: Confirm the P008 guard remains a skip, not a pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          P020_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$P020_RUN_ID/jobs?per_page=100" > build/p020/workflow-jobs.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          jobs = json.loads(Path("build/p020/workflow-jobs.json").read_text())["jobs"]
+          matches = [job for job in jobs if job.get("name") == "p008-release-attestation"]
+          if len(matches) != 1 or matches[0].get("conclusion") != "skipped":
+              raise SystemExit("P008 branch-specific attestation was not observed as SKIPPED")
+          print("P008 attestation=SKIPPED_EXPECTED_BRANCH_GUARD (not counted as PASS)")
+          PY
+      - name: Verify Debian prerelease ordering
+        run: |
+          set -euo pipefail
+          dpkg --compare-versions '0.2.0~rc1-1' lt '0.2.0-1'
+      - uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-P020-v0.2.0-rc1-UNSIGNED-DEVICE-UNVERIFIED
+          path: build/p020/candidate-inputs
+      - name: Package and validate isolated candidate artifacts
+        run: |
+          set -euo pipefail
+          source_date_epoch="$(git log -1 --format=%ct HEAD)"
+          SOURCE_DATE_EPOCH="$source_date_epoch" ./scripts/package-rootful.sh --input-dir build/p020/candidate-inputs/p020-first --output-dir build/p020/package-first --package-version '0.2.0~rc1-1'
+          SOURCE_DATE_EPOCH="$source_date_epoch" ./scripts/package-rootful.sh --input-dir build/p020/candidate-inputs/p020-second --output-dir build/p020/package-second --package-version '0.2.0~rc1-1'
+          test "$(dpkg-deb --field build/p020/package-first/*.deb Package)" = 'com.ioscaffeinate.cli'
+          test "$(dpkg-deb --field build/p020/package-first/*.deb Version)" = '0.2.0~rc1-1'
+          test "$(dpkg-deb --field build/p020/package-first/*.deb Architecture)" = 'iphoneos-arm'
+          python3 scripts/validate_rootful_package.py build/p020/package-first/*.deb --expected-version '0.2.0~rc1-1' --report build/p020/package-first/validation.txt
+          python3 scripts/validate_rootful_package.py build/p020/package-second/*.deb --expected-version '0.2.0~rc1-1' --report build/p020/package-second/validation.txt
+          (cd build/p020/package-first && sha256sum -c *.deb.sha256)
+          (cd build/p020/package-second && sha256sum -c *.deb.sha256)
+          grep -q 'signing_state=UNSIGNED' build/p020/package-first/validation.txt
+          grep -q 'device_package_acceptance=NOT_ACCEPTED' build/p020/package-first/validation.txt
+          python3 scripts/p020_scan_candidate.py build/p020/package-first/*.deb
+          python3 scripts/p020_scan_candidate.py build/p020/package-second/*.deb
+      - name: Record and validate exact build provenance
+        env:
+          P020_BRANCH: ${{ github.head_ref || github.ref_name }}
+          P020_RUN_ID: ${{ github.run_id }}
+          P020_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          P020_EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          python3 scripts/p020_build_provenance.py capture \
+            --first-build-info build/p020/candidate-inputs/p020-first/build-info.json \
+            --first-binary-dir build/p020/candidate-inputs/p020-first \
+            --first-package build/p020/package-first/ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_UNSIGNED-DEVICE-UNVERIFIED.deb \
+            --second-build-info build/p020/candidate-inputs/p020-second/build-info.json \
+            --second-binary-dir build/p020/candidate-inputs/p020-second \
+            --second-package build/p020/package-second/ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_UNSIGNED-DEVICE-UNVERIFIED.deb \
+            --branch "$P020_BRANCH" --run-id "$P020_RUN_ID" --run-url "$P020_RUN_URL" --event "$P020_EVENT" \
+            --output build/p020/P020-BUILD-PROVENANCE.json > build/p020/build-provenance-capture.json
+          python3 scripts/p020_build_provenance.py validate --manifest build/p020/P020-BUILD-PROVENANCE.json > build/p020/build-provenance-validation.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("build/p020")
+          provenance = json.loads((root / "P020-BUILD-PROVENANCE.json").read_text())
+          if provenance["signing"]["state"] != "UNSIGNED" or provenance["signing"]["provenance_status"] != "SIGNER_PROVENANCE_BLOCKED":
+              raise SystemExit("candidate signing provenance was overstated")
+          if provenance["validation"]["device_installation"] != "NOT_PERFORMED":
+              raise SystemExit("cloud candidate was labeled as installed")
+          print("Build provenance validated; reproducibility=" + provenance["reproducibility"]["status"])
+          PY
+      - name: Validate release evaluator, build provenance, PR chain, and security negative paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          P020_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          P020_CURRENT_PR: ${{ github.event.pull_request.number || '' }}
+          P020_RUN_ID: ${{ github.run_id }}
+          P020_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          P020_EVENT: ${{ github.event_name }}
+          P020_BRANCH: ${{ github.head_ref || github.ref_name }}
+          P020_WORKFLOW_RUN: ${{ needs.linux-protocol.result }}
+          P020_LINUX: ${{ needs.linux-protocol.result }}
+          P020_IOS_CROSS: ${{ needs.ios-cross-build.result }}
+          P020_IOS_INSPECTION: ${{ needs.ios-artifact-inspection.result }}
+          P020_PACKAGE: ${{ needs.ios-rootful-package.result }}
+          P020_P009: ${{ needs.p009-evidence-validation.result }}
+          P020_P011: ${{ needs.p011-release-preflight.result }}
+          P020_P010: ${{ needs.p010-signing-release-gate.result }}
+          P020_P012: ${{ needs.p012-idle-research-validation.result }}
+          P020_P013: ${{ needs.p013-launchd-lifecycle-validation.result }}
+          P020_P014: ${{ needs.p014-crash-recovery-validation.result }}
+          P020_P015: ${{ needs.p015-server-policy-validation.result }}
+          P020_P016: ${{ needs.p016-health-telemetry-validation.result }}
+          P020_P017: ${{ needs.p017-scheduling-validation.result }}
+          P020_P018: ${{ needs.p018-cli-package-ux-validation.result }}
+          P020_P019: ${{ needs.p019-supervised-reliability-validation.result }}
+          P020_CANDIDATE_CROSS: ${{ needs.p020-candidate-cross-build.result }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/p020
+          python3 -m py_compile scripts/p020_release_gate.py scripts/p020_build_provenance.py scripts/p020_scan_candidate.py
+          ./scripts/build-linux-test.sh
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y zsh
+          python3 -m unittest tests.test_p020_release_gate tests.test_p020_build_provenance tests.test_p020_candidate_scan tests.test_p020_end_to_end -v 2>&1 | tee build/p020/p020-tests.txt
+          python3 -m unittest discover -s tests -v 2>&1 | tee build/p020/python-regressions.txt
+          python3 -m unittest discover -s tests/packaging -v 2>&1 | tee build/p020/packaging-regressions.txt
+          python3 tests/integration.py 2>&1 | tee build/p020/protocol-integration.txt
+          python3 scripts/check_p018_docs_shell.py | tee build/p020/shell-syntax.txt
+          sh -n packaging/rootful/manager
+          sh -n packaging/rootful/DEBIAN/preinst
+          sh -n packaging/rootful/DEBIAN/prerm
+          bash -n scripts/build-macos.sh
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+
+          root = Path("build/p020")
+          source = os.environ["P020_SOURCE_SHA"]
+          if Path("build/p020/source-commit.txt").read_text().strip() != source:
+              raise SystemExit("P020 checked-out source identity changed")
+          workflows = [Path(".github/workflows/publish-rc1.yml").read_text(), Path(".github/workflows/publish-stable.yml").read_text()]
+          if any("v0.2.0" in workflow or "0.2.0-1" in workflow for workflow in workflows):
+              raise SystemExit("existing publication workflow has an unapproved v0.2 trigger or artifact")
+          ci_workflow = Path(".github/workflows/ci.yml").read_text()
+          p020_job = ci_workflow.split("  p020-release-readiness-validation:", 1)[1]
+          if re.search(r"gh\s+release\s+create|git\s+tag|launchctl\s+(?:load|bootstrap|enable|kickstart|start|restart)|\bldid\b", p020_job, re.I):
+              raise SystemExit("P020 CI contains a publication, launchd, or signing action")
+          if "SIGKILL" in "\n".join(path.read_text(errors="ignore") for path in Path("src").glob("*.c")):
+              raise SystemExit("SIGKILL fallback appears in privileged runtime source")
+          for name, result in {
+              "linux-protocol": os.environ["P020_LINUX"], "ios-cross-build": os.environ["P020_IOS_CROSS"],
+              "ios-artifact-inspection": os.environ["P020_IOS_INSPECTION"], "ios-rootful-package": os.environ["P020_PACKAGE"],
+              "p009-evidence-validation": os.environ["P020_P009"], "p011-release-preflight": os.environ["P020_P011"],
+              "p010-signing-release-gate": os.environ["P020_P010"], "p012-idle-research-validation": os.environ["P020_P012"],
+              "p013-launchd-lifecycle-validation": os.environ["P020_P013"], "p014-crash-recovery-validation": os.environ["P020_P014"],
+              "p015-server-policy-validation": os.environ["P020_P015"], "p016-health-telemetry-validation": os.environ["P020_P016"],
+              "p017-scheduling-validation": os.environ["P020_P017"], "p018-cli-package-ux-validation": os.environ["P020_P018"],
+              "p019-supervised-reliability-validation": os.environ["P020_P019"], "p020-candidate-cross-build": os.environ["P020_CANDIDATE_CROSS"],
+          }.items():
+              if result != "success":
+                  raise SystemExit(f"required exact-source dependency {name} is {result}")
+          p019_sim = json.loads((Path("build/p019/simulation") / "analysis.json").read_text())
+          if p019_sim["status"] == "ACCEPTED_FOR_TESTED_SCOPE" or p019_sim["hardware_acceptance"] != "NOT_ESTABLISHED":
+              raise SystemExit("simulated P019 data incorrectly claims hardware acceptance")
+          print("Required exact-source cloud dependencies and publication/device-side-effect guards verified.")
+          PY
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("build/p020")
+          chain = json.loads((root / "milestone-chain.json").read_text())
+          workflow_jobs = json.loads((root / "workflow-jobs.json").read_text())["jobs"]
+          p008_jobs = [job for job in workflow_jobs if job.get("name") == "p008-release-attestation"]
+          if len(p008_jobs) != 1 or p008_jobs[0].get("conclusion") != "skipped":
+              raise SystemExit("P008 is not the expected branch-guard skip")
+          source = (root / "source-commit.txt").read_text().strip()
+          gate_names = ["source_integration", "native_build", "ios_cross_build", "macho_inspection", "rootful_packaging", "signing_metadata", "security_analysis", "regression_ci", "evidence_schema_compatibility", "build_provenance"]
+          results = {name: "PASS" for name in gate_names}
+          attestation = {
+              "schema_version": 1, "source_sha": source,
+              "tree_sha": (root / "source-tree.txt").read_text().strip(),
+              "gate_results": results,
+              "dependency_jobs": {
+                  "linux-protocol": os.environ["P020_LINUX"], "ios-cross-build": os.environ["P020_IOS_CROSS"],
+                  "ios-artifact-inspection": os.environ["P020_IOS_INSPECTION"], "ios-rootful-package": os.environ["P020_PACKAGE"],
+                  "p009-evidence-validation": os.environ["P020_P009"], "p011-release-preflight": os.environ["P020_P011"],
+                  "p010-signing-release-gate": os.environ["P020_P010"], "p012-idle-research-validation": os.environ["P020_P012"],
+                  "p013-launchd-lifecycle-validation": os.environ["P020_P013"], "p014-crash-recovery-validation": os.environ["P020_P014"],
+                  "p015-server-policy-validation": os.environ["P020_P015"], "p016-health-telemetry-validation": os.environ["P020_P016"],
+                  "p017-scheduling-validation": os.environ["P020_P017"], "p018-cli-package-ux-validation": os.environ["P020_P018"],
+                  "p019-supervised-reliability-validation": os.environ["P020_P019"], "p020-candidate-cross-build": os.environ["P020_CANDIDATE_CROSS"],
+              },
+              "p008_release_attestation": "SKIPPED_EXPECTED_BRANCH_GUARD",
+              "publication_steps": "NONE", "device_execution": "NOT_PERFORMED",
+          }
+          attestation_path = root / "ci-attestation.json"
+          attestation_path.write_text(json.dumps(attestation, sort_keys=True, indent=2) + "\n")
+          digest = hashlib.sha256(attestation_path.read_bytes()).hexdigest()
+          cloud = {name: {"status": "PASS", "evidence": [{"path": "ci-attestation.json", "sha256": digest, "evidence_class": "CI"}]} for name in gate_names}
+          provenance_path = root / "P020-BUILD-PROVENANCE.json"
+          cloud["build_provenance"] = {"status": "PASS", "evidence": [{
+              "path": provenance_path.name,
+              "sha256": hashlib.sha256(provenance_path.read_bytes()).hexdigest(),
+              "evidence_class": "BUILD_PROVENANCE",
+          }]}
+          hw_names = ["p010_signer_provenance", "p011_stable_package_acceptance", "installed_candidate_identity", "p012_physical_trials", "p013_lifecycle_acceptance", "p014_physical_recovery", "p016_resource_review", "p018_privacy_review", "p019_supervised_cycles", "p009_independent_provenance_review"]
+          manifest = {
+              "schema_version": 1,
+              "release": {"version": "v0.2.0", "package_identifier": "com.ioscaffeinate.cli", "package_version": "0.2.0~rc1-1", "architecture": "iphoneos-arm"},
+              "source": {
+                  "repository": "nghianguyen150612/iOS-Caffeinate", "branch": "release/p020-v02-integration",
+                  "commit_sha": source, "tree_sha": attestation["tree_sha"],
+                  "p020_base_branch": json.loads((root / "integration-base.json").read_text())["branch"],
+                  "p020_base_sha": json.loads((root / "integration-base.json").read_text())["sha"],
+                  "current_pr": int(__import__("os").environ["P020_CURRENT_PR"]) if __import__("os").environ.get("P020_CURRENT_PR") else None,
+                  "milestone_chain": chain,
+              },
+              "cloud_gates": cloud,
+              "hardware_gates": {name: {"evidence": []} for name in hw_names},
+              "scope": {"out_of_scope_features": ["automatic_restart", "unattended_schedule_execution", "scheduled_deep_sleep_wake"]},
+              "authorization": {"release_critical_issues_resolved": None, "operator_acceptance_review": None,
+                  "limitations_disclosed": None, "rollback_plan_review": None, "human_release_approval": None,
+                  "publication_authorization": None},
+              "reproducibility": json.loads((root / "P020-BUILD-PROVENANCE.json").read_text())["reproducibility"]["status"],
+          }
+          (root / "release-manifest.json").write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
+          PY
+          python3 scripts/p020_release_gate.py assess --manifest "$GITHUB_WORKSPACE/build/p020/release-manifest.json" --expected-source-sha "$P020_SOURCE_SHA" > build/p020/release-assessment.json
+          python3 scripts/p020_release_gate.py report --manifest "$GITHUB_WORKSPACE/build/p020/release-manifest.json" --expected-source-sha "$P020_SOURCE_SHA" > build/p020/release-assessment.md
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path("build/p020/release-assessment.json").read_text())
+          if result["decision"] != "RELEASE_BLOCKED":
+              raise SystemExit(f"expected physical evidence gates to block release, got {result['decision']}")
+          if result["publication_authorized"] is not False:
+              raise SystemExit("P020 release assessment incorrectly authorized publication")
+          expected = {"p010_signer_provenance", "p011_stable_package_acceptance", "installed_candidate_identity", "p012_physical_trials", "p013_lifecycle_acceptance", "p014_physical_recovery", "p016_resource_review", "p018_privacy_review", "p019_supervised_cycles", "p009_independent_provenance_review"}
+          if expected - set(result["hardware_gates"]):
+              raise SystemExit("release assessment omitted a required hardware gate")
+          if any(result["hardware_gates"][name]["status"] != "PENDING" for name in expected):
+              raise SystemExit("cloud fixtures or CI status incorrectly satisfied physical acceptance")
+          if not any("SIGNER_PROVENANCE_BLOCKED" in blocker for blocker in result["blockers"]):
+              raise SystemExit("missing pinned signer provenance did not block readiness")
+          print("P020 decision=RELEASE_BLOCKED; expected hardware blockers validated; CI assessment test passes.")
+          PY
+      - name: Upload deterministic P020 cloud validation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P020-Release-Readiness-UNSIGNED-BLOCKED
+          if-no-files-found: error
+          path: |
+            build/p020/source-commit.txt
+            build/p020/source-tree.txt
+            build/p020/milestone-chain.json
+            build/p020/p020-tests.txt
+            build/p020/python-regressions.txt
+            build/p020/packaging-regressions.txt
+            build/p020/protocol-integration.txt
+            build/p020/shell-syntax.txt
+            build/p020/ci-attestation.json
+            build/p020/release-manifest.json
+            build/p020/release-assessment.json
+            build/p020/release-assessment.md
+            build/p020/P020-BUILD-PROVENANCE.json
+            build/p020/build-provenance-validation.json
+            build/p020/P020-E2E-MOCKED-INTEGRATION.json
+            build/p020/candidate-inputs/p020-first/ios-caffeinate
+            build/p020/candidate-inputs/p020-first/ios-caffeinated
+            build/p020/candidate-inputs/p020-first/build-info.json
+            build/p020/candidate-inputs/p020-first/SHA256SUMS
+            build/p020/candidate-inputs/p020-second/ios-caffeinate
+            build/p020/candidate-inputs/p020-second/ios-caffeinated
+            build/p020/candidate-inputs/p020-second/build-info.json
+            build/p020/candidate-inputs/p020-second/SHA256SUMS
+            build/p020/package-first/*.deb
+            build/p020/package-first/*.sha256
+            build/p020/package-first/*.manifest.json
+            build/p020/package-first/validation.txt
+            build/p020/package-second/*.deb
+            build/p020/package-second/*.sha256
+            build/p020/package-second/*.manifest.json
+            build/p020/package-second/validation.txt

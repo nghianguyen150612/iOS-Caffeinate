@@ -114,13 +114,21 @@ class RootfulPackageTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls.temp.cleanup()
 
-    def run_builder(self, input_dir: Path, output_dir: Path | None = None) -> subprocess.CompletedProcess[str]:
+    def run_builder(
+        self,
+        input_dir: Path,
+        output_dir: Path | None = None,
+        package_version: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        command = [
+            str(ROOT / "scripts/package-rootful.sh"),
+            "--input-dir", str(input_dir),
+            "--output-dir", str(output_dir or self.work / "reject-output"),
+        ]
+        if package_version is not None:
+            command.extend(("--package-version", package_version))
         return subprocess.run(
-            [
-                str(ROOT / "scripts/package-rootful.sh"),
-                "--input-dir", str(input_dir),
-                "--output-dir", str(output_dir or self.work / "reject-output"),
-            ],
+            command,
             cwd=ROOT,
             text=True,
             capture_output=True,
@@ -139,6 +147,15 @@ class RootfulPackageTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         second_deb = next(second_output.glob("*.deb"))
         self.assertEqual(hashlib.sha256(self.deb.read_bytes()).digest(), hashlib.sha256(second_deb.read_bytes()).digest())
+
+    def test_prerelease_version_override_is_validated_and_preserved(self) -> None:
+        candidate_output = self.work / "candidate-output"
+        result = self.run_builder(self.inputs, candidate_output, "0.2.0~rc1-1")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        candidate = next(candidate_output.glob("*.deb"))
+        self.assertEqual(candidate.name, "ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_UNSIGNED-DEVICE-UNVERIFIED.deb")
+        report = inspect_package(candidate, expected_version="0.2.0~rc1-1")
+        self.assertIn("version=0.2.0~rc1-1", report)
 
     def test_canonical_cli_daemon_and_real_alias(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ios-caffeinate.invalid/schemas/p020-release-manifest-v1.schema.json",
+  "title": "P020 release readiness evidence manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "release", "source", "cloud_gates", "hardware_gates", "scope", "authorization", "reproducibility"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "release": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "package_identifier", "package_version", "architecture"],
+      "properties": {
+        "version": {"const": "v0.2.0"},
+        "package_identifier": {"const": "com.ioscaffeinate.cli"},
+        "package_version": {"const": "0.2.0~rc1-1"},
+        "architecture": {"const": "iphoneos-arm"}
+      }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "branch", "commit_sha", "tree_sha", "p020_base_branch", "p020_base_sha", "current_pr", "milestone_chain"],
+      "properties": {
+        "repository": {"const": "nghianguyen150612/iOS-Caffeinate"},
+        "branch": {"const": "release/p020-v02-integration"},
+        "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "tree_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "p020_base_branch": {"const": "main"},
+        "p020_base_sha": {"$ref": "#/$defs/sha1"},
+        "current_pr": {"type": ["integer", "null"], "minimum": 1},
+        "milestone_chain": {
+          "type": "array", "minItems": 9, "maxItems": 9,
+          "items": {"$ref": "#/$defs/milestone"}
+        }
+      }
+    },
+    "cloud_gates": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_integration", "native_build", "ios_cross_build", "macho_inspection", "rootful_packaging", "signing_metadata", "security_analysis", "regression_ci", "evidence_schema_compatibility", "build_provenance"],
+      "properties": {
+        "source_integration": {"$ref": "#/$defs/cloudGate"},
+        "native_build": {"$ref": "#/$defs/cloudGate"},
+        "ios_cross_build": {"$ref": "#/$defs/cloudGate"},
+        "macho_inspection": {"$ref": "#/$defs/cloudGate"},
+        "rootful_packaging": {"$ref": "#/$defs/cloudGate"},
+        "signing_metadata": {"$ref": "#/$defs/cloudGate"},
+        "security_analysis": {"$ref": "#/$defs/cloudGate"},
+        "regression_ci": {"$ref": "#/$defs/cloudGate"},
+        "evidence_schema_compatibility": {"$ref": "#/$defs/cloudGate"},
+        "build_provenance": {"$ref": "#/$defs/cloudGate"}
+      }
+    },
+    "hardware_gates": {
+      "type": "object", "additionalProperties": false,
+      "required": ["p010_signer_provenance", "p011_stable_package_acceptance", "installed_candidate_identity", "p012_physical_trials", "p013_lifecycle_acceptance", "p014_physical_recovery", "p016_resource_review", "p018_privacy_review", "p019_supervised_cycles", "p009_independent_provenance_review"],
+      "properties": {
+        "p010_signer_provenance": {"$ref": "#/$defs/hardwareGate"},
+        "p011_stable_package_acceptance": {"$ref": "#/$defs/hardwareGate"},
+        "installed_candidate_identity": {"$ref": "#/$defs/hardwareGate"},
+        "p012_physical_trials": {"$ref": "#/$defs/hardwareGate"},
+        "p013_lifecycle_acceptance": {"$ref": "#/$defs/hardwareGate"},
+        "p014_physical_recovery": {"$ref": "#/$defs/hardwareGate"},
+        "p016_resource_review": {"$ref": "#/$defs/hardwareGate"},
+        "p018_privacy_review": {"$ref": "#/$defs/hardwareGate"},
+        "p019_supervised_cycles": {"$ref": "#/$defs/hardwareGate"},
+        "p009_independent_provenance_review": {"$ref": "#/$defs/hardwareGate"}
+      }
+    },
+    "scope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["out_of_scope_features"],
+      "properties": {
+        "out_of_scope_features": {
+          "type": "array", "minItems": 3, "maxItems": 3,
+          "items": {"enum": ["automatic_restart", "unattended_schedule_execution", "scheduled_deep_sleep_wake"]},
+          "uniqueItems": true
+        }
+      }
+    },
+    "authorization": {
+      "type": "object", "additionalProperties": false,
+      "required": ["release_critical_issues_resolved", "operator_acceptance_review", "limitations_disclosed", "rollback_plan_review", "human_release_approval", "publication_authorization"],
+      "properties": {
+        "release_critical_issues_resolved": {"type": ["array", "null"], "items": {"$ref": "#/$defs/evidenceRef"}},
+        "operator_acceptance_review": {"$ref": "#/$defs/nullableEvidenceRef"},
+        "limitations_disclosed": {"$ref": "#/$defs/nullableEvidenceRef"},
+        "rollback_plan_review": {"$ref": "#/$defs/nullableEvidenceRef"},
+        "human_release_approval": {"$ref": "#/$defs/nullableEvidenceRef"},
+        "publication_authorization": {"const": null}
+      }
+    },
+    "reproducibility": {"enum": ["REPRODUCIBLE", "NON_REPRODUCIBLE", "NOT_TESTED", "INCONCLUSIVE"]}
+  },
+  "$defs": {
+    "sha1": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "milestone": {
+      "type": "object", "additionalProperties": false,
+      "required": ["milestone", "pr", "branch", "head_sha", "base_branch", "base_sha", "merge_sha", "state", "mergeability", "review_state", "exact_head_ci"],
+      "properties": {
+        "milestone": {"enum": ["P011", "P012", "P013", "P014", "P015", "P016", "P017", "P018", "P019"]},
+        "pr": {"type": "integer", "minimum": 10, "maximum": 18},
+        "branch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "head_sha": {"$ref": "#/$defs/sha1"},
+        "base_branch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "base_sha": {"$ref": "#/$defs/sha1"},
+        "merge_sha": {"$ref": "#/$defs/sha1"},
+        "state": {"const": "MERGED"},
+        "mergeability": {"enum": ["MERGEABLE", "CONFLICTING", "UNKNOWN"]},
+        "review_state": {"enum": ["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", "NONE", "UNKNOWN"]},
+        "exact_head_ci": {"enum": ["PASS", "PENDING", "FAILED", "UNKNOWN"]}
+      }
+    },
+    "evidenceFile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "evidence_class"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 512},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "evidence_class": {"enum": ["CI", "BUILD_PROVENANCE", "SIMULATED", "MOCK", "DEVICE_REPORTED", "EXTERNAL_OBSERVER", "OPERATOR_RECORDED", "INDEPENDENT_REVIEW"]}
+      }
+    },
+    "reviewRef": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "signature", "signer_fingerprint"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 512},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "signature": {"$ref": "#/$defs/signatureFile"},
+        "signer_fingerprint": {"type": "string", "pattern": "^[0-9A-Fa-f]{40,64}$"}
+      }
+    },
+    "signatureFile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {"path": {"type": "string", "minLength": 1, "maxLength": 512}, "sha256": {"$ref": "#/$defs/sha256"}}
+    },
+    "nullableReviewRef": {"oneOf": [{"$ref": "#/$defs/reviewRef"}, {"type": "null"}]},
+    "evidenceRef": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact_type", "file", "review_receipt"],
+      "properties": {
+        "artifact_type": {"type": "string", "minLength": 1, "maxLength": 64},
+        "file": {"$ref": "#/$defs/evidenceFile"},
+        "review_receipt": {"$ref": "#/$defs/nullableReviewRef"}
+      }
+    },
+    "nullableEvidenceRef": {"oneOf": [{"$ref": "#/$defs/evidenceRef"}, {"type": "null"}]},
+    "hardwareGate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["evidence"],
+      "properties": {"evidence": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/evidenceRef"}}}
+    },
+    "cloudGate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "evidence"],
+      "properties": {
+        "status": {"enum": ["PASS", "PENDING", "BLOCKED", "FAILED", "NOT_APPLICABLE", "UNVERIFIED"]},
+        "evidence": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/evidenceFile"}}
+      }
+    }
+  }
+}

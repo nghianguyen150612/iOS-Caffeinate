@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ios-caffeinate.invalid/schemas/p020-build-provenance-v1.schema.json",
+  "title": "P020 exact build and artifact provenance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "candidate_state", "source", "build_configuration", "toolchain", "target", "dependencies", "package", "artifacts", "signing", "reproducibility", "ci", "validation"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "candidate_state": {"enum": ["UNSIGNED_DEVELOPMENT", "SIGNED_CANDIDATE", "DEVICE_TESTED_CANDIDATE", "HARDWARE_ACCEPTED_CANDIDATE"]},
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "branch", "commit_sha", "tree_sha", "worktree_clean"],
+      "properties": {
+        "repository": {"const": "nghianguyen150612/iOS-Caffeinate"},
+        "branch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "tree_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "worktree_clean": {"type": "boolean"}
+      }
+    },
+    "build_configuration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["compiler_flags", "target_triple", "deployment_target", "build_kind", "release_channel", "source_date_epoch"],
+      "properties": {
+        "compiler_flags": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "target_triple": {"const": "arm64-apple-ios12.0"},
+        "deployment_target": {"const": "12.0"},
+        "build_kind": {"type": "string"},
+        "release_channel": {"enum": ["DEVELOPMENT", "PRE_RELEASE", "STABLE"]},
+        "source_date_epoch": {"type": "integer", "minimum": 0}
+      }
+    },
+    "toolchain": {
+      "type": "object", "additionalProperties": false,
+      "required": ["compiler", "compiler_version", "sdk_name", "sdk_version", "xcode_version", "package_tool", "package_tool_version"],
+      "properties": {
+        "compiler": {"const": "Apple Clang"},
+        "compiler_version": {"type": "string", "minLength": 1, "maxLength": 256},
+        "sdk_name": {"const": "iPhoneOS"},
+        "sdk_version": {"type": "string", "minLength": 1, "maxLength": 64},
+        "xcode_version": {"type": "string", "minLength": 1, "maxLength": 512},
+        "package_tool": {"const": "dpkg-deb"},
+        "package_tool_version": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["device", "cpu", "ios", "bootstrap", "debian_architecture", "binary_architecture", "minimum_ios_version"],
+      "properties": {
+        "device": {"const": "iPad mini 2 A1489 (iPad4,4)"},
+        "cpu": {"const": "Apple A7 ARM64"},
+        "ios": {"const": "12.5.7"},
+        "bootstrap": {"const": "Amethyst/Procursus rootful"},
+        "debian_architecture": {"const": "iphoneos-arm"},
+        "binary_architecture": {"const": "arm64 Mach-O"},
+        "minimum_ios_version": {"const": "12.0"}
+      }
+    },
+    "dependencies": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "package": {
+      "type": "object", "additionalProperties": false,
+      "required": ["identifier", "version", "architecture"],
+      "properties": {
+        "identifier": {"const": "com.ioscaffeinate.cli"},
+        "version": {"const": "0.2.0~rc1-1"},
+        "architecture": {"const": "iphoneos-arm"}
+      }
+    },
+    "artifacts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cli", "daemon", "package", "second_build_cli", "second_build_daemon", "second_build_package"],
+      "properties": {
+        "cli": {"$ref": "#/$defs/fileHash"},
+        "daemon": {"$ref": "#/$defs/fileHash"},
+        "package": {"$ref": "#/$defs/fileHash"},
+        "second_build_cli": {"$ref": "#/$defs/fileHash"},
+        "second_build_daemon": {"$ref": "#/$defs/fileHash"},
+        "second_build_package": {"$ref": "#/$defs/fileHash"}
+      }
+    },
+    "signing": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "profile_id", "profile_sha256", "signing_tool_version", "signing_tool_sha256", "provenance_status"],
+      "properties": {
+        "state": {"enum": ["UNSIGNED", "SIGNED"]},
+        "profile_id": {"const": "amethyst-ios12-rootful"},
+        "profile_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "signing_tool_version": {"type": ["string", "null"]},
+        "signing_tool_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "provenance_status": {"enum": ["SIGNER_PROVENANCE_BLOCKED", "VERIFIED"]}
+      }
+    },
+    "reproducibility": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "independent_builds", "inputs_match", "artifact_hashes_match", "analysis"],
+      "properties": {
+        "status": {"enum": ["REPRODUCIBLE", "NON_REPRODUCIBLE", "NOT_TESTED", "INCONCLUSIVE"]},
+        "independent_builds": {"type": "integer", "minimum": 0, "maximum": 2},
+        "inputs_match": {"type": "boolean"},
+        "artifact_hashes_match": {"type": "boolean"},
+        "analysis": {"type": "string", "minLength": 1, "maxLength": 4000}
+      }
+    },
+    "ci": {
+      "type": "object", "additionalProperties": false,
+      "required": ["workflow", "run_id", "run_url", "event", "source_sha_verified"],
+      "properties": {
+        "workflow": {"type": "string", "minLength": 1, "maxLength": 256},
+        "run_id": {"type": "string", "minLength": 1, "maxLength": 64},
+        "run_url": {"type": "string", "pattern": "^https://github\\.com/nghianguyen150612/iOS-Caffeinate/actions/runs/[0-9]+$"},
+        "event": {"enum": ["pull_request", "push", "workflow_dispatch"]},
+        "source_sha_verified": {"type": "boolean"}
+      }
+    },
+    "validation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["macho_inspection", "package_inspection", "payload_hashes", "maintainer_scripts", "persistent_state_seeded", "device_installation", "release_authorization"],
+      "properties": {
+        "macho_inspection": {"const": "PASS"},
+        "package_inspection": {"const": "PASS"},
+        "payload_hashes": {"const": "PASS"},
+        "maintainer_scripts": {"const": "PASS"},
+        "persistent_state_seeded": {"const": false},
+        "device_installation": {"const": "NOT_PERFORMED"},
+        "release_authorization": {"const": "BLOCKED"}
+      }
+    }
+  },
+  "$defs": {
+    "fileHash": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {"path": {"type": "string", "minLength": 1, "maxLength": 512}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+    }
+  }
+}

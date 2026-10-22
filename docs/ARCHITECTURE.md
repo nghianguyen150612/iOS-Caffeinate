@@ -147,3 +147,8 @@ Evidence inventory uses a fixed allowlist and P009 attachment validation. Export
 P019's Python tooling is a host-side offline layer. It composes P012 v1 trial validation/analysis, P009 v1 evidence validation/replay, and P018 export privacy validation. It does not add a network client or device action path. Original P009 evidence remains authoritative; P018 exports remain sanitized derivatives and do not establish empirical authenticity.
 
 The result distinguishes cloud preparation from physical acceptance. Hardware acceptance requires exact tested package/build/signer identity, supervised bounded trials, independent physical recovery, clean P014 state, P009 raw evidence review, and P018 export consistency/privacy review. CI uses synthetic source classes and cannot satisfy hardware gates. The status `ACCEPTED_FOR_TESTED_SCOPE` must name exact tested conditions and routes; no P019 result means 24/7 readiness.
+
+
+## P020 release readiness boundary
+
+P020 adds an offline manifest evaluator, build provenance schema, and isolated unsigned v0.2 RC packaging path. The stable package version remains `0.1.0-1`; P020's `0.2.0~rc1-1` build is not signed or installation-ready while pinned signer provenance is unresolved. Hardware gates require typed, hash-bound evidence and signed independent-review receipts verified against an externally managed reviewer keyring. The evaluator cannot grant publication authorization. Automatic restart, unattended scheduled assertion execution, and launchd activation remain disabled or absent.

@@ -96,15 +96,15 @@ Feature implementation, physical-device acceptance, and production reliability c
 
 **Validation and completion:** Stage A is `P019_CLOUD_COMPLETE_HARDWARE_ACCEPTANCE_PENDING` after exact-head CI and documentation pass. Stage B requires complete reviewed physical sessions, P009 raw evidence, P018 privacy validation, and explicit tested scope. Passing CI cannot establish hardware reliability or 24/7 operation. See [P019 prerequisites](P019-PREREQUISITES.md), [protocol](P019-EXPERIMENT-PROTOCOL.md), [operator runbook](P019-OPERATOR-RUNBOOK.md), [analysis](P019-ANALYSIS.md), and [release gates](P019-RELEASE-GATES.md).
 
-### P020 — Integration, security hardening and v0.2 release
+### P020 — Integration, security hardening and v0.2 release readiness
 
-**Depends on:** P011–P019 implementation and acceptance criteria; no unresolved release-blocking security findings.
+**Depends on:** verified P011–P019 history, cloud regression CI, exact P010 signer provenance, independent physical-evidence review, and an accepted rollback plan.
 
-**Deliverables:** integrated source, release notes, exact-source CI, signed package and manifests, evidence review, migration/rollback instructions, and a release-readiness decision.
+**Deliverables:** integration/security audits, deterministic build identity, controlled unsigned `0.2.0~rc1-1` candidate builds, release manifest/evaluator, signed reviewer receipts under an externally managed trust keyring, upgrade/rollback guidance, draft notes, and exact-source CI.
 
-**Safety constraints:** do not publish a v0.2 tag or release until required hardware and reliability gates are separately reviewed; keep the Amethyst entitlement opt-in and environment-specific.
+**Safety constraints:** do not sign with an unverified executable, install on the target, enable launchd, execute schedules, restart automatically, create a v0.2 tag/release, or alter v0.1.0 assets. No publication is authorized by CI.
 
-**Validation and completion:** all cloud gates pass on the final source SHA; P009 hardware gates and P019 reliability evidence receive human review; package identity and rollback are checked. A v0.2 release remains blocked until those criteria are met.
+**Validation and completion:** cloud regressions pass and the release gate correctly remains `RELEASE_BLOCKED` while physical acceptance is incomplete. P010/P011/P012/P013/P014/P016/P018/P019 and independent P009 evidence review remain required before a later, separately authorized publication.
 
 ## Dependency summary
 

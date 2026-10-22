@@ -6,6 +6,7 @@ Run on macOS with Xcode after build, or after downloading the binary artifact.
 import hashlib
 import re
 import subprocess
+import argparse
 from pathlib import Path
 
 
@@ -21,8 +22,11 @@ def require(condition, message):
         raise SystemExit("FAIL: " + message)
 
 
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--directory", type=Path, default=Path("dist"), help="directory containing the iOS executable pair")
+binary_directory = parser.parse_args().directory
 for name in ("ios-caffeinate", "ios-caffeinated"):
-    path = str(Path("dist") / name)
+    path = str(binary_directory / name)
     kind = run("file", path)
     require("Mach-O 64-bit executable arm64" in kind, f"{name}: not an ARM64 Mach-O executable")
     require(run("xcrun", "lipo", "-archs", path).strip() == "arm64", "unexpected architecture slice")

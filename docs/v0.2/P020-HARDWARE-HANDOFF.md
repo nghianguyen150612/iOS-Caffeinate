@@ -1,0 +1,32 @@
+# P020 Hardware Handoff
+
+**Current target:** iPad mini 2 A1489 (`iPad4,4`), Apple A7 ARM64, iOS 12.5.7, Amethyst/Procursus rootful. Cloud work must not connect to the target, install a package, run device tests, reboot, or respring.
+
+## Required sequence
+
+1. Resolve and independently verify the pinned P010 `ldid` executable identity and origin, then verify the approved entitlement profile bytes.
+2. Complete P011 acceptance of the existing v0.1 stable package, including installed paths, runtime, cleanup, preservation, and rollback readiness.
+3. Prepare a separately reviewed v0.2 development candidate after signer provenance is verified.
+4. Verify exact source, package, CLI, daemon and signing hashes against the candidate provenance manifest.
+5. Under attended authorization, perform supervised P013/P014 runtime, graceful stop, assertion cleanup, recovery, and state-preservation acceptance.
+6. Review P016 battery/charging/thermal source availability and safe operating conditions; unavailable remains unavailable.
+7. Conduct the registered 24 P012 controlled trials with separate LAN/Tailscale reporting and valid P009 evidence.
+8. Conduct the P019 12 supervised bounded cycles across three attended dates; confirm acquire/release for every accepted cycle, rest intervals, cleanup, and no unexpected exit/restart.
+9. Independently review unchanged P009 original evidence and the separately hashed P018 sanitized derivative. A derivative hash does not prove the observation occurred.
+10. Independently evaluate the exact P020 source and complete release manifest, including security findings, limitations, and rollback review.
+11. Obtain explicit human authorization before any stable publication.
+
+A failed safety, cleanup, provenance, or critical security gate stops progression. Do not convert a missing observation to success, infer continuous awake time from SSH responses, or use mock/simulated data as device acceptance.
+
+## Current hardware state
+
+- P010 signer provenance: unresolved; exact executable/origin not verified.
+- P011 stable package acceptance: pending.
+- P012 physical 24-trial observations: none accepted.
+- P013 launchd lifecycle acceptance: pending; mutations remain disabled.
+- P014 physical recovery acceptance: pending; no production restart executor exists.
+- P016 resource review: pending; battery/thermal sources may remain unavailable.
+- P019 physical session: none accepted; no accepted P019 trial observations.
+- P009 independent provenance review: pending; raw evidence remains private and unchanged.
+
+Do not perform scheduled assertion execution, unattended Server Mode, automatic restart, reboot persistence checks, or deep-sleep wake claims under this handoff.
