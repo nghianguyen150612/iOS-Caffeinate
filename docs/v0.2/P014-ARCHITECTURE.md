@@ -27,13 +27,13 @@ There is no restart executor in P014. A safe policy result never runs a command.
 - SIGKILL, power loss, and abrupt kernel termination are not observed by the daemon. A later process sees an unclean durable run marker and records the cause as `UNKNOWN_UNOBSERVED`.
 - A process exit and assertion cleanup are separate facts. Neither an absent PID nor a stale socket proves the old assertion was released.
 
-P004 evaluates an active schedule after daemon startup. Before P014, a new daemon could acquire a new assertion for an active window even though cleanup of an assertion owned by a prior process was unknown. The recovery journal now gates all assertion paths, including schedules, `probe`, bounded `start`, and server trials. Read-only status, STOP, and SHUTDOWN remain available while blocked.
+P004 originally evaluated an active schedule after daemon startup. Before P014, a new daemon could acquire a new assertion for an active window even though cleanup of an assertion owned by a prior process was unknown. P014 added a recovery gate for schedules, `probe`, bounded `start`, and server trials. P017 later suppresses the schedule executor because P015 does not authorize unattended scheduled assertions; the P014 gate remains authoritative for any manual acquisition and for a future separately reviewed executor. Read-only status, STOP, and SHUTDOWN remain available while blocked.
 
 ## Recovery journal and startup gate
 
-The journal is `/var/lib/ioscaffeinate/recovery-state.json`. The daemon writes it only while holding the existing socket lock, which establishes the single-writer invariant. It records a `RUNNING` marker before schedule evaluation. A later startup blocks acquisitions when the prior marker was still `RUNNING`, the journal was absent, cleanup was unverified, a release/ownership failure still requires review, or the file was unsafe or unsupported.
+The journal is `/var/lib/ioscaffeinate/recovery-state.json`. The daemon writes it only while holding the existing socket lock, which establishes the single-writer invariant. It records a `RUNNING` marker before assertion-capable operation. A later startup blocks acquisitions when the prior marker was still `RUNNING`, the journal was absent, cleanup was unverified, a release/ownership failure still requires review, or the file was unsafe or unsupported.
 
-A clean journal preserves P004 schedule behavior. A first P014 run with no journal is deliberately unverified; an operator must use the reviewed recovery operation after establishing the service, socket, lock, supervisor, and cleanup state. The daemon does not turn a missing file into proof that no old assertion exists.
+A clean journal permits manual acquisition subject to the other gates. It no longer authorizes P004 schedule execution: P017's scheduled executor is disabled under P015. A first P014 run with no journal is deliberately unverified; an operator must use the reviewed recovery operation after establishing the service, socket, lock, supervisor, and cleanup state. The daemon does not turn a missing file into proof that no old assertion exists.
 
 `ic service recovery status` and `ic service recovery plan` expose the recovery state, last exit category, attempt budget, cooldown, cleanup confidence, eligibility, blocker, supervisor compatibility, and runtime activation. Both commands are read-only.
 

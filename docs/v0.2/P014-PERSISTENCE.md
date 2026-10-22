@@ -1,6 +1,6 @@
 # P014 — Durable Recovery Record
 
-The daemon stores a bounded, versioned record at `/var/lib/ioscaffeinate/recovery-state.json`. This ledger is needed because P014 must distinguish a clean prior run from an unobserved process death before it evaluates P004 schedules. It does not replace or modify P004 schedule storage or P006 server policy.
+The daemon stores a bounded, versioned record at `/var/lib/ioscaffeinate/recovery-state.json`. P014 introduced this ledger to distinguish a clean prior run from an unobserved process death before assertion acquisition, including the then-existing P004 schedule executor. P017 disables automatic scheduled execution under P015 policy while keeping P014 authoritative for manual acquisitions and any future reviewed executor. The journal does not replace or modify P004 schedule storage or P006 server policy.
 
 ## Record contents
 
@@ -12,7 +12,7 @@ The JSON parser accepts the exact version 1 field order emitted by the writer. I
 
 The record must be a root-owned regular file with mode `0600` and exactly one hard link. The reader walks parent directories with `openat` and `O_NOFOLLOW`, checks ownership and permissions, verifies the opened inode against the inspected inode, and rechecks the file after reading. The atomic writer creates a private exclusive temporary file, writes and `fsync`s it, renames it over the trusted target, then `fsync`s the parent directory. The writer never replaces a corrupt, unsupported, symlinked, hardlinked, or otherwise unsafe target.
 
-The existing daemon socket lock is the single-writer invariant. `recovery_store_begin_run` is called only while that lock is held and writes a durable `RUNNING` marker before schedule evaluation. The future supervisor-facing `recovery_store_consume_attempt` helper updates a private copy, writes it atomically, and returns success only after file and directory sync; a caller must not attempt the operation if persistence fails. A failed or interrupted write blocks assertions; a missing first-run record is initialized as unverified and also blocks assertions. A prior `RUNNING` marker remains evidence only that a previous run did not record a clean finish; it does not identify SIGKILL or prove assertion fate.
+The existing daemon socket lock is the single-writer invariant. `recovery_store_begin_run` is called only while that lock is held and writes a durable `RUNNING` marker before assertion-capable operation. The future supervisor-facing `recovery_store_consume_attempt` helper updates a private copy, writes it atomically, and returns success only after file and directory sync; a caller must not attempt the operation if persistence fails. A failed or interrupted write blocks assertions; a missing first-run record is initialized as unverified and also blocks assertions. A prior `RUNNING` marker remains evidence only that a previous run did not record a clean finish; it does not identify SIGKILL or prove assertion fate.
 
 An absent, corrupt, unsupported, or unsafe record is not silently repaired. The operator-reviewed reset is allowed only after service registration is confirmed absent, daemon/socket absence is established while the daemon socket lock is held, and an operator separately reviews cleanup. The reset records an explicit operator decision and does not produce physical evidence.
 

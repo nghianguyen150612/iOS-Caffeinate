@@ -46,8 +46,9 @@ static void usage(void) {
          "  ios-caffeinate [--socket /absolute/path.sock] schedule add --at <ISO-8601> --for <duration>\n"
          "  ios-caffeinate [--socket /absolute/path.sock] schedule add --daily <HH:MM> --for <duration> [--tz <TZ>]\n"
          "  ios-caffeinate [--socket /absolute/path.sock] schedule add --weekly <days> --at <HH:MM> --for <duration> [--tz <TZ>]\n"
-         "  ios-caffeinate [--socket /absolute/path.sock] schedule list\n"
-         "  ios-caffeinate [--socket /absolute/path.sock] schedule remove <schedule-id>\n"
+         "  ios-caffeinate [--schedule-state /absolute/path] [--recovery-state /absolute/path] schedule list|next|doctor|conflicts|validate\n"
+         "  ios-caffeinate [--schedule-state /absolute/path] [--recovery-state /absolute/path] schedule explain <id> [--at <ISO-8601>]\n"
+         "  ios-caffeinate [--socket /absolute/path.sock] schedule enable|disable|remove <schedule-id> [--if-generation <hex>] [--dry-run]\n"
          "  ios-caffeinate wake status\n"
          "  ios-caffeinate health status|battery|thermal|doctor|sources\n"
          "  ios-caffeinate health status [--trial-id ID --condition-id A|B|C|D --outside-quiet-interval]\n"
@@ -688,6 +689,7 @@ static const char *policy_next_step(const server_policy_result_t *result) {
         case SERVER_REASON_DURATION_EXCEEDS_CEILING:
             return "select a positive duration within the configured and 300 second limits";
         case SERVER_REASON_UNATTENDED_NOT_SUPPORTED:
+        case SERVER_REASON_SCHEDULE_EXECUTOR_NOT_AUTHORIZED:
         case SERVER_REASON_AUTOMATIC_RECOVERY_DISABLED:
             return "keep unattended start and automatic recovery disabled in P015";
         case SERVER_REASON_EVIDENCE_DENIED:
@@ -1157,10 +1159,446 @@ static int server_plan(FILE *out, const char *config_path) {
     return ferror(out) ? -1 : 0;
 }
 
+static int schedule_readonly_status(const char *socket_path, char *response, size_t cap) {
+    if (!socket_path || socket_path[0] != '/' || !response || cap < 2 ||
+        strlen(socket_path) >= sizeof(((struct sockaddr_un *)0)->sun_path)) return -1;
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    struct timeval timeout = {.tv_sec = 0, .tv_usec = 750000};
+    (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    struct sockaddr_un address = {0};
+    address.sun_family = AF_UNIX;
+    snprintf(address.sun_path, sizeof(address.sun_path), "%s", socket_path);
+    if (connect(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        close(fd);
+        return -1;
+    }
+    const char request[] = "SERVER STATUS\n";
+    size_t sent = 0;
+    while (sent < sizeof(request) - 1) {
+        ssize_t n = write(fd, request + sent, sizeof(request) - 1 - sent);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { close(fd); return -1; }
+        sent += (size_t)n;
+    }
+    size_t used = 0;
+    while (used + 1 < cap) {
+        ssize_t n = recv(fd, response + used, cap - used - 1, 0);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        used += (size_t)n;
+        if (memchr(response, '\n', used)) break;
+    }
+    close(fd);
+    response[used] = '\0';
+    return used > 0 && strncmp(response, "OK SERVER ", 10) == 0 ? 0 : -1;
+}
+
+static int schedule_status_value(const char *response, const char *key,
+                                 char *out, size_t cap) {
+    if (!response || !key || !out || cap == 0) return -1;
+    size_t key_len = strlen(key);
+    const char *p = response;
+    while ((p = strstr(p, key)) != NULL) {
+        if ((p == response || p[-1] == ' ') && p[key_len] == '=') {
+            p += key_len + 1;
+            size_t n = strcspn(p, " \r\n");
+            if (n == 0 || n >= cap) return -1;
+            memcpy(out, p, n);
+            out[n] = '\0';
+            return 0;
+        }
+        p += key_len;
+    }
+    return -1;
+}
+
+static const char *schedule_cli_type(sched_type_t type) {
+    switch (type) {
+        case SCHED_TYPE_ONETIME: return "onetime";
+        case SCHED_TYPE_DAILY: return "daily";
+        case SCHED_TYPE_WEEKLY: return "weekly";
+    }
+    return "invalid";
+}
+
+static const char *schedule_recovery_store_name(recovery_store_result_t value) {
+    switch (value) {
+        case RECOVERY_STORE_OK: return "OK";
+        case RECOVERY_STORE_MISSING: return "MISSING";
+        case RECOVERY_STORE_UNSAFE: return "UNSAFE";
+        case RECOVERY_STORE_CORRUPT: return "CORRUPT";
+        case RECOVERY_STORE_UNSUPPORTED: return "UNSUPPORTED";
+        case RECOVERY_STORE_IO_ERROR: return "IO_ERROR";
+    }
+    return "UNKNOWN";
+}
+
+static void schedule_cli_print_utc(FILE *out, const char *key, time_t instant) {
+    char value[32] = {0};
+    if (format_iso8601_utc(instant, value, sizeof(value)) >= 0)
+        fprintf(out, "%s=%s\n", key, value);
+    else fprintf(out, "%s=UNAVAILABLE\n", key);
+}
+
+static int schedule_cli_print_definition(FILE *out, const schedule_t *schedule,
+                                         time_t reference) {
+    schedule_analysis_t analysis;
+    int analyzed = schedule_analyze(schedule, reference, &analysis);
+    fprintf(out, "schedule.id=%s\n", schedule->id);
+    fprintf(out, "schedule.type=%s\n", schedule_cli_type(schedule->type));
+    fprintf(out, "schedule.enabled=%s\n", schedule->enabled ? "yes" : "no");
+    fprintf(out, "schedule.duration_seconds=%u\n", schedule->duration);
+    fprintf(out, "schedule.timezone=%s\n", schedule->tz[0] ? schedule->tz : "SYSTEM_LOCAL");
+    if (schedule->type == SCHED_TYPE_ONETIME)
+        schedule_cli_print_utc(out, "schedule.target_utc", schedule->target_time);
+    else {
+        fprintf(out, "schedule.local_time=%02d:%02d\n", schedule->hour, schedule->minute);
+        if (schedule->type == SCHED_TYPE_WEEKLY)
+            fprintf(out, "schedule.weekday_mask=0x%02x\n", (unsigned)schedule->days_mask);
+    }
+    fprintf(out, "schedule.last_fired_time=%lld\n", (long long)schedule->last_fired_time);
+    fprintf(out, "schedule.outcome=%s\n", schedule->enabled
+            ? schedule_outcome_name(analysis.outcome) : "DISABLED");
+    if (analyzed != 0) {
+        schedule_resolution_t resolution = analysis.outcome == SCHEDULE_OUTCOME_TIMEZONE_UNVERIFIED
+            ? SCHEDULE_RESOLUTION_TIMEZONE_UNVERIFIED : SCHEDULE_RESOLUTION_INVALID;
+        fprintf(out, "schedule.resolution=%s\n", schedule_resolution_name(resolution));
+    } else if (analysis.has_occurrence) {
+        fprintf(out, "schedule.resolution=%s\n",
+                schedule_resolution_name(analysis.occurrence.resolution));
+        char identity[320] = {0};
+        if (schedule_occurrence_identity(&analysis.occurrence, identity, sizeof(identity)) > 0)
+            fprintf(out, "schedule.occurrence_id=%s\n", identity);
+    } else fprintf(out, "schedule.resolution=UNRESOLVED\n");
+    if (analysis.saw_nonexistent_local_time)
+        fprintf(out, "schedule.dst_gap_policy=SKIP_OCCURRENCE\n");
+    if (analysis.has_next) schedule_cli_print_utc(out, "schedule.next_utc", analysis.next.start);
+    else fprintf(out, "schedule.next_utc=UNAVAILABLE\n");
+    if (schedule->duration > SCHEDULE_MAX_SESSION_SECONDS)
+        fprintf(out, "schedule.policy_blocker=LEGACY_DURATION_EXCEEDS_POLICY\n");
+    fprintf(out, "schedule.execution=BLOCKED_POLICY\n");
+    fprintf(out, "schedule.execution_reason=SCHEDULE_EXECUTOR_NOT_AUTHORIZED\n");
+    return ferror(out) ? -1 : 0;
+}
+
+static int schedule_cli_conflicts(FILE *out, const schedule_store_t *store,
+                                  time_t reference, const char *socket_path,
+                                  int check_manual_hold, const char *only_id) {
+    schedule_conflict_t conflicts[SCHEDULE_CONFLICT_MAX];
+    size_t count = 0;
+    int incomplete = 0;
+    if (schedule_store_find_conflicts(store, reference, 370, conflicts,
+                                      SCHEDULE_CONFLICT_MAX, &count, &incomplete) != 0) {
+        fprintf(out, "schedule.conflicts=INCOMPLETE\n");
+        return -1;
+    }
+    fprintf(out, "schedule.horizon_days=370\n");
+    if (incomplete) fprintf(out, "schedule.conflicts=INCOMPLETE\n");
+    size_t emitted = 0;
+    for (size_t i = 0; i < count && i < SCHEDULE_CONFLICT_MAX; ++i) {
+        const schedule_conflict_t *conflict = &conflicts[i];
+        const char *first_id = store->items[conflict->first_index].id;
+        const char *second_id = store->items[conflict->second_index].id;
+        if (only_id && strcmp(first_id, only_id) != 0 && strcmp(second_id, only_id) != 0)
+            continue;
+        emitted++;
+        fprintf(out, "schedule.conflict=yes\n");
+        fprintf(out, "conflict.type=%s\n", conflict->duplicate_definition
+                ? "DUPLICATE_DEFINITION" : "OVERLAPPING_WINDOWS");
+        fprintf(out, "conflict.first=%s\n", first_id);
+        fprintf(out, "conflict.second=%s\n", second_id);
+        if (conflict->first_end > conflict->first_start) {
+            schedule_cli_print_utc(out, "conflict.first_start_utc", conflict->first_start);
+            schedule_cli_print_utc(out, "conflict.first_end_utc", conflict->first_end);
+            schedule_cli_print_utc(out, "conflict.second_start_utc", conflict->second_start);
+            schedule_cli_print_utc(out, "conflict.second_end_utc", conflict->second_end);
+        }
+        fprintf(out, "conflict.resolution=OPERATOR_REVIEW_REQUIRED\n");
+    }
+    if (emitted == 0 && !incomplete) fprintf(out, "schedule.conflict=no\n");
+    if (!check_manual_hold) return ferror(out) ? -1 : 0;
+
+    char status[4096] = {0}, active[16] = {0}, remaining_text[32] = {0};
+    if (schedule_readonly_status(socket_path, status, sizeof(status)) != 0) {
+        fprintf(out, "manual_assertion=UNAVAILABLE\n");
+        return ferror(out) ? -1 : 0;
+    }
+    if (schedule_status_value(status, "active", active, sizeof(active)) != 0 ||
+        strcmp(active, "yes") != 0) {
+        fprintf(out, "manual_assertion=NONE\n");
+        return ferror(out) ? -1 : 0;
+    }
+    if (schedule_status_value(status, "remaining_seconds", remaining_text,
+                              sizeof(remaining_text)) != 0) {
+        fprintf(out, "manual_assertion=OWNED\nmanual_schedule_conflict=INCOMPLETE\n");
+        return ferror(out) ? -1 : 0;
+    }
+    char *endptr = NULL;
+    errno = 0;
+    unsigned long remaining = strtoul(remaining_text, &endptr, 10);
+    int64_t reference_i64 = (int64_t)reference;
+    time_t manual_end = 0;
+    int have_end = !errno && endptr != remaining_text && !*endptr &&
+        (time_t)reference_i64 == reference && remaining <= 86400 &&
+        reference_i64 <= INT64_MAX - (int64_t)remaining &&
+        (manual_end = (time_t)(reference_i64 + (int64_t)remaining),
+         (int64_t)manual_end == reference_i64 + (int64_t)remaining);
+    fprintf(out, "manual_assertion=OWNED\n");
+    for (size_t i = 0; have_end && i < store->count; ++i) {
+        if (!store->items[i].enabled) continue;
+        schedule_analysis_t analysis;
+        if (schedule_analyze(&store->items[i], reference, &analysis) != 0) continue;
+        schedule_occurrence_t window;
+        int overlaps = 0;
+        if (analysis.outcome == SCHEDULE_OUTCOME_ACTIVE_WINDOW && analysis.has_occurrence) {
+            window = analysis.occurrence;
+            overlaps = window.end > reference && window.start < manual_end;
+        } else if (analysis.has_next) {
+            window = analysis.next;
+            overlaps = window.start < manual_end;
+        }
+        if (overlaps) {
+            fprintf(out, "manual_schedule_conflict=yes\n");
+            fprintf(out, "conflict.first=%s\n", store->items[i].id);
+            fprintf(out, "conflict.second=manual-hold\n");
+            schedule_cli_print_utc(out, "conflict.first_start_utc", window.start);
+            schedule_cli_print_utc(out, "conflict.first_end_utc", window.end);
+            schedule_cli_print_utc(out, "conflict.second_start_utc", reference);
+            schedule_cli_print_utc(out, "conflict.second_end_utc", manual_end);
+            fprintf(out, "conflict.resolution=OPERATOR_REVIEW_REQUIRED\n");
+        }
+    }
+    return ferror(out) ? -1 : 0;
+}
+
+static int schedule_diagnostics_command(int argc, char **argv, const char *socket_path,
+                                        const char *schedule_path,
+                                        const char *server_config_path,
+                                        const char *recovery_path) {
+    if (argc < 1) return -2;
+    const char *command = argv[0];
+    int known = strcmp(command, "list") == 0 || strcmp(command, "next") == 0 ||
+        strcmp(command, "doctor") == 0 || strcmp(command, "conflicts") == 0 ||
+        strcmp(command, "validate") == 0 || strcmp(command, "explain") == 0;
+    if (!known) return -2;
+    const char *id = NULL;
+    int option = 1;
+    if (strcmp(command, "explain") == 0) {
+        if (option >= argc || argv[option][0] == '-') return 2;
+        id = argv[option++];
+    }
+    time_t reference = time(NULL);
+    int supplied_at = 0;
+    while (option < argc) {
+        if (strcmp(argv[option], "--at") == 0 && option + 1 < argc && !supplied_at) {
+            reference = parse_iso8601(argv[option + 1]);
+            if (reference == (time_t)-1) {
+                fprintf(stderr, "Invalid --at timestamp. Use ISO-8601 with an explicit timezone.\n");
+                return 2;
+            }
+            supplied_at = 1;
+            option += 2;
+        } else return 2;
+    }
+    if (strcmp(command, "validate") == 0 && supplied_at) return 2;
+
+    schedule_store_t store;
+    schedule_store_init(&store, schedule_path);
+    char error[256] = {0};
+    if (schedule_store_load(&store, error, sizeof(error)) != 0) {
+        fprintf(stderr, "schedule.storage=INVALID detail=%s\n", error);
+        return 1;
+    }
+    fprintf(stdout, "schedule.definitions_source=STORAGE\n");
+    fprintf(stdout, "schedule.storage=VALID\n");
+    fprintf(stdout, "schedule.generation=%016llx\n",
+            (unsigned long long)schedule_store_generation(&store));
+    fprintf(stdout, "schedule.count=%zu\n", store.count);
+    fprintf(stdout, "schedules=%zu\n", store.count);
+
+    if (strcmp(command, "validate") == 0) {
+        size_t legacy = 0, timezone_unverified = 0;
+        for (size_t i = 0; i < store.count; ++i) {
+            if (store.items[i].duration > SCHEDULE_MAX_SESSION_SECONDS) legacy++;
+            if (store.items[i].enabled && store.items[i].type != SCHED_TYPE_ONETIME) {
+                schedule_analysis_t analysis;
+                if (schedule_analyze(&store.items[i], time(NULL), &analysis) != 0 &&
+                    analysis.outcome == SCHEDULE_OUTCOME_TIMEZONE_UNVERIFIED)
+                    timezone_unverified++;
+            }
+        }
+        fprintf(stdout, "schedule.validation=PASS\nlegacy_duration_exceeds_policy=%zu\n",
+                legacy);
+        fprintf(stdout, "timezone_resolution_unverified=%zu\n", timezone_unverified);
+        fprintf(stdout, "schedule.execution=BLOCKED_POLICY reason=SCHEDULE_EXECUTOR_NOT_AUTHORIZED\n");
+        return 0;
+    }
+    if (strcmp(command, "doctor") == 0) {
+        char status[4096] = {0}, recovery[32] = {0}, active[16] = {0};
+        int status_ok = !supplied_at &&
+            schedule_readonly_status(socket_path, status, sizeof(status)) == 0;
+        recovery_record_t recovery_record;
+        char recovery_detail[192] = {0};
+        recovery_store_result_t recovery_result = recovery_store_load(
+            recovery_path, geteuid(), &recovery_record,
+            recovery_detail, sizeof(recovery_detail));
+        fprintf(stdout, "schedule.timebase=UTC_EPOCH_REFERENCE\n");
+        fprintf(stdout, "schedule.runtime=%s\n", status_ok ? "AVAILABLE_READ_ONLY" : "UNAVAILABLE");
+        if (status_ok && schedule_status_value(status, "recovery_schedule_gate", recovery,
+                                               sizeof(recovery)) == 0)
+            fprintf(stdout, "schedule.recovery=%s\n", recovery);
+        else fprintf(stdout, "schedule.recovery=UNKNOWN_RUNTIME_UNAVAILABLE\n");
+        fprintf(stdout, "schedule.recovery_journal=%s\n",
+                schedule_recovery_store_name(recovery_result));
+        if (recovery_result == RECOVERY_STORE_OK) {
+            fprintf(stdout, "schedule.recovery_process=%s\n",
+                    recovery_process_state_name(recovery_record.process_state));
+            fprintf(stdout, "schedule.recovery_cleanup=%s\n",
+                    recovery_cleanup_state_name(recovery_record.cleanup_state));
+        } else if (recovery_detail[0]) {
+            fprintf(stdout, "schedule.recovery_detail=%s\n", recovery_detail);
+        }
+        if (status_ok && schedule_status_value(status, "active", active, sizeof(active)) == 0)
+            fprintf(stdout, "schedule.assertion_owner=%s\n",
+                    strcmp(active, "yes") == 0 ? "OWNED" : "NONE");
+        else fprintf(stdout, "schedule.assertion_owner=UNKNOWN\n");
+        server_config_t config;
+        server_policy_inputs_t inputs;
+        server_policy_result_t result;
+        (void)server_mode_config_load(server_config_path, &config);
+        server_policy_inputs_init(&inputs);
+        inputs.operation = SERVER_OPERATION_SCHEDULED_UNATTENDED;
+        inputs.requested_duration_seconds = 1;
+        if (server_policy_evaluate(&config, &inputs, &result) == 0) {
+            fprintf(stdout, "schedule.policy=%s\n", server_policy_decision_name(result.decision));
+            fprintf(stdout, "schedule.policy_reason=%s\n",
+                    server_policy_reason_name(result.primary_reason));
+        } else fprintf(stdout, "schedule.policy=BLOCKED_POLICY\nschedule.policy_reason=SCHEDULE_EXECUTOR_NOT_AUTHORIZED\n");
+        fprintf(stdout, "schedule.telemetry=UNKNOWN_NOT_SAMPLED\n");
+        fprintf(stdout, "schedule.executor=NOT_AUTHORIZED\n");
+        fprintf(stdout, "schedule.wake_capability=UNVERIFIED\n");
+        (void)schedule_cli_conflicts(stdout, &store, reference, socket_path,
+                                     !supplied_at, NULL);
+        return 0;
+    }
+    if (strcmp(command, "list") == 0 || strcmp(command, "next") == 0) {
+        fprintf(stdout, "schedule.runtime_state=NOT_INFERRED_FROM_STORAGE\n");
+        fprintf(stdout, "scheduled_wake=UNVERIFIED execution=NOT_GUARANTEED\n");
+        for (size_t i = 0; i < store.count; ++i) {
+            if (i) fprintf(stdout, "schedule.record_separator=---\n");
+            (void)schedule_cli_print_definition(stdout, &store.items[i], reference);
+        }
+        return ferror(stdout) ? 1 : 0;
+    }
+    if (strcmp(command, "conflicts") == 0) {
+        fprintf(stdout, "schedule.horizon_days=370\n");
+        (void)schedule_cli_conflicts(stdout, &store, reference, socket_path,
+                                     !supplied_at, NULL);
+        return ferror(stdout) ? 1 : 0;
+    }
+    if (strcmp(command, "explain") == 0) {
+        size_t index = store.count;
+        for (size_t i = 0; i < store.count; ++i)
+            if (strcmp(store.items[i].id, id) == 0) { index = i; break; }
+        if (index == store.count) {
+            fprintf(stderr, "schedule ID '%s' not found\n", id);
+            return 1;
+        }
+        schedule_cli_print_utc(stdout, "schedule.reference_utc", reference);
+        (void)schedule_cli_print_definition(stdout, &store.items[index], reference);
+        fprintf(stdout, "schedule.conflicts_scope=%s\n", id);
+        (void)schedule_cli_conflicts(stdout, &store, reference, socket_path,
+                                     !supplied_at, id);
+        return ferror(stdout) ? 1 : 0;
+    }
+    return 2;
+}
+
+static int schedule_cli_load_store(const char *path, schedule_store_t *store) {
+    char error[256] = {0};
+    schedule_store_init(store, path);
+    if (schedule_store_load(store, error, sizeof(error)) != 0) {
+        fprintf(stderr, "schedule storage cannot be safely read: %s\n", error);
+        return -1;
+    }
+    return 0;
+}
+
+static int schedule_cli_parse_generation(const char *text, uint64_t *generation) {
+    if (!text || !generation || strlen(text) != 16) return -1;
+    errno = 0;
+    char *end = NULL;
+    unsigned long long value = strtoull(text, &end, 16);
+    if (errno || end == text || *end) return -1;
+    *generation = (uint64_t)value;
+    return 0;
+}
+
+static int schedule_cli_preview_mutation(FILE *out, const schedule_store_t *store,
+                                         size_t index, const char *operation) {
+    schedule_store_t preview = *store;
+    int changed = 0;
+    if (strcmp(operation, "remove") == 0) {
+        for (size_t i = index; i + 1 < preview.count; ++i)
+            preview.items[i] = preview.items[i + 1];
+        if (preview.count > 0) preview.count--;
+        changed = 1;
+    } else {
+        bool enabled = strcmp(operation, "enable") == 0;
+        changed = preview.items[index].enabled != enabled;
+        preview.items[index].enabled = enabled;
+    }
+    schedule_conflict_t conflicts[SCHEDULE_CONFLICT_MAX];
+    size_t before_count = 0, after_count = 0;
+    int before_incomplete = 0, after_incomplete = 0;
+    time_t now = time(NULL);
+    int before_ok = schedule_store_find_conflicts(store, now, 370, conflicts,
+                        SCHEDULE_CONFLICT_MAX, &before_count, &before_incomplete) == 0;
+    int after_ok = schedule_store_find_conflicts(&preview, now, 370, conflicts,
+                        SCHEDULE_CONFLICT_MAX, &after_count, &after_incomplete) == 0;
+    fprintf(out, "schedule.preview=DRY_RUN\n");
+    fprintf(out, "schedule.operation=%s\n", operation);
+    fprintf(out, "schedule.changed=%s\n", changed ? "yes" : "no");
+    fprintf(out, "schedule.generation=%016llx\n",
+            (unsigned long long)schedule_store_generation(store));
+    fprintf(out, "conflicts.before=%s%zu\n", before_ok ? "" : "INCOMPLETE:", before_count);
+    fprintf(out, "conflicts.after=%s%zu\n", after_ok ? "" : "INCOMPLETE:", after_count);
+    if (after_ok) {
+        for (size_t i = 0; i < after_count && i < SCHEDULE_CONFLICT_MAX; ++i) {
+            const schedule_conflict_t *conflict = &conflicts[i];
+            fprintf(out, "conflict.after.type=%s\n", conflict->duplicate_definition
+                    ? "DUPLICATE_DEFINITION" : "OVERLAPPING_WINDOWS");
+            fprintf(out, "conflict.after.first=%s\n",
+                    preview.items[conflict->first_index].id);
+            fprintf(out, "conflict.after.second=%s\n",
+                    preview.items[conflict->second_index].id);
+            if (conflict->first_end > conflict->first_start) {
+                schedule_cli_print_utc(out, "conflict.after.first_start_utc",
+                                       conflict->first_start);
+                schedule_cli_print_utc(out, "conflict.after.first_end_utc",
+                                       conflict->first_end);
+                schedule_cli_print_utc(out, "conflict.after.second_start_utc",
+                                       conflict->second_start);
+                schedule_cli_print_utc(out, "conflict.after.second_end_utc",
+                                       conflict->second_end);
+            }
+            fprintf(out, "conflict.after.resolution=OPERATOR_REVIEW_REQUIRED\n");
+        }
+    }
+    fprintf(out, "schedule.execution=BLOCKED_POLICY reason=SCHEDULE_EXECUTOR_NOT_AUTHORIZED\n");
+    if (before_incomplete || after_incomplete)
+        fprintf(out, "schedule.preview_resolution=INCOMPLETE_TIMEZONE_OR_HORIZON\n");
+    fprintf(out, "schedule.write_performed=no\n");
+    return ferror(out) ? -1 : 0;
+}
+
 int main(int argc, char **argv) {
     const char *path = DEFAULT_SOCKET;
     const char *server_config_path = SERVER_MODE_CONFIG_DEFAULT;
     const char *schedule_path = DEFAULT_SCHEDULE_STATE;
+    const char *recovery_path = RECOVERY_DEFAULT_PATH;
     int i = 1;
     while (i < argc && argv[i][0] == '-' && argv[i][1] == '-' &&
            strcmp(argv[i], "--help") != 0) {
@@ -1168,11 +1606,22 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--socket") == 0) path = argv[i + 1];
         else if (strcmp(argv[i], "--server-config") == 0) server_config_path = argv[i + 1];
         else if (strcmp(argv[i], "--schedule-state") == 0) schedule_path = argv[i + 1];
+        else if (strcmp(argv[i], "--recovery-state") == 0) recovery_path = argv[i + 1];
         else { usage(); return 2; }
         i += 2;
     }
     if (i == argc || strcmp(argv[i], "help") == 0 || strcmp(argv[i], "--help") == 0) {
         usage(); return i + 1 == argc ? 0 : 2;
+    }
+
+    if (strcmp(argv[i], "schedule") == 0) {
+        int diagnostic = schedule_diagnostics_command(argc - i - 1, argv + i + 1,
+                                                     path, schedule_path,
+                                                     server_config_path, recovery_path);
+        if (diagnostic != -2) {
+            if (diagnostic == 2) usage();
+            return diagnostic;
+        }
     }
 
     if (strcmp(argv[i], "service") == 0) {
@@ -1299,10 +1748,49 @@ int main(int argc, char **argv) {
     } else if (strcmp(argv[i], "schedule") == 0) {
         i++;
         if (i >= argc) { usage(); return 2; }
-        if (strcmp(argv[i], "list") == 0 && i + 1 == argc) {
-            strcpy(command, "SCHEDULE LIST\n");
-        } else if (strcmp(argv[i], "remove") == 0 && i + 2 == argc) {
-            snprintf(command, sizeof(command), "SCHEDULE REMOVE %s\n", argv[i + 1]);
+        if (strcmp(argv[i], "remove") == 0 || strcmp(argv[i], "enable") == 0 ||
+            strcmp(argv[i], "disable") == 0) {
+            const char *operation = argv[i++];
+            if (i >= argc || argv[i][0] == '-') { usage(); return 2; }
+            const char *id = argv[i++];
+            const char *generation_arg = NULL;
+            int dry_run = 0;
+            while (i < argc) {
+                if (strcmp(argv[i], "--dry-run") == 0 && !dry_run) {
+                    dry_run = 1;
+                    i++;
+                } else if (strcmp(argv[i], "--if-generation") == 0 &&
+                           i + 1 < argc && !generation_arg) {
+                    generation_arg = argv[i + 1];
+                    i += 2;
+                } else { usage(); return 2; }
+            }
+            schedule_store_t current;
+            if (schedule_cli_load_store(schedule_path, &current) != 0) return 1;
+            size_t index = current.count;
+            for (size_t j = 0; j < current.count; ++j)
+                if (strcmp(current.items[j].id, id) == 0) { index = j; break; }
+            if (index == current.count) {
+                fprintf(stderr, "schedule ID '%s' not found\n", id);
+                return 1;
+            }
+            uint64_t generation = schedule_store_generation(&current);
+            if (generation_arg && schedule_cli_parse_generation(generation_arg, &generation) != 0) {
+                fprintf(stderr, "Invalid --if-generation value; expected 16 hexadecimal digits.\n");
+                return 2;
+            }
+            if (generation != schedule_store_generation(&current)) {
+                fprintf(stderr, "Stale schedule generation; reload before editing.\n");
+                return 1;
+            }
+            if (dry_run) return schedule_cli_preview_mutation(stdout, &current, index, operation) == 0 ? 0 : 1;
+            if (strcmp(operation, "remove") == 0)
+                snprintf(command, sizeof(command), "SCHEDULE REMOVE %s %016llx\n", id,
+                         (unsigned long long)generation);
+            else
+                snprintf(command, sizeof(command), "SCHEDULE SET_ENABLED %s %d %016llx\n",
+                         id, strcmp(operation, "enable") == 0 ? 1 : 0,
+                         (unsigned long long)generation);
         } else if (strcmp(argv[i], "add") == 0) {
             i++;
             const char *at_str = NULL;
@@ -1326,10 +1814,14 @@ int main(int argc, char **argv) {
                 return 2;
             }
             unsigned duration = 0;
-            if (parse_duration(for_str, &duration) != 0) {
-                fprintf(stderr, "Invalid --for duration. Use 1s..24h.\n");
+            if (parse_duration(for_str, &duration) != 0 ||
+                duration > SCHEDULE_MAX_SESSION_SECONDS) {
+                fprintf(stderr, "New schedule durations must be 1 second through 300 seconds.\n");
                 return 2;
             }
+            schedule_store_t current;
+            if (schedule_cli_load_store(schedule_path, &current) != 0) return 1;
+            uint64_t generation = schedule_store_generation(&current);
 
             if (weekly_str) {
                 uint8_t mask = 0;
@@ -1342,24 +1834,26 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "Weekly schedule requires --at HH:MM.\n");
                     return 2;
                 }
-                snprintf(command, sizeof(command), "SCHEDULE ADD WEEKLY %u %02d:%02d %u %s\n",
-                         (unsigned)mask, hour, min, duration, tz_str ? tz_str : "");
+                snprintf(command, sizeof(command), "SCHEDULE ADD WEEKLY %u %02d:%02d %u %s %016llx\n",
+                         (unsigned)mask, hour, min, duration, tz_str ? tz_str : "-",
+                         (unsigned long long)generation);
             } else if (daily_str) {
                 int hour = 0, min = 0;
                 if (parse_hhmm(daily_str, &hour, &min) != 0) {
                     fprintf(stderr, "Daily schedule requires --daily HH:MM.\n");
                     return 2;
                 }
-                snprintf(command, sizeof(command), "SCHEDULE ADD DAILY %02d:%02d %u %s\n",
-                         hour, min, duration, tz_str ? tz_str : "");
+                snprintf(command, sizeof(command), "SCHEDULE ADD DAILY %02d:%02d %u %s %016llx\n",
+                         hour, min, duration, tz_str ? tz_str : "-",
+                         (unsigned long long)generation);
             } else if (at_str) {
                 time_t target_utc = parse_iso8601(at_str);
                 if (target_utc == (time_t)-1) {
                     fprintf(stderr, "Invalid ISO-8601 timestamp for schedule --at. Explicit timezone offset required.\n");
                     return 2;
                 }
-                snprintf(command, sizeof(command), "SCHEDULE ADD ONETIME %lld %u\n",
-                         (long long)target_utc, duration);
+                snprintf(command, sizeof(command), "SCHEDULE ADD ONETIME %lld %u %016llx\n",
+                         (long long)target_utc, duration, (unsigned long long)generation);
             } else { usage(); return 2; }
         } else { usage(); return 2; }
     } else { usage(); return 2; }

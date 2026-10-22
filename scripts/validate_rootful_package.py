@@ -39,7 +39,10 @@ REQUIRED_HASHES = {
 }
 SIGNING_PROFILE_PATH = "usr/share/ioscaffeinate/signing/amethyst-ios12-rootful.plist"
 EXPECTED_DEPENDENCIES = {
-    "usr/local/bin/ios-caffeinate": {"/usr/lib/libSystem.B.dylib"},
+    "usr/local/bin/ios-caffeinate": {
+        "/usr/lib/libSystem.B.dylib",
+        "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+    },
     "usr/local/bin/ios-caffeinated": {
         "/usr/lib/libSystem.B.dylib",
         "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",

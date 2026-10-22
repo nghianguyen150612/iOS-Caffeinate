@@ -80,7 +80,9 @@ class Integration(unittest.TestCase):
         self.fail("daemon did not become ready")
 
     def call(self, *args, code=0, exe=CLI):
-        result = subprocess.run([str(exe), "--socket", self.path, *args],
+        result = subprocess.run([str(exe), "--socket", self.path,
+                                 "--schedule-state", self.sched_path,
+                                 "--recovery-state", self.recovery_path, *args],
                                 capture_output=True, text=True, timeout=6)
         if code is not None:
             self.assertEqual(result.returncode, code, (args, result.stdout, result.stderr))
@@ -129,7 +131,7 @@ class Integration(unittest.TestCase):
         self.assertIn("active=yes", self.call("status", exe=alias).stdout)
         self.call("stop", exe=alias)
 
-        added = self.call("schedule", "add", "--daily", "22:00", "--for", "30m", exe=alias)
+        added = self.call("schedule", "add", "--daily", "22:00", "--for", "5m", exe=alias)
         schedule_id = added.stdout.split("id=", 1)[1].strip()
         self.assertIn("type=daily", self.call("schedule", "list", exe=alias).stdout)
         self.call("schedule", "remove", schedule_id, exe=alias)
@@ -212,8 +214,8 @@ class Integration(unittest.TestCase):
         self.assertEqual(fields["platform_identity"], "compile_time_target")
         self.assertEqual(fields["timed_awake"], "implemented")
         self.assertEqual(fields["timed_awake_backend"], "unverified")
-        self.assertEqual(fields["scheduled_awake"], "implemented")
-        self.assertEqual(fields["scheduled_awake_backend"], "unverified")
+        self.assertEqual(fields["scheduled_awake"], "definitions_only")
+        self.assertEqual(fields["scheduled_awake_backend"], "not_authorized")
         self.assertEqual(fields["scheduled_wake"], "unverified")
         self.assertEqual(fields["scheduled_wake_validated"], "no")
         self.assertEqual(fields["hardware_validation"], "pending")
@@ -221,6 +223,7 @@ class Integration(unittest.TestCase):
         self.assertEqual(fields["read_only_evidence"], "none")
         self.assertEqual(fields["wake_guarantee"], "no")
         self.assertIn("assertion_is_not_wake_alarm", fields["limitations"])
+        self.assertIn("schedule_executor_not_authorized", fields["limitations"])
         self.assertEqual(Path(self.sched_path).read_text(), state)
 
         # Querying with a live, idle daemon still causes no assertion and does
@@ -238,8 +241,8 @@ class Integration(unittest.TestCase):
 
     def test_server_diagnostics_are_read_only_and_default_disabled(self):
         self.start(IOSCAFFEINATE_MOCK_FAIL_ACQUIRE="1")
-        future_iso = (datetime.now(timezone.utc) + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
-        self.call("schedule", "add", "--at", future_iso, "--for", "1m")
+        future_iso = "2026-12-01T12:00:00+00:00"
+        self.call("schedule", "add", "--at", future_iso, "--for", "300s")
         schedule_before = Path(self.sched_path).read_bytes()
 
         status = self.server_call("status")
@@ -560,15 +563,15 @@ class Integration(unittest.TestCase):
     def test_schedule_crud_and_persistence(self):
         self.start()
 
-        res1 = self.call("schedule", "add", "--daily", "22:00", "--for", "1h", "--tz", "Asia/Ho_Chi_Minh")
+        res1 = self.call("schedule", "add", "--daily", "22:00", "--for", "5m", "--tz", "UTC")
         self.assertIn("schedule_added=yes", res1.stdout)
         sched1_id = res1.stdout.split("id=")[1].strip()
 
-        res2 = self.call("schedule", "add", "--weekly", "mon,wed,fri", "--at", "20:30", "--for", "30m", "--tz", "Asia/Ho_Chi_Minh")
+        res2 = self.call("schedule", "add", "--weekly", "mon,wed,fri", "--at", "20:30", "--for", "5m", "--tz", "UTC")
         self.assertIn("schedule_added=yes", res2.stdout)
 
-        future_iso = (datetime.now(timezone.utc) + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
-        res3 = self.call("schedule", "add", "--at", future_iso, "--for", "15m")
+        future_iso = "2026-12-01T12:00:00+00:00"
+        res3 = self.call("schedule", "add", "--at", future_iso, "--for", "300s")
         self.assertIn("schedule_added=yes", res3.stdout)
 
         list_res = self.call("schedule", "list")
@@ -592,12 +595,81 @@ class Integration(unittest.TestCase):
         list_res2 = self.call("schedule", "list")
         self.assertIn("schedules=2", list_res2.stdout)
 
+    def test_schedule_enable_disable_and_generation_preconditions(self):
+        self.start()
+        added = self.call("schedule", "add", "--daily", "11:00", "--for", "300s")
+        schedule_id = added.stdout.split("id=", 1)[1].strip()
+        listing = self.call("schedule", "list").stdout
+        generation = next(line.split("=", 1)[1] for line in listing.splitlines()
+                          if line.startswith("schedule.generation="))
+        before = Path(self.sched_path).read_bytes()
+
+        preview = self.call("schedule", "disable", schedule_id, "--dry-run")
+        self.assertIn("schedule.preview=DRY_RUN", preview.stdout)
+        self.assertIn("schedule.write_performed=no", preview.stdout)
+        self.assertEqual(Path(self.sched_path).read_bytes(), before)
+
+        disabled = self.call("schedule", "disable", schedule_id, "--if-generation", generation)
+        self.assertIn("schedule_enabled=no changed=yes", disabled.stdout)
+        self.assertIn("schedule.enabled=no", self.call("schedule", "list").stdout)
+        self.call("schedule", "enable", schedule_id, "--if-generation", generation, code=1)
+
+        current_listing = self.call("schedule", "list").stdout
+        current_generation = next(line.split("=", 1)[1] for line in current_listing.splitlines()
+                                  if line.startswith("schedule.generation="))
+        enabled = self.call("schedule", "enable", schedule_id,
+                            "--if-generation", current_generation)
+        self.assertIn("schedule_enabled=yes changed=yes", enabled.stdout)
+        persisted = Path(self.sched_path).read_bytes()
+        stale = self.raw(f"SCHEDULE REMOVE {schedule_id} 0000000000000000\n".encode())
+        self.assertIn("stale schedule generation", stale)
+        self.assertEqual(Path(self.sched_path).read_bytes(), persisted)
+
+        preview_remove = self.call("schedule", "remove", schedule_id, "--dry-run")
+        self.assertIn("schedule.operation=remove", preview_remove.stdout)
+        self.assertEqual(Path(self.sched_path).read_bytes(), persisted)
+        removed = self.call("schedule", "remove", schedule_id)
+        self.assertIn("schedule_removed=yes changed=yes", removed.stdout)
+
+    def test_schedule_mutations_require_clean_idle_daemon_state(self):
+        proc = self.start()
+        added = self.call("schedule", "add", "--daily", "11:00", "--for", "300s")
+        schedule_id = added.stdout.split("id=", 1)[1].strip()
+        original = Path(self.sched_path).read_bytes()
+
+        self.call("start", "--for", "60s")
+        blocked = self.call("schedule", "disable", schedule_id, code=1)
+        self.assertIn("schedule mutation blocked", blocked.stderr)
+        self.assertIn("idle", blocked.stderr)
+        self.assertEqual(Path(self.sched_path).read_bytes(), original)
+        self.call("stop")
+        self.raw(b"SHUTDOWN\n")
+        self.assertEqual(proc.wait(timeout=3), 0)
+
+        self._write_recovery_record("RUNNING", "UNVERIFIED", "UNKNOWN_UNOBSERVED")
+        proc = self.start()
+        blocked_recovery = self.call("schedule", "remove", schedule_id, code=1)
+        self.assertIn("schedule mutation blocked", blocked_recovery.stderr)
+        self.assertIn("recovery state", blocked_recovery.stderr)
+        self.assertEqual(Path(self.sched_path).read_bytes(), original)
+        self.raw(b"SHUTDOWN\n")
+        self.assertEqual(proc.wait(timeout=3), 0)
+
     def test_schedule_rejects_unsafe_timezone_before_writing_json(self):
         self.start()
-        result = self.call("schedule", "add", "--daily", "22:00", "--for", "30m",
+        result = self.call("schedule", "add", "--daily", "22:00", "--for", "5m",
                            "--tz", 'UTC"invalid', code=1)
         self.assertIn("invalid or unsafe values", result.stderr)
         self.assertFalse(Path(self.sched_path).exists())
+
+    def test_schedule_rejects_unverified_iana_timezone_and_policy_ceiling(self):
+        self.start()
+        result = self.call("schedule", "add", "--daily", "22:00", "--for", "5m",
+                           "--tz", "Asia/Ho_Chi_Minh", code=1)
+        self.assertIn("TIMEZONE_UNVERIFIED", result.stderr)
+        self.assertFalse(Path(self.sched_path).exists())
+        self.call("schedule", "add", "--daily", "22:00", "--for", "301s", code=2)
+        self.call("schedule", "add", "--daily", "22:00", "--for", "300s")
 
     def test_corrupt_or_replaced_schedule_state_fails_closed(self):
         valid = json.dumps({
@@ -665,9 +737,7 @@ class Integration(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("Failed to load schedules", proc.stderr)
 
-    def test_schedule_write_failure_blocks_assertion_and_is_visible(self):
-        now_wall = int(time.time())
-        start_dt = datetime.fromtimestamp(now_wall - 300, timezone.utc)
+    def test_schedule_definition_is_never_consumed_or_triggered_by_daemon(self):
         sched_data = {
             "version": 1,
             "next_id_counter": 2,
@@ -675,8 +745,8 @@ class Integration(unittest.TestCase):
                 "id": "sched-write-failure",
                 "type": 2,
                 "target_time": 0,
-                "hour": start_dt.hour,
-                "minute": start_dt.minute,
+                "hour": 11,
+                "minute": 55,
                 "days_mask": 0,
                 "duration": 1800,
                 "tz": "UTC",
@@ -691,13 +761,20 @@ class Integration(unittest.TestCase):
         status = self.call("status").stdout
         self.assertIn("active=no", status)
         self.assertIn("state=IDLE", status)
-        self.call("stop")
+        self.assertIn("assertion_id=0", status)
         self.assertEqual(json.loads(Path(self.sched_path).read_text())["schedules"][0]["last_fired_time"], 0)
-        proc.terminate()
+        preview = self.call("schedule", "next", "--at", "2026-10-21T12:00:00Z")
+        self.assertIn("schedule.outcome=ACTIVE_WINDOW", preview.stdout)
+        self.assertIn("schedule.execution=BLOCKED_POLICY", preview.stdout)
+        self.assertEqual(json.loads(Path(self.sched_path).read_text())["schedules"][0]["last_fired_time"], 0)
+        self.raw(b"SHUTDOWN\n")
         self.assertEqual(proc.wait(timeout=3), 0)
 
         self.start(IOSCAFFEINATE_MOCK_FAIL_SCHEDULE_SAVE="1")
         self.assertIn("active=no", self.call("status").stdout)
+        restarted_preview = self.call("schedule", "next", "--at", "2026-10-21T12:00:00Z")
+        self.assertIn("schedule.outcome=ACTIVE_WINDOW", restarted_preview.stdout)
+        self.assertEqual(json.loads(Path(self.sched_path).read_text())["schedules"][0]["last_fired_time"], 0)
 
     def test_schedule_state_path_must_be_absolute_and_bounded(self):
         for path in ("", "relative/schedules.json", "/" + "x" * 300):
@@ -710,12 +787,7 @@ class Integration(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("Schedule state path", result.stderr)
 
-    def test_stop_within_active_schedule_window(self):
-        now_dt = datetime.now(timezone.utc)
-        now_wall = int(time.time())
-        start_wall = now_wall - 300
-        start_dt = datetime.fromtimestamp(start_wall, timezone.utc)
-
+    def test_due_schedule_does_not_automatically_acquire_assertion(self):
         sched_data = {
             "version": 1,
             "next_id_counter": 2,
@@ -724,8 +796,8 @@ class Integration(unittest.TestCase):
                     "id": "sched-stop-test",
                     "type": 2, # DAILY
                     "target_time": 0,
-                    "hour": start_dt.hour,
-                    "minute": start_dt.minute,
+                    "hour": 11,
+                    "minute": 55,
                     "days_mask": 0,
                     "duration": 1800, # 30 min
                     "tz": "UTC",
@@ -740,17 +812,16 @@ class Integration(unittest.TestCase):
 
         proc = self.start()
         status = self.call("status").stdout
-        self.assertIn("active=yes", status)
-
-        # Explicit STOP
-        self.call("stop")
-        status_after_stop = self.call("status").stdout
-        self.assertIn("active=no", status_after_stop)
-
-        # Wait brief moment and check daemon hasn't re-triggered same window
-        time.sleep(0.1)
+        self.assertIn("active=no", status)
+        self.assertIn("assertion_id=0", status)
+        self.assertIn("recovery_schedule_gate=OPEN", status)
+        preview = self.call("schedule", "next", "--at", "2026-10-21T12:00:00Z")
+        self.assertIn("schedule.outcome=ACTIVE_WINDOW", preview.stdout)
         status_recheck = self.call("status").stdout
         self.assertIn("active=no", status_recheck)
+        self.assertEqual(json.loads(Path(self.sched_path).read_text())["schedules"][0]["last_fired_time"], 0)
+        self.raw(b"SHUTDOWN\n")
+        self.assertEqual(proc.wait(timeout=3), 0)
 
     def test_recovery_journal_fields_and_read_only_service_commands(self):
         self.start()
@@ -782,7 +853,7 @@ class Integration(unittest.TestCase):
             "schedules": [{
                 "id": "p014_due_after_crash",
                 "type": 1,
-                "target_time": int(time.time()) - 1,
+                "target_time": 100000,
                 "hour": 0,
                 "minute": 0,
                 "days_mask": 0,
@@ -825,14 +896,14 @@ class Integration(unittest.TestCase):
         self.raw(b"SHUTDOWN\n")
         self.assertEqual(blocked.wait(timeout=3), 0)
 
-    def test_clean_recovery_journal_preserves_active_schedule_behavior(self):
+    def test_clean_recovery_journal_does_not_authorize_scheduled_execution(self):
         schedule = {
             "version": 1,
             "next_id_counter": 1,
             "schedules": [{
                 "id": "p014_clean_start_due",
                 "type": 1,
-                "target_time": int(time.time()) - 1,
+                "target_time": 100000,
                 "hour": 0,
                 "minute": 0,
                 "days_mask": 0,
@@ -845,14 +916,13 @@ class Integration(unittest.TestCase):
         Path(self.sched_path).write_text(json.dumps(schedule, indent=2) + "\n")
         os.chmod(self.sched_path, 0o600)
         self.start()
-        self.assertIn("active=yes", self.call("status").stdout)
-        self.call("stop")
+        status = self.call("status").stdout
+        self.assertIn("active=no", status)
+        self.assertIn("recovery_schedule_gate=OPEN", status)
+        self.assertIn("assertion_id=0", status)
+        self.assertEqual(json.loads(Path(self.sched_path).read_text())["schedules"][0]["last_fired_time"], 0)
 
     def test_daemon_restart_recovery(self):
-        now_wall = int(time.time())
-        start_wall = now_wall - 300
-        start_dt = datetime.fromtimestamp(start_wall, timezone.utc)
-
         sched_data = {
             "version": 1,
             "next_id_counter": 2,
@@ -861,8 +931,8 @@ class Integration(unittest.TestCase):
                     "id": "sched-test-rec",
                     "type": 2, # DAILY
                     "target_time": 0,
-                    "hour": start_dt.hour,
-                    "minute": start_dt.minute,
+                    "hour": 12,
+                    "minute": 0,
                     "days_mask": 0,
                     "duration": 1800, # 30 min
                     "tz": "UTC",
@@ -877,9 +947,11 @@ class Integration(unittest.TestCase):
 
         proc = self.start()
         status = self.call("status").stdout
-        self.assertIn("active=yes", status)
-
-        self.call("stop")
+        self.assertIn("active=no", status)
+        self.assertIn("assertion_id=0", status)
+        self.assertEqual(json.loads(Path(self.sched_path).read_text())["schedules"][0]["last_fired_time"], 0)
+        self.raw(b"SHUTDOWN\n")
+        self.assertEqual(proc.wait(timeout=3), 0)
 
     def test_large_schedule_list_fragmented(self):
         self.start()

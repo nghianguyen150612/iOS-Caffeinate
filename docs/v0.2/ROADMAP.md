@@ -70,11 +70,11 @@ Feature implementation, physical-device acceptance, and production reliability c
 
 **Depends on:** P004 schedule behavior; P012 idle findings; P015 policy rules; P016 observation limits.
 
-**Deliverables:** safer schedule editing, conflict and time-zone handling, recurrence diagnostics, and explicit behavior when the daemon is not running.
+**Deliverables:** calendar-safe recurrence, explicit DST handling, conflict analysis, transactional generation-checked schedule editing, offline diagnostics, legacy data preservation and explicit P014/P015/P016 integration.
 
-**Safety constraints:** schedules do not wake a suspended device; no alarm-clock promise; existing persisted schedules are migrated without destructive defaults.
+**Safety constraints:** P004 automatic execution is suppressed because P015 does not authorize unattended scheduled operation; schedules do not wake a suspended device; no alarm-clock promise; schema-v1 data is preserved without package-time migration; new definitions are limited to 300 seconds.
 
-**Validation and completion:** date/time boundary tests, migration and recovery tests, plus attended target-device schedule trials. Scheduled wake remains unverified unless directly observed and reviewed.
+**Validation and completion:** deterministic date/time, DST, conflict, persistence, CLI, recovery and policy tests plus exact-head CI. Cloud status is `P017_CLOUD_COMPLETE_DEVICE_SCHEDULING_PENDING`; read-only target-device review and any later separately authorized mutation trial remain pending. Scheduled wake remains unverified unless independently established and reviewed.
 
 ### P018 — CLI and package-manager user experience
 

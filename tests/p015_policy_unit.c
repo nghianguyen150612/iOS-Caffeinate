@@ -416,6 +416,14 @@ static void test_policy_decisions(void) {
           "unattended operation is explicitly denied");
 
     inputs = eligible_inputs();
+    inputs.operation = SERVER_OPERATION_SCHEDULED_UNATTENDED;
+    check(server_policy_evaluate(&config, &inputs, &first) == 0 &&
+          first.decision == SERVER_DECISION_BLOCK_UNSAFE_CONFIGURATION &&
+          first.primary_reason == SERVER_REASON_SCHEDULE_EXECUTOR_NOT_AUTHORIZED &&
+          !first.eligible && !first.execution_authorized,
+          "manual bounded-session readiness never authorizes scheduled execution");
+
+    inputs = eligible_inputs();
     inputs.operation = SERVER_OPERATION_AUTOMATIC_RECOVERY;
     check(server_policy_evaluate(&config, &inputs, &first) == 0 &&
           first.decision == SERVER_DECISION_BLOCK_UNVERIFIED_SUPERVISOR,

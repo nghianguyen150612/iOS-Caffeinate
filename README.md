@@ -197,8 +197,34 @@ health.polling=ON_DEMAND
 
 P016 cloud engineering status is `P016_CLOUD_COMPLETE_DEVICE_TELEMETRY_PENDING`. It does not poll in the background, persist measurements, acquire assertions, activate launchd, or enable unattended Server Mode. P009 v1 and P012 remain unchanged. See [P016 architecture](docs/v0.2/P016-ARCHITECTURE.md), [schema](docs/v0.2/P016-TELEMETRY-SCHEMA.md), [iOS 12 capabilities](docs/v0.2/P016-IOS12-CAPABILITY-MATRIX.md), [battery](docs/v0.2/P016-BATTERY.md), [thermal](docs/v0.2/P016-THERMAL.md), [freshness](docs/v0.2/P016-FRESHNESS.md), [policy integration](docs/v0.2/P016-POLICY-INTEGRATION.md), [security](docs/v0.2/P016-SECURITY.md), [device acceptance](docs/v0.2/P016-DEVICE-ACCEPTANCE.md), [validation](docs/v0.2/P016-VALIDATION.md), and [manifest](docs/v0.2/P016-MANIFEST.md).
 
+## P017 schedule diagnostics
+
+P017 provides read-only calendar previews and conflict analysis, plus generation-checked enable/disable/remove operations through authenticated daemon IPC. Diagnostics work with the daemon offline and do not start it. New schedule proposals are capped at 300 seconds. Existing schema-v1 data, including longer durations and `last_fired_time`, is preserved.
+
+P004 automatic scheduled assertion execution is intentionally disabled: P015 does not authorize unattended scheduled operation. A due time is only a calendar result; it cannot authorize IOKit. P017 does not wake a device from deep sleep. `scheduled_wake=UNVERIFIED`, and a persisted schedule does not guarantee the daemon will run at that time.
+
+```sh
+ic schedule list
+ic schedule next --at 2026-10-21T12:00:00Z
+ic schedule doctor
+ic schedule conflicts
+ic schedule validate
+ic schedule explain sched-1
+```
+
+The following is a **SIMULATED** diagnostic shape, not device evidence:
+
+```text
+schedule.outcome=UPCOMING
+schedule.execution=BLOCKED_POLICY
+schedule.execution_reason=SCHEDULE_EXECUTOR_NOT_AUTHORIZED
+schedule.wake_capability=UNVERIFIED
+```
+
+P017 device acceptance remains pending. Read the [architecture](docs/v0.2/P017-ARCHITECTURE.md), [timezone/DST contract](docs/v0.2/P017-TIMEZONE-DST.md), [CLI](docs/v0.2/P017-CLI.md), [safety boundary](docs/v0.2/P017-SAFETY.md), [device procedure](docs/v0.2/P017-DEVICE-ACCEPTANCE.md), and [validation plan](docs/v0.2/P017-VALIDATION.md).
+
 ## Scope and evidence
 
-Timed holds and scheduled awake windows are bounded to 24 hours. P004 schedule evaluation requires the daemon to be running; it does not wake a suspended system. There is no indefinite mode, GUI, tweak injection, Apple daemon change, scheduled-wake command, or automatic installation. The reported IOKit success does not establish scheduled wake or prevention of deep sleep. Battery/thermal characterization, causal network comparison, package acceptance, rollback, and unattended 24/7 reliability remain open. Package success does not authorize unattended operation.
+Manual timed holds remain bounded to 24 hours. New schedule definitions are bounded to 300 seconds, and P017 does not execute stored schedules automatically. Schedule previews require no daemon and do not wake a suspended system. There is no indefinite mode, GUI, tweak injection, Apple daemon change, scheduled-wake command, or automatic installation. The reported IOKit success does not establish scheduled wake or prevention of deep sleep. Battery/thermal characterization, causal network comparison, package acceptance, rollback, and unattended 24/7 reliability remain open. Package success does not authorize unattended operation.
 
-See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P008 integration and evidence](docs/P008-INTEGRATION.md), [P009 evidence format](docs/P009-EVIDENCE-FORMAT.md), [P009 security](docs/P009-SECURITY.md), [P009 validation](docs/P009-VALIDATION.md), [P009 device runbook](docs/P009-DEVICE-RUNBOOK.md), [P007 package contract](docs/P007-PACKAGING.md), [P007 validation](docs/P007-VALIDATION.md), [P007 deferred device procedure](docs/P007-DEVICE-TEST.md), [P007 rollback](docs/P007-ROLLBACK.md), [P006 server-mode design](docs/P006-SERVER-MODE.md), [P006 validation](docs/P006-VALIDATION.md), [deferred P006 device tests](docs/P006-DEVICE-TEST.md), [P005 feasibility report](docs/P005-WAKE-FEASIBILITY.md), [P005 validation](docs/P005-VALIDATION.md), [deferred P005 device tests](docs/P005-DEVICE-TEST.md), [P004 schedule details](docs/P004-SCHEDULING.md), and earlier [device recovery instructions](docs/P003-DEVICE-TEST.md).
+See [architecture](docs/ARCHITECTURE.md), [roadmap](docs/PLAN.md), [P008 integration and evidence](docs/P008-INTEGRATION.md), [P009 evidence format](docs/P009-EVIDENCE-FORMAT.md), [P009 security](docs/P009-SECURITY.md), [P009 validation](docs/P009-VALIDATION.md), [P009 device runbook](docs/P009-DEVICE-RUNBOOK.md), [P007 package contract](docs/P007-PACKAGING.md), [P007 validation](docs/P007-VALIDATION.md), [P007 deferred device procedure](docs/P007-DEVICE-TEST.md), [P007 rollback](docs/P007-ROLLBACK.md), [P006 server-mode design](docs/P006-SERVER-MODE.md), [P006 validation](docs/P006-VALIDATION.md), [deferred P006 device tests](docs/P006-DEVICE-TEST.md), [P005 feasibility report](docs/P005-WAKE-FEASIBILITY.md), [P005 validation](docs/P005-VALIDATION.md), [deferred P005 device tests](docs/P005-DEVICE-TEST.md), [P004 schedule details](docs/P004-SCHEDULING.md), [P017 scheduling docs](docs/v0.2/P017-ARCHITECTURE.md), and earlier [device recovery instructions](docs/P003-DEVICE-TEST.md).

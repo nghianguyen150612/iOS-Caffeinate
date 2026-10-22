@@ -218,6 +218,14 @@ int server_policy_evaluate(const server_config_t *config,
     } else {
         result->runtime_activation = SERVER_POLICY_ACTIVATION_UNKNOWN;
     }
+    if (inputs->operation == SERVER_OPERATION_SCHEDULED_UNATTENDED) {
+        add_blocker(result, SERVER_REASON_SCHEDULE_EXECUTOR_NOT_AUTHORIZED,
+                    SERVER_POLICY_GATE_OPERATOR_ATTENDANCE, SERVER_EVIDENCE_DENIED,
+                    SERVER_EVIDENCE_SOURCE_DEVICE_REPORTED, SERVER_EVIDENCE_CURRENT);
+        result->decision = SERVER_DECISION_BLOCK_UNSAFE_CONFIGURATION;
+        result->execution_authorized = 0;
+        return 0;
+    }
     if (config->status == SERVER_CONFIG_VALID &&
         config->max_duration_seconds > 0 &&
         config->max_duration_seconds <= SERVER_MODE_MAX_SESSION_SECONDS)
@@ -442,6 +450,7 @@ const char *server_policy_operation_name(server_policy_operation_t value) {
         case SERVER_OPERATION_MANUAL_BOUNDED_SESSION: return "MANUAL_BOUNDED_SESSION";
         case SERVER_OPERATION_UNATTENDED: return "UNATTENDED";
         case SERVER_OPERATION_AUTOMATIC_RECOVERY: return "AUTOMATIC_RECOVERY";
+        case SERVER_OPERATION_SCHEDULED_UNATTENDED: return "SCHEDULED_UNATTENDED";
     }
     return "UNKNOWN";
 }
@@ -494,6 +503,7 @@ const char *server_policy_reason_name(server_policy_reason_t value) {
         case SERVER_REASON_POLICY_DISABLED: return "POLICY_DISABLED";
         case SERVER_REASON_POLICY_OBSERVE_ONLY: return "POLICY_OBSERVE_ONLY";
         case SERVER_REASON_UNATTENDED_NOT_SUPPORTED: return "UNATTENDED_NOT_SUPPORTED";
+        case SERVER_REASON_SCHEDULE_EXECUTOR_NOT_AUTHORIZED: return "SCHEDULE_EXECUTOR_NOT_AUTHORIZED";
         case SERVER_REASON_AUTOMATIC_RECOVERY_DISABLED: return "AUTOMATIC_RECOVERY_DISABLED";
         case SERVER_REASON_DURATION_ZERO: return "DURATION_ZERO";
         case SERVER_REASON_DURATION_EXCEEDS_CONFIG: return "DURATION_EXCEEDS_CONFIG";
@@ -536,6 +546,7 @@ const char *server_policy_reason_requirement(server_policy_reason_t value,
         case SERVER_REASON_POLICY_DISABLED: return "an explicit operator action is required to request another policy";
         case SERVER_REASON_POLICY_OBSERVE_ONLY: return "an explicit bounded-session request and separate authorization are required";
         case SERVER_REASON_UNATTENDED_NOT_SUPPORTED: return "P015 does not support unattended or automatic start";
+        case SERVER_REASON_SCHEDULE_EXECUTOR_NOT_AUTHORIZED: return "P015 does not authorize assertion acquisition from a scheduled occurrence";
         case SERVER_REASON_AUTOMATIC_RECOVERY_DISABLED: return "automatic recovery execution is not implemented or authorized";
         case SERVER_REASON_DURATION_ZERO: return "request a positive duration from 1 second through the configured maximum";
         case SERVER_REASON_DURATION_EXCEEDS_CONFIG: return "request no more than the configured session maximum";
