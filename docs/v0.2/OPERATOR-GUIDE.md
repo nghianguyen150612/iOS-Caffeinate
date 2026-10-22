@@ -128,6 +128,8 @@ Review the manifest and every included file before sharing. `EXPORT_CREATED` doe
 
 Initial attended inspection commands are listed in [P018 device acceptance](P018-DEVICE-ACCEPTANCE.md). Do not reboot/respring or perform unattended power tests during P018. Current outcome: `P018_CLOUD_COMPLETE_DEVICE_UX_PENDING`.
 
+The first attended H004 session is a separately authorized, read-only Phase 0 inspection. Review the [H004 checklist](H004-PHASE0-CHECKLIST.md), [command plan](H004-READONLY-COMMANDS.md), [stop conditions](H004-STOP-CONDITIONS.md), [evidence guide](H004-EVIDENCE-GUIDE.md), and [result template](H004-RESULT-TEMPLATE.md) before scheduling it. H004 does not authorize device access by the cloud operator or any P011 installation action.
+
 ## P019 supervised reliability
 
 P019 has separate cloud and hardware completion. Cloud tools are offline. The initial hardware session, after exact signer provenance and separate operator authorization, is Phase 0 read-only inspection. Do not install, start the daemon, probe SSH, acquire an assertion, mutate launchd, or reset recovery state in that initial session. See the [P019 prerequisite matrix](P019-PREREQUISITES.md), [phase matrix](P019-SESSION-MATRIX.md), [runbook](P019-OPERATOR-RUNBOOK.md), and [stop criteria](P019-STOP-CRITERIA.md).

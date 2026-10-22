@@ -5,6 +5,15 @@ on:
 permissions:
   contents: read
 jobs:
+  h004-operator-package-validation:
+    name: H004 operator package validation (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Validate H004 documents and shell syntax without device execution
+        run: python3 scripts/validate_h004_operator_package.py
   linux-protocol:
     runs-on: ubuntu-latest
     steps:
