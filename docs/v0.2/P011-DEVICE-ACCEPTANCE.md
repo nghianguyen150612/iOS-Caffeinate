@@ -12,9 +12,15 @@ The H002 P011 route accepts only that exact release archive SHA. It verifies the
 
 The H002 host run verified the release API identity, package hash, eight pinned release assets, Debian identity, package structure, historical checksums, signing metadata, profile bytes, Mach-O properties, and maintainer-script safety. It stopped at the missing verified H001 `ldid` executable, required for independent entitlement extraction. The report records `embedded_entitlements=PENDING_PINNED_LDID`, `signature_integrity=PENDING`, and `device_acceptance=PENDING`. Do not substitute a different signer.
 
-Proceed to physical P018 read-only inspection only after the exact signer input is available, the P011 host command reports `P011_HOST_PREFLIGHT_PASS_DEVICE_ACCEPTANCE_PENDING`, P012 findings are reviewed, P013/P014 behavior is reviewed, and an operator is physically present with independent recovery. That initial P018 session remains separately authorized and does not install a package or start the daemon.
+The H002 run above is the historical blocked observation. H003's current host result is recorded below. Proceed to any physical inspection only under the applicable P018/P019 runbook, after its prerequisites are satisfied, and with a physically present operator, independent recovery, and separate authorization. A read-only inspection does not install a package or start the daemon.
 
 The shell preflight is read-only. A successful preflight does not authorize installation. Do not continue after a mismatch, unresolved process/socket, unclear assertion cleanup, or missing physical recovery.
+
+## H003 host preflight update
+
+On 2026-10-22, H003 rebuilt the exact pinned Procursus `ldid` executable twice in its newly documented digest-pinned environment and verified both outputs against the P010 SHA-256. The actual H002 `scripts/p011_release_preflight.py` command then exited `0` against the official v0.1.0 package and all eight published assets. The recorded result is `P011_HOST_PREFLIGHT_PASS_DEVICE_ACCEPTANCE_PENDING`; see [the H003 machine-readable receipt](H003-P011-HOST-PREFLIGHT.json) and [signer provenance receipt](H003-SIGNER-PROVENANCE.json).
+
+The new H003 evidence resolves the current host-side signer and entitlement-extraction blocker. It does not change the H002 historical run recorded above or recover the unavailable H001 environment receipt. `signature_integrity=PENDING`, `device_acceptance=PENDING`, every hardware gate remains pending, and `release_authorization=BLOCKED`. No physical device operation was performed.
 
 ## Phase A — Pre-installation
 
@@ -31,7 +37,7 @@ The shell preflight is read-only. A successful preflight does not authorize inst
      --json-out /tmp/ioscaffeinate-p011-v0.1.0/P011-release-preflight.json
    ```
 
-   Stop unless the command exits successfully and reports `P011_HOST_PREFLIGHT_PASS_DEVICE_ACCEPTANCE_PENDING`, the exact release/package identity, `historical_archive=VERIFIED`, `legacy_checksum_manifest=VERIFIED`, `checksum_coverage=HISTORICALLY_PARTIAL`, `package_structure=VERIFIED`, independently rechecked `embedded_entitlements=EXACT_MATCH`, and `device_acceptance=PENDING`. `signature_integrity=PENDING` remains pending; signature presence alone is not cryptographic trust. The H002 preflight currently exits blocked because the verified H001 signer executable is unavailable.
+   Stop unless the command exits successfully and reports `P011_HOST_PREFLIGHT_PASS_DEVICE_ACCEPTANCE_PENDING`, the exact release/package identity, `historical_archive=VERIFIED`, `legacy_checksum_manifest=VERIFIED`, `checksum_coverage=HISTORICALLY_PARTIAL`, `package_structure=VERIFIED`, independently rechecked `embedded_entitlements=EXACT_MATCH`, and `device_acceptance=PENDING`. `signature_integrity=PENDING` remains pending; signature presence alone is not cryptographic trust. The earlier H002 run was blocked for lack of the signer; H003's current passing host result and its new environment receipt are recorded above.
 3. Inspect Debian control metadata and maintainer scripts on the host without executing them. Confirm the package has only the expected `preinst` and `prerm`, no live LaunchDaemons plist, and the inactive staged template. The release verifier runs the isolated historical parser/safety checks and does not execute package scripts.
 
    ```sh

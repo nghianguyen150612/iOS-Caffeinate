@@ -521,7 +521,7 @@ def _validate_official_archive_contents(package_path: Path, asset_dir: Path, ldi
             if ldid is not None:
                 require(ldid.is_absolute() and not ldid.is_symlink() and ldid.is_file(), "--ldid must name an absolute regular executable")
                 signer = validate_signer(ldid)
-                version, digest = signer_identity(signer)
+                version, digest = signer_identity(signer, expected_sha256=SIGNER_SHA256)
                 validate_pinned_signer_identity(version, digest)
                 for local_path in binaries.values():
                     require_exact_embedded_entitlements(signer, local_path)

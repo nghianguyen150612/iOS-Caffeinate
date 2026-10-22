@@ -2,6 +2,8 @@
 
 This runbook defines future supervised work. P019 cloud preparation does not connect to or control the iPad. Each physical operation requires separate operator authorization. The cloud agent has not performed any device action.
 
+H003 has now verified the exact P010 signer hash and completed the P011 host preflight. This resolves the host signer input blocker only. P011 physical acceptance, P019 prerequisites, physical presence, independent recovery, and separate authorization remain required before any device inspection. H003 prepared the sequence below; it did not start Phase 0.
+
 ## Before scheduling hardware work
 
 1. Resolve the exact P010 signer blocker. The `ldid` executable must be version `2.1.5-procursus7` with SHA-256 `15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c`. A different same-version binary is rejected.

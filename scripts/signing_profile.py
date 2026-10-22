@@ -62,21 +62,26 @@ def validate_signer(path: Path) -> Path:
     return path.resolve()
 
 
-def signer_identity(path: Path) -> tuple[str, str]:
+def signer_identity(path: Path, expected_sha256: str | None = None) -> tuple[str, str]:
     """Return the ldid version banner and exact executable digest.
 
     Procursus ldid prints ``Link Identity Editor <version>`` in its no-argument
-    usage banner. This is version identification only, not signature evidence.
+    usage banner. Its executable digest is computed and, when pinned, compared
+    before the binary is run. The banner is version identification only, not
+    signature evidence.
     """
+    digest = sha256(path)
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise SigningError("signing tool SHA-256 does not match the pinned executable")
     try:
         result = subprocess.run([str(path)], capture_output=True, text=True, check=False)
     except OSError as error:
         raise SigningError(f"could not identify signing tool: {error}") from None
-    output = result.stdout + result.stderr
+    output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout + "\n" + result.stderr)
     match = re.search(r"Link Identity Editor\s+([^\s]+)", output)
     if not match:
         raise SigningError("unsupported ldid: version banner 'Link Identity Editor <version>' is unavailable")
-    return match.group(1), sha256(path)
+    return match.group(1), digest
 
 
 def extract_entitlements(signer: Path, binary: Path) -> dict[str, bool]:

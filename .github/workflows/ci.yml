@@ -1547,11 +1547,13 @@ jobs:
   p020-release-readiness-validation:
     name: P020 release readiness validation
     runs-on: ubuntu-latest
+    if: ${{ always() && !cancelled() }}
     permissions:
       contents: read
       pull-requests: read
       actions: read
     needs:
+      - p008-release-attestation
       - linux-protocol
       - ios-cross-build
       - ios-artifact-inspection
@@ -1618,6 +1620,10 @@ jobs:
           import os
           import subprocess
           from pathlib import Path
+          import sys
+
+          sys.path.insert(0, str(Path("scripts").resolve()))
+          from h003_stack import StackValidationError, validate_h003_stack
 
           repo = os.environ["GITHUB_REPOSITORY"]
           expected = [
@@ -1725,19 +1731,84 @@ jobs:
                   # integration; the H002 PR itself remains stacked on P020.
                   integration_base = {"branch": "main", "sha": parent["base"]["sha"]}
                   integration_mode = "STACKED_H002"
+              elif current["base"]["ref"] == "fix/h002-p011-legacy-checksum":
+                  h002_sha = "341c6840fc9d6c64876fb3a0106fd318c4dfc7c0"
+                  p020_sha = "57b06c534d18f094ad59e4229e626fae51668de9"
+                  h002 = json.loads(subprocess.run(
+                      ["gh", "api", f"repos/{repo}/pulls/20"],
+                      check=True, capture_output=True, text=True).stdout)
+                  p020 = json.loads(subprocess.run(
+                      ["gh", "api", f"repos/{repo}/pulls/19"],
+                      check=True, capture_output=True, text=True).stdout)
+                  main = json.loads(subprocess.run(
+                      ["gh", "api", f"repos/{repo}/branches/main"],
+                      check=True, capture_output=True, text=True).stdout)
+                  h002_branch = json.loads(subprocess.run(
+                      ["gh", "api", f"repos/{repo}/branches/fix/h002-p011-legacy-checksum"],
+                      check=True, capture_output=True, text=True).stdout)
+                  p020_branch = json.loads(subprocess.run(
+                      ["gh", "api", f"repos/{repo}/branches/release/p020-v02-integration"],
+                      check=True, capture_output=True, text=True).stdout)
+                  h002_checks = json.loads(subprocess.run(
+                      ["gh", "pr", "view", "20", "--repo", repo, "--json", "statusCheckRollup"],
+                      check=True, capture_output=True, text=True).stdout).get("statusCheckRollup") or []
+                  h002_failed = []
+                  h002_pending = []
+                  for check in h002_checks:
+                      name = check.get("name") or check.get("context") or "unknown"
+                      conclusion = check.get("conclusion") or check.get("state") or check.get("status")
+                      if conclusion in ("SUCCESS", "success"):
+                          continue
+                      if conclusion in ("SKIPPED", "skipped") and name == "p008-release-attestation":
+                          continue
+                      if conclusion in ("PENDING", "IN_PROGRESS", "QUEUED", "EXPECTED", "pending"):
+                          h002_pending.append(name)
+                      else:
+                          h002_failed.append(f"{name}={conclusion}")
+                  if h002_failed or h002_pending or not h002_checks:
+                      raise SystemExit(f"pinned H002 exact-head CI is not green: {h002_failed or h002_pending or ['no checks returned']}")
+
+                  def is_ancestor(ancestor, commit):
+                      result = subprocess.run(
+                          ["git", "merge-base", "--is-ancestor", ancestor, commit],
+                          check=False, capture_output=True, text=True)
+                      if result.returncode not in (0, 1):
+                          raise SystemExit("could not evaluate H003 stack ancestry")
+                      return result.returncode == 0
+
+                  def merge_base(left, right):
+                      return subprocess.run(
+                          ["git", "merge-base", left, right],
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+                  try:
+                      integration_base = validate_h003_stack(
+                          current_pr=current,
+                          h002_pr=h002,
+                          p020_pr=p020,
+                          h002_branch_sha=h002_branch["commit"]["sha"],
+                          p020_branch_sha=p020_branch["commit"]["sha"],
+                          main_sha=main["commit"]["sha"],
+                          source_sha=os.environ["P020_SOURCE_SHA"],
+                          is_ancestor=is_ancestor,
+                          merge_base=merge_base,
+                      )
+                  except StackValidationError as error:
+                      raise SystemExit(str(error)) from None
+                  integration_mode = "STACKED_H003"
               else:
                   raise SystemExit("current PR base branch is not a supported P020 integration target")
           else:
               branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/main"], check=True, capture_output=True, text=True).stdout)
               integration_base = {"branch": "main", "sha": branch["commit"]["sha"]}
           Path("build/p020/integration-base.json").write_text(json.dumps(integration_base, sort_keys=True, indent=2) + "\n")
-          if integration_mode == "STACKED_H002":
+          if integration_mode in ("STACKED_H002", "STACKED_H003"):
               expected_base_sha = "57b06c534d18f094ad59e4229e626fae51668de9"
               subprocess.run(["git", "merge-base", "--is-ancestor", expected_base_sha, os.environ["P020_SOURCE_SHA"]], check=True)
               actual_merge_base = subprocess.run(["git", "merge-base", os.environ["P020_SOURCE_SHA"], expected_base_sha], check=True, capture_output=True, text=True).stdout.strip()
               if actual_merge_base != expected_base_sha:
-                  raise SystemExit("H002 source/base merge-base is not the exact open P020 PR #19 head")
-              print("Verified the P011–P019 source chain and exact-head CI, plus the H002 stack on open P020 PR #19 at its pinned head.")
+                  raise SystemExit("stacked H002/H003 source/base merge-base is not the exact open P020 PR #19 head")
+              print(f"Verified the P011–P019 source chain and exact-head CI, plus the {integration_mode} branch ancestry on open P020 PR #19 at its pinned head.")
           else:
               if integration_base["branch"] != "main":
                   raise SystemExit("P020 integration base branch is not main")
@@ -1748,7 +1819,7 @@ jobs:
               print("Verified the P011–P019 merged source chain and exact-head CI against the integrated main history.")
           print("P008 branch-specific attestation remains SKIPPED by its guard; it is not counted as a pass.")
           PY
-      - name: Confirm the P008 guard remains a skip, not a pass
+      - name: Confirm the P008 guard is never counted as a pass
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -1761,9 +1832,12 @@ jobs:
           from pathlib import Path
           jobs = json.loads(Path("build/p020/workflow-jobs.json").read_text())["jobs"]
           matches = [job for job in jobs if job.get("name") == "p008-release-attestation"]
-          if len(matches) != 1 or matches[0].get("conclusion") != "skipped":
-              raise SystemExit("P008 branch-specific attestation was not observed as SKIPPED")
-          print("P008 attestation=SKIPPED_EXPECTED_BRANCH_GUARD (not counted as PASS)")
+          if len(matches) > 1 or (matches and matches[0].get("conclusion") != "skipped"):
+              raise SystemExit("P008 branch guard unexpectedly produced a non-skipped job")
+          if matches:
+              print("P008 attestation=SKIPPED_EXPECTED_BRANCH_GUARD (not counted as PASS)")
+          else:
+              print("P008 attestation=NOT_SCHEDULED_BY_BRANCH_GUARD (not counted as PASS)")
           PY
       - name: Verify Debian prerelease ordering
         run: |
@@ -1907,8 +1981,9 @@ jobs:
           chain = json.loads((root / "milestone-chain.json").read_text())
           workflow_jobs = json.loads((root / "workflow-jobs.json").read_text())["jobs"]
           p008_jobs = [job for job in workflow_jobs if job.get("name") == "p008-release-attestation"]
-          if len(p008_jobs) != 1 or p008_jobs[0].get("conclusion") != "skipped":
-              raise SystemExit("P008 is not the expected branch-guard skip")
+          if len(p008_jobs) > 1 or (p008_jobs and p008_jobs[0].get("conclusion") != "skipped"):
+              raise SystemExit("P008 branch guard unexpectedly produced a non-skipped job")
+          p008_state = "SKIPPED_EXPECTED_BRANCH_GUARD" if p008_jobs else "NOT_SCHEDULED_BY_BRANCH_GUARD"
           source = (root / "source-commit.txt").read_text().strip()
           gate_names = ["source_integration", "native_build", "ios_cross_build", "macho_inspection", "rootful_packaging", "signing_metadata", "security_analysis", "regression_ci", "evidence_schema_compatibility", "build_provenance"]
           results = {name: "PASS" for name in gate_names}
@@ -1926,7 +2001,7 @@ jobs:
                   "p017-scheduling-validation": os.environ["P020_P017"], "p018-cli-package-ux-validation": os.environ["P020_P018"],
                   "p019-supervised-reliability-validation": os.environ["P020_P019"], "p020-candidate-cross-build": os.environ["P020_CANDIDATE_CROSS"],
               },
-              "p008_release_attestation": "SKIPPED_EXPECTED_BRANCH_GUARD",
+              "p008_release_attestation": p008_state,
               "publication_steps": "NONE", "device_execution": "NOT_PERFORMED",
           }
           attestation_path = root / "ci-attestation.json"

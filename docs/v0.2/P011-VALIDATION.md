@@ -39,6 +39,12 @@ python3 scripts/p011_release_preflight.py \
 
 Without the exact host-compatible `ldid`, the verifier completes release identity, checksum, sidecar, manifest, Debian, profile, package-structure, Mach-O, and maintainer-script checks, then reports `P010 package validation=BLOCKED` before embedded-entitlement reinspection. It must not label the package P010-verified in that case. A complete cloud result preserves `signature_verification=PENDING`, `device_package_acceptance=PENDING`, `unattended_24_7=NOT_VALIDATED`, and `scheduled_wake=UNVERIFIED`.
 
+## H003 follow-up result
+
+On 2026-10-22, H003 verified the exact `ldid` commit/tree and executable hash using two matching builds, retrieved all eight official assets, and ran the actual H002 P011 CLI contract. The command exited `0` and produced `P011_HOST_PREFLIGHT_PASS_DEVICE_ACCEPTANCE_PENDING`; both embedded entitlement sets independently matched the approved profile. The report is [H003-P011-HOST-PREFLIGHT.json](H003-P011-HOST-PREFLIGHT.json), with the independent signer receipt at [H003-SIGNER-PROVENANCE.json](H003-SIGNER-PROVENANCE.json).
+
+This result updates the host-side status only. Historical checksum coverage remains partial, signature integrity remains pending, all device acceptance gates remain pending, and release authorization remains blocked. The earlier blocked H002 run above remains a historical record.
+
 ## Read-only device preflight
 
 Transfer the checked package and script using the operator's authorized method, then run:

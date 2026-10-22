@@ -1,0 +1,58 @@
+name: H003 authentic P011 host preflight
+on:
+  push:
+    branches: [fix/h003-p011-signer-preflight]
+  pull_request:
+    branches: [fix/h002-p011-legacy-checksum]
+permissions:
+  contents: read
+jobs:
+  h003-p011-authentic-host-preflight:
+    if: github.repository == 'nghianguyen150612/iOS-Caffeinate' && (github.ref == 'refs/heads/fix/h003-p011-signer-preflight' || (github.event_name == 'pull_request' && github.head_ref == 'fix/h003-p011-signer-preflight' && github.base_ref == 'fix/h002-p011-legacy-checksum'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build and verify two independent pinned signer builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p build/h003
+          mkdir -m 700 "$RUNNER_TEMP/h003-signer"
+          scripts/h003_build_signer.sh --output-dir "$RUNNER_TEMP/h003-signer"
+          cp "$RUNNER_TEMP/h003-signer/signer-provenance.json" build/h003/signer-provenance.json
+          git rev-parse HEAD > build/h003/source-commit.txt
+          python3 -m unittest tests.test_h003_signer tests.test_h003_stack -v 2>&1 | tee build/h003/h003-tests.txt
+      - name: Retrieve exact public v0.1.0 release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -m 700 "$RUNNER_TEMP/h003-release"
+          python3 scripts/h003_fetch_release_assets.py --asset-dir "$RUNNER_TEMP/h003-release"
+      - name: Run H002 P011 contract in the pinned signer runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="$RUNNER_TEMP/h003-release/ioscaffeinate_0.1.0-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb"
+          scripts/h003_run_p011_preflight_container.sh \
+            --package "$package" \
+            --asset-dir "$RUNNER_TEMP/h003-release" \
+            --ldid "$RUNNER_TEMP/h003-signer/ldid" \
+            --json-out "$GITHUB_WORKSPACE/build/h003/P011-host-preflight.json"
+      - name: Upload reviewed host-only validation receipts
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-H003-P011-host-validation
+          if-no-files-found: error
+          path: |
+            build/h003/P011-host-preflight.json
+            build/h003/P011-host-preflight.txt
+            build/h003/signer-provenance.json
+            build/h003/source-commit.txt
+            build/h003/h003-tests.txt
