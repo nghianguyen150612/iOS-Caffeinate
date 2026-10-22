@@ -6,6 +6,14 @@ P018's initial device session is read-only and is documented in [P018 device acc
 
 Target: iPad mini 2 A1489 (`iPad4,4`), Apple A7 ARM64, iOS 12.5.7, Amethyst/Procursus rootful. Stable artifact: `ioscaffeinate_0.1.0-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb`, SHA-256 `439d2543adbe1472f82cfd6c9e6bb9dd747da6c31c79f3da1f3da86b8ca9421c`.
 
+## H002 host compatibility note
+
+The H002 P011 route accepts only that exact release archive SHA. It verifies the historical seven-record checksum contract and the complete post-publication derived layout, then reports `checksum_coverage=HISTORICALLY_PARTIAL`; the derived inventory is not presented as an original full manifest. Current v0.2 package validation remains strict.
+
+The H002 host run verified the release API identity, package hash, eight pinned release assets, Debian identity, package structure, historical checksums, signing metadata, profile bytes, Mach-O properties, and maintainer-script safety. It stopped at the missing verified H001 `ldid` executable, required for independent entitlement extraction. The report records `embedded_entitlements=PENDING_PINNED_LDID`, `signature_integrity=PENDING`, and `device_acceptance=PENDING`. Do not substitute a different signer.
+
+Proceed to physical P018 read-only inspection only after the exact signer input is available, the P011 host command reports `P011_HOST_PREFLIGHT_PASS_DEVICE_ACCEPTANCE_PENDING`, P012 findings are reviewed, P013/P014 behavior is reviewed, and an operator is physically present with independent recovery. That initial P018 session remains separately authorized and does not install a package or start the daemon.
+
 The shell preflight is read-only. A successful preflight does not authorize installation. Do not continue after a mismatch, unresolved process/socket, unclear assertion cleanup, or missing physical recovery.
 
 ## Phase A — Pre-installation
@@ -23,8 +31,8 @@ The shell preflight is read-only. A successful preflight does not authorize inst
      --json-out /tmp/ioscaffeinate-p011-v0.1.0/P011-release-preflight.json
    ```
 
-   Stop unless the command exits successfully and reports the exact release, package identity, architecture, package SHA-256, P010 validator result, and `device_package_acceptance=PENDING`. `signature_verification=PENDING` remains pending; signature presence alone is not cryptographic trust.
-3. Inspect Debian control metadata and maintainer scripts on the host without executing them. Confirm the package has only the expected `preinst` and `prerm`, no live LaunchDaemons plist, and the inactive staged template. The release verifier runs P010's safety/parser checks but does not execute package scripts.
+   Stop unless the command exits successfully and reports `P011_HOST_PREFLIGHT_PASS_DEVICE_ACCEPTANCE_PENDING`, the exact release/package identity, `historical_archive=VERIFIED`, `legacy_checksum_manifest=VERIFIED`, `checksum_coverage=HISTORICALLY_PARTIAL`, `package_structure=VERIFIED`, independently rechecked `embedded_entitlements=EXACT_MATCH`, and `device_acceptance=PENDING`. `signature_integrity=PENDING` remains pending; signature presence alone is not cryptographic trust. The H002 preflight currently exits blocked because the verified H001 signer executable is unavailable.
+3. Inspect Debian control metadata and maintainer scripts on the host without executing them. Confirm the package has only the expected `preinst` and `prerm`, no live LaunchDaemons plist, and the inactive staged template. The release verifier runs the isolated historical parser/safety checks and does not execute package scripts.
 
    ```sh
    dpkg-deb --field /tmp/ioscaffeinate-p011-v0.1.0/ioscaffeinate_0.1.0-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb Package Version Architecture

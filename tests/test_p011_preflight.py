@@ -26,7 +26,7 @@ def release_api_fixture() -> dict[str, object]:
     for name in p011.EXPECTED_ASSETS:
         assets.append({
             "name": name,
-            "size": p011.EXPECTED_PACKAGE_SIZE if name == p011.PACKAGE_FILENAME else 100,
+            "size": p011.EXPECTED_ASSET_SIZES[name],
             "state": "uploaded",
             "browser_download_url": f"https://github.com/{p011.REPOSITORY}/releases/download/{p011.TAG}/{name}",
         })
@@ -48,6 +48,13 @@ class P011ReleasePreflightTests(unittest.TestCase):
         self.assertEqual(p011.REPOSITORY, "nghianguyen150612/iOS-Caffeinate")
         self.assertEqual(p011.RELEASE_URL, "https://github.com/nghianguyen150612/iOS-Caffeinate/releases/tag/v0.1.0")
 
+    def test_source_tag_must_resolve_to_the_historical_package_commit(self) -> None:
+        identity = {"ref": "refs/tags/v0.1.0", "object": {"type": "commit", "sha": p011.SOURCE_COMMIT}}
+        p011.validate_source_tag_identity(identity)
+        wrong = {"ref": "refs/tags/v0.1.0", "object": {"type": "commit", "sha": "0" * 40}}
+        with self.assertRaisesRegex(p011.PreflightError, "pinned historical commit"):
+            p011.validate_source_tag_identity(wrong)
+
     def test_expected_published_package_sha256_is_pinned(self) -> None:
         self.assertEqual(
             p011.EXPECTED_PACKAGE_SHA256,
@@ -68,6 +75,12 @@ class P011ReleasePreflightTests(unittest.TestCase):
         response = release_api_fixture()
         response["assets"] = response["assets"][:-1]
         with self.assertRaisesRegex(p011.PreflightError, "asset names"):
+            p011.validate_release_identity(response)
+
+    def test_release_asset_size_must_match_the_pinned_publication(self) -> None:
+        response = release_api_fixture()
+        response["assets"][0]["size"] += 1
+        with self.assertRaisesRegex(p011.PreflightError, "pinned v0.1.0 metadata"):
             p011.validate_release_identity(response)
 
     def test_duplicate_json_keys_are_rejected(self) -> None:
