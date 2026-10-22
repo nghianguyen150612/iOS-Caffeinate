@@ -175,6 +175,8 @@ class P020ReleaseGateTests(unittest.TestCase):
             "source_cli_binary_sha256": "d" * 64, "source_daemon_binary_sha256": "e" * 64,
         }
         candidate = dict(identity)
+        candidate["signature_validation"] = "PASS"
+        candidate["installed_paths_verified"] = True
         session = {"candidate": candidate}
         payloads = {
             "p010_signer_provenance": {"P010_SIGNER_PROVENANCE": signer},

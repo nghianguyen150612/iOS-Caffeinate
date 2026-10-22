@@ -151,13 +151,22 @@ def _safe_relative_bytes(root: Path, relative: str, maximum: int = 16 * 1024 * 1
         raise GateError(f"evidence path must be relative and traversal-free: {relative!r}")
     flags_dir = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     flags_file = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
-    directory_fd = os.open(root, flags_dir)
+    try:
+        directory_fd = os.open(root, flags_dir)
+    except OSError as exc:
+        raise GateError(f"cannot safely open evidence bundle root: {exc}") from None
     try:
         for part in pure.parts[:-1]:
-            next_fd = os.open(part, flags_dir, dir_fd=directory_fd)
+            try:
+                next_fd = os.open(part, flags_dir, dir_fd=directory_fd)
+            except OSError as exc:
+                raise GateError(f"cannot safely open evidence directory {part}: {exc}") from None
             os.close(directory_fd)
             directory_fd = next_fd
-        fd = os.open(pure.parts[-1], flags_file, dir_fd=directory_fd)
+        try:
+            fd = os.open(pure.parts[-1], flags_file, dir_fd=directory_fd)
+        except OSError as exc:
+            raise GateError(f"cannot safely open evidence file {pure.parts[-1]}: {exc}") from None
         try:
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_size > maximum:

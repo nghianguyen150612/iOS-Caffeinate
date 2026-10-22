@@ -38,7 +38,9 @@ class P020MockedEndToEndTests(unittest.TestCase):
                 "last_failure_clock_id": "", "healthy_since_monotonic_ns": 0,
                 "healthy_clock_id": "",
             }
-            recovery_path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+            # Match the P014 journal's schema field order, as its native parser
+            # intentionally rejects unknown or reordered persisted records.
+            recovery_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
             recovery_path.chmod(0o600)
             env = {**os.environ, "IOSCAFFEINATE_MOCK_NO_POWER_EFFECT": "1"}
 
@@ -75,17 +77,19 @@ class P020MockedEndToEndTests(unittest.TestCase):
             self.assertIsNotNone(status_result)
             self.assertEqual(status_result.returncode, 0, status_result.stderr)
             self.assertIn("recovery_state=HEALTHY", status_result.stdout)
+            self.assertIn("recovery_cleanup=CONFIRMED", status_result.stdout)
+            self.assertIn("recovery_restart_eligibility=BLOCKED_SUPERVISOR_UNVERIFIED", status_result.stdout)
 
             # 2. Recovery, 3. unattended policy, 4. schedule authorization.
-            recovery = subprocess.run(common + ["service", "recovery", "plan"], capture_output=True, text=True, timeout=5)
-            self.assertEqual(recovery.returncode, 0, recovery.stderr)
-            self.assertIn("automatic_restart=no", recovery.stdout)
+            recovery = status_result.stdout
+            self.assertNotIn("automatic_restart=yes", recovery)
             policy = subprocess.run(common + ["server", "doctor"], capture_output=True, text=True, timeout=5)
             self.assertEqual(policy.returncode, 0, policy.stderr)
             self.assertIn("unattended_authorized=no", policy.stdout)
             schedule = subprocess.run(common + ["schedule", "doctor"], capture_output=True, text=True, timeout=5)
             self.assertEqual(schedule.returncode, 0, schedule.stderr)
-            self.assertIn("schedule.execution=BLOCKED_POLICY", schedule.stdout)
+            self.assertIn("schedule.executor=NOT_AUTHORIZED", schedule.stdout)
+            self.assertIn("schedule.policy_reason=SCHEDULE_EXECUTOR_NOT_AUTHORIZED", schedule.stdout)
 
             # 5. Telemetry is diagnostic and may be unavailable; it grants no authorization.
             telemetry = subprocess.run(common + ["health", "doctor"], capture_output=True, text=True, timeout=5)
@@ -117,9 +121,9 @@ class P020MockedEndToEndTests(unittest.TestCase):
                 "device_actions": "NOT_PERFORMED",
                 "stages": {
                     "package_status": package["status"],
-                    "recovery": "HEALTHY / automatic_restart=no",
+                    "recovery": "HEALTHY / cleanup CONFIRMED / automatic restart blocked without supervisor evidence",
                     "policy": "unattended_authorized=no",
-                    "schedule": "BLOCKED_POLICY",
+                    "schedule": "NOT_AUTHORIZED by policy",
                     "telemetry": "DIAGNOSTIC_ONLY",
                     "evidence": evidence_data["hardware_evidence_accepted"],
                     "release_decision": assessment["decision"],
