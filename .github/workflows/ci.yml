@@ -1690,24 +1690,55 @@ jobs:
               raise SystemExit("recorded P019 successful CI run does not match its exact source head")
           Path("build/p020/milestone-chain.json").write_text(json.dumps(records, sort_keys=True, indent=2) + "\n")
           p020_pr = os.environ.get("P020_CURRENT_PR")
+          integration_mode = "INTEGRATED_MAIN"
           if p020_pr:
               current = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/pulls/{p020_pr}"], check=True, capture_output=True, text=True).stdout)
               if current["head"]["sha"] != os.environ["P020_SOURCE_SHA"]:
                   raise SystemExit("P020 PR head does not match the exact checked-out source SHA")
-              if current["base"]["ref"] != "main":
-                  raise SystemExit("P020 PR base is not integrated main")
-              integration_base = {"branch": current["base"]["ref"], "sha": current["base"]["sha"]}
+              if current["base"]["ref"] == "main":
+                  integration_base = {"branch": current["base"]["ref"], "sha": current["base"]["sha"]}
+              elif current["base"]["ref"] == "release/p020-v02-integration":
+                  expected_base_sha = "57b06c534d18f094ad59e4229e626fae51668de9"
+                  if current["head"]["ref"] != "fix/h002-p011-legacy-checksum":
+                      raise SystemExit("stacked release-base validation is restricted to the H002 branch")
+                  if current["base"]["sha"] != expected_base_sha:
+                      raise SystemExit("H002 PR base SHA differs from the pinned P020 source head")
+                  parent = json.loads(subprocess.run(
+                      ["gh", "api", f"repos/{repo}/pulls/19"],
+                      check=True, capture_output=True, text=True).stdout)
+                  if (parent.get("state") != "open" or parent.get("merged_at")
+                          or parent["head"]["ref"] != "release/p020-v02-integration"
+                          or parent["head"]["sha"] != expected_base_sha
+                          or parent["base"]["ref"] != "main"):
+                      raise SystemExit("H002 stack does not target the open P020 PR #19 at its pinned head")
+                  branch = json.loads(subprocess.run(
+                      ["gh", "api", f"repos/{repo}/branches/release/p020-v02-integration"],
+                      check=True, capture_output=True, text=True).stdout)
+                  if branch["commit"]["sha"] != expected_base_sha:
+                      raise SystemExit("P020 integration branch no longer matches its pinned source head")
+                  integration_base = {"branch": current["base"]["ref"], "sha": current["base"]["sha"]}
+                  integration_mode = "STACKED_H002"
+              else:
+                  raise SystemExit("current PR base branch is not a supported P020 integration target")
           else:
               branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/main"], check=True, capture_output=True, text=True).stdout)
               integration_base = {"branch": "main", "sha": branch["commit"]["sha"]}
           Path("build/p020/integration-base.json").write_text(json.dumps(integration_base, sort_keys=True, indent=2) + "\n")
-          if integration_base["branch"] != "main":
-              raise SystemExit("P020 integration base branch is not main")
-          subprocess.run(["git", "merge-base", "--is-ancestor", "7dbd47e4500c0ddf3d65d282d8e6a8881d6c8703", integration_base["sha"]], check=True)
-          actual_merge_base = subprocess.run(["git", "merge-base", os.environ["P020_SOURCE_SHA"], integration_base["sha"]], check=True, capture_output=True, text=True).stdout.strip()
-          if actual_merge_base != "7d5723fca2595b8928ed3e1717ca872906d48538":
-              raise SystemExit("P020 source/base merge-base is not the exact P019 source head")
-          print("Verified the P011–P019 merged source chain and exact-head CI against the integrated main history.")
+          if integration_mode == "STACKED_H002":
+              expected_base_sha = "57b06c534d18f094ad59e4229e626fae51668de9"
+              subprocess.run(["git", "merge-base", "--is-ancestor", expected_base_sha, os.environ["P020_SOURCE_SHA"]], check=True)
+              actual_merge_base = subprocess.run(["git", "merge-base", os.environ["P020_SOURCE_SHA"], expected_base_sha], check=True, capture_output=True, text=True).stdout.strip()
+              if actual_merge_base != expected_base_sha:
+                  raise SystemExit("H002 source/base merge-base is not the exact open P020 PR #19 head")
+              print("Verified the P011–P019 source chain and exact-head CI, plus the H002 stack on open P020 PR #19 at its pinned head.")
+          else:
+              if integration_base["branch"] != "main":
+                  raise SystemExit("P020 integration base branch is not main")
+              subprocess.run(["git", "merge-base", "--is-ancestor", "7dbd47e4500c0ddf3d65d282d8e6a8881d6c8703", integration_base["sha"]], check=True)
+              actual_merge_base = subprocess.run(["git", "merge-base", os.environ["P020_SOURCE_SHA"], integration_base["sha"]], check=True, capture_output=True, text=True).stdout.strip()
+              if actual_merge_base != "7d5723fca2595b8928ed3e1717ca872906d48538":
+                  raise SystemExit("P020 source/base merge-base is not the exact P019 source head")
+              print("Verified the P011–P019 merged source chain and exact-head CI against the integrated main history.")
           print("P008 branch-specific attestation remains SKIPPED by its guard; it is not counted as a pass.")
           PY
       - name: Confirm the P008 guard remains a skip, not a pass
