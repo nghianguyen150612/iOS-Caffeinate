@@ -158,24 +158,30 @@ def read_version_banner(path: Path) -> str:
     )
 
 
+def verify_binary_artifact(path: Path, expected_sha256: str) -> dict[str, str]:
+    """Verify signer bytes and ELF identity without executing the binary."""
+    if path.is_symlink() or not path.is_file():
+        raise H003Error("verified signer executable is missing or unsafe")
+    actual_sha256 = sha256_file(path)
+    if actual_sha256 != expected_sha256:
+        raise H003Error("SIGNER_REPRODUCTION_MISMATCH: signer executable SHA-256 differs from the exact pin")
+    elf = inspect_elf(path)
+    return {"sha256": actual_sha256, **elf}
+
+
 def verify_binary_identity(
     path: Path,
     expected_sha256: str,
     expected_version: str,
     version_reader: Callable[[Path], str] = read_version_banner,
 ) -> dict[str, str]:
-    if path.is_symlink() or not path.is_file():
-        raise H003Error("verified signer executable is missing or unsafe")
-    actual_sha256 = sha256_file(path)
-    if actual_sha256 != expected_sha256:
-        raise H003Error("SIGNER_REPRODUCTION_MISMATCH: signer executable SHA-256 differs from the exact pin")
+    artifact = verify_binary_artifact(path, expected_sha256)
     # The binary is executed only after its bytes match the exact pinned hash.
-    elf = inspect_elf(path)
     banner = version_reader(path)
     expected_banner = f"Link Identity Editor {expected_version}"
     if banner != expected_banner:
         raise H003Error("wrong signer version: pinned executable returned an unexpected version banner")
-    return {"sha256": actual_sha256, "version": expected_version, **elf}
+    return {**artifact, "version": expected_version}
 
 
 def _parse_fields(path: Path) -> dict[str, str]:
@@ -522,7 +528,11 @@ def _run_build(output_arg: Path) -> int:
 
     fields = _parse_fields(output_dir / "build-env.txt")
     validate_build_fields(fields, lock)
-    identity = verify_binary_identity(output_dir / "ldid", lock["H003_SIGNER_SHA256"], lock["H003_SIGNER_VERSION"])
+    # The build container already checked the banner after the exact hash check.
+    # Recheck the copied bytes on the host without executing a dynamically linked
+    # binary whose pinned libplist runtime exists only in that container.
+    identity = verify_binary_artifact(output_dir / "ldid", lock["H003_SIGNER_SHA256"])
+    identity["version"] = fields["version_banner"].removeprefix("Link Identity Editor ")
     if identity["architecture"] != "x86_64":
         raise H003Error("WRONG_HOST_ARCHITECTURE: signer executable is not x86_64")
     provenance = make_provenance(fields)

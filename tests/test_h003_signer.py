@@ -112,6 +112,14 @@ class H003SignerTests(unittest.TestCase):
         self.assertEqual(result["architecture"], "x86_64")
         version_reader.assert_called_once_with(binary)
 
+    def test_host_artifact_verification_does_not_execute_dynamic_signer(self) -> None:
+        binary = self.write_executable("ldid", elf64_pie_fixture())
+        digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+        with patch.object(signer.subprocess, "run", side_effect=AssertionError("must not execute on host")):
+            result = signer.verify_binary_artifact(binary, digest)
+        self.assertEqual(result["sha256"], digest)
+        self.assertEqual(result["architecture"], "x86_64")
+
     def test_version_banner_is_found_after_usage_lines(self) -> None:
         binary = self.write_executable("ldid", elf64_pie_fixture())
         result = Mock(
