@@ -6,6 +6,7 @@
 #include "schedule.h"
 #include "service.h"
 #include "server_mode.h"
+#include "server_policy.h"
 #include "wake_capability.h"
 #include <errno.h>
 #include <poll.h>
@@ -47,6 +48,7 @@ static void usage(void) {
          "  ios-caffeinate [--socket /absolute/path.sock] schedule remove <schedule-id>\n"
          "  ios-caffeinate wake status\n"
          "  ios-caffeinate server status|doctor|plan\n"
+         "  ios-caffeinate server policy show|validate|explain|plan|migrate --dry-run\n"
          "  ios-caffeinate service status|doctor|plan|recovery status|recovery plan|recovery reset --reviewed-cleanup --reviewed-supervisor-state|enable|disable|start|stop|restart\n"
          "  ios-caffeinate server trial start --for 1s..5m\n"
          "  ios-caffeinate server trial stop\n"
@@ -221,6 +223,363 @@ static int load_server_config(const char *path, server_config_t *config) {
     return 0;
 }
 
+static void policy_runtime_observe(const char *socket_path,
+                                   server_policy_inputs_t *inputs) {
+    char reply[4096] = {0}, error[128] = {0};
+    server_daemon_result_t daemon = server_query_daemon(socket_path, reply, sizeof(reply),
+                                                        error, sizeof(error));
+    if (daemon != SERVER_DAEMON_COMPATIBLE) return;
+    const char *state = server_field(reply, "state", "UNKNOWN");
+    const char *owned = server_field(reply, "assertion_owned", "unknown");
+    const char *release_error = server_field(reply, "last_release_error", "unknown");
+    const char *release_pending = server_field(reply, "release_pending", "unknown");
+    const char *backend = server_field(reply, "backend", server_mode_backend_name());
+    if (strcmp(state, "BLOCKED") == 0) inputs->runtime_state = SERVER_RUNTIME_BLOCKED;
+    else if (strcmp(state, "ACTIVE") == 0 || strcmp(owned, "1") == 0)
+        inputs->runtime_state = SERVER_RUNTIME_ACTIVE;
+    else if (strcmp(state, "IDLE") == 0) inputs->runtime_state = SERVER_RUNTIME_IDLE;
+    else inputs->runtime_state = SERVER_RUNTIME_UNKNOWN;
+
+    if (strcmp(release_pending, "yes") == 0 ||
+        (strcmp(release_error, "none") != 0 && strcmp(release_error, "unknown") != 0))
+        inputs->assertion_state = SERVER_ASSERTION_RELEASE_FAILED;
+    else if (strcmp(owned, "1") == 0) inputs->assertion_state = SERVER_ASSERTION_OWNED;
+    else if (strcmp(owned, "0") == 0) inputs->assertion_state = SERVER_ASSERTION_NONE;
+    else inputs->assertion_state = SERVER_ASSERTION_UNKNOWN;
+
+    inputs->runtime_source = strstr(backend, "MOCK") != NULL
+        ? SERVER_EVIDENCE_SOURCE_MOCK : SERVER_EVIDENCE_SOURCE_DEVICE_REPORTED;
+    inputs->runtime_freshness = SERVER_EVIDENCE_CURRENT;
+    time_t now = time(NULL);
+    inputs->runtime_observed_at_utc = now > 0 ? (int64_t)now : 0;
+}
+
+static void policy_recovery_observe(server_policy_inputs_t *inputs,
+                                   char *detail, size_t detail_cap) {
+    if (detail && detail_cap) detail[0] = '\0';
+    inputs->recovery_store_status = recovery_store_load(RECOVERY_DEFAULT_PATH, geteuid(),
+                                                        &inputs->recovery_record,
+                                                        detail, detail_cap);
+    inputs->recovery_record_available = inputs->recovery_store_status == RECOVERY_STORE_OK;
+}
+
+static const char *recovery_store_status_name(recovery_store_result_t value) {
+    switch (value) {
+        case RECOVERY_STORE_OK: return "OK";
+        case RECOVERY_STORE_MISSING: return "MISSING";
+        case RECOVERY_STORE_UNSAFE: return "UNSAFE";
+        case RECOVERY_STORE_CORRUPT: return "CORRUPT";
+        case RECOVERY_STORE_UNSUPPORTED: return "UNSUPPORTED";
+        case RECOVERY_STORE_IO_ERROR: return "IO_ERROR";
+    }
+    return "UNKNOWN";
+}
+
+static const char *server_config_stored_name(server_config_status_t value) {
+    switch (value) {
+        case SERVER_CONFIG_MISSING: return "no";
+        case SERVER_CONFIG_VALID:
+        case SERVER_CONFIG_INVALID:
+        case SERVER_CONFIG_UNSUPPORTED: return "yes";
+        case SERVER_CONFIG_UNSAFE: return "unknown";
+    }
+    return "unknown";
+}
+
+static int server_policy_show(FILE *out, const char *config_path) {
+    server_config_t config;
+    if (load_server_config(config_path, &config) != 0) return -1;
+    char maximum[16];
+    if (config.status == SERVER_CONFIG_VALID)
+        snprintf(maximum, sizeof(maximum), "%u", config.max_duration_seconds);
+    else
+        snprintf(maximum, sizeof(maximum), "UNAVAILABLE");
+    fprintf(out,
+            "policy.version=%u\n"
+            "policy.schema_version=%u\n"
+            "policy.mode=%s\n"
+            "policy.config_status=%s\n"
+            "policy.config_stored=%s\n"
+            "policy.config_valid=%s\n"
+            "policy.config_source=%s\n"
+            "policy.max_duration_seconds=%s\n"
+            "policy.require_operator_confirmation=%s\n"
+            "policy.allow_automatic_start=%s\n"
+            "policy.allow_restart_resume=%s\n"
+            "policy.detail=%s\n"
+            "policy.apply_supported=no\n",
+            SERVER_POLICY_ENGINE_VERSION, config.schema_version,
+            server_policy_name(config.policy), server_config_status_name(config.status),
+            server_config_stored_name(config.status),
+            config.status == SERVER_CONFIG_VALID ? "yes" : "no", config_path,
+            maximum,
+            config.require_operator_confirmation ? "yes" : "no",
+            config.allow_automatic_start ? "yes" : "no",
+            config.allow_restart_resume ? "yes" : "no", config.detail);
+    return ferror(out) ? -1 : 0;
+}
+
+static int server_policy_validate(FILE *out, const char *config_path) {
+    server_config_t config;
+    if (load_server_config(config_path, &config) != 0) return -1;
+    fprintf(out,
+            "policy.config_status=%s\n"
+            "policy.config_valid=%s\n"
+            "policy.schema_version=%u\n"
+            "policy.mode=%s\n"
+            "policy.detail=%s\n",
+            server_config_status_name(config.status),
+            config.status == SERVER_CONFIG_VALID ? "yes" : "no",
+            config.schema_version, server_policy_name(config.policy), config.detail);
+    return config.status == SERVER_CONFIG_VALID && !ferror(out) ? 0 : 1;
+}
+
+static const char *policy_next_step(const server_policy_result_t *result) {
+    if (result->decision == SERVER_DECISION_ELIGIBLE_FOR_MANUAL_BOUNDED_SESSION)
+        return "obtain separate operator authorization for a single bounded manual trial";
+    if (result->decision == SERVER_DECISION_OBSERVE_ONLY)
+        return "continue read-only diagnostics; this policy permits no assertion action";
+    if (result->decision == SERVER_DECISION_DISABLED &&
+        result->primary_reason == SERVER_REASON_POLICY_DISABLED)
+        return "no action is required while the configured policy remains disabled";
+    switch (result->primary_reason) {
+        case SERVER_REASON_CONFIG_MISSING_DISABLED:
+            return "review the version 2 schema and use an explicit operator-controlled configuration process";
+        case SERVER_REASON_RECOVERY_MISSING:
+        case SERVER_REASON_RECOVERY_UNSAFE:
+        case SERVER_REASON_RECOVERY_CORRUPT:
+        case SERVER_REASON_RECOVERY_UNSUPPORTED:
+        case SERVER_REASON_RECOVERY_IO_ERROR:
+        case SERVER_REASON_RECOVERY_PROCESS_NOT_CLEAN:
+        case SERVER_REASON_RECOVERY_CLEANUP_UNVERIFIED:
+        case SERVER_REASON_RECOVERY_RELEASE_FAILED:
+        case SERVER_REASON_RECOVERY_RESTART_LIMIT:
+        case SERVER_REASON_RECOVERY_RECORD_UNAVAILABLE:
+        case SERVER_REASON_RECOVERY_OWNERSHIP_UNKNOWN:
+        case SERVER_REASON_ASSERTION_RELEASE_FAILED:
+        case SERVER_REASON_ASSERTION_OWNERSHIP_UNKNOWN:
+            return "resolve the P014 recovery blocker and review recovery status";
+        case SERVER_REASON_DAEMON_BLOCKED:
+            return "resolve the daemon BLOCKED state through the P014 procedure";
+        case SERVER_REASON_RUNTIME_UNKNOWN:
+            return "obtain a current read-only daemon and assertion observation";
+        case SERVER_REASON_ASSERTION_OWNED:
+            return "resolve the current assertion before requesting a bounded session";
+        case SERVER_REASON_SUPERVISOR_UNVERIFIED:
+            return "complete P013/P014 lifecycle review; automatic recovery remains disabled";
+        case SERVER_REASON_CONFIG_INVALID:
+        case SERVER_REASON_CONFIG_UNSAFE:
+        case SERVER_REASON_CONFIG_UNSUPPORTED:
+            return "review the configuration schema and file safety without automatic repair";
+        case SERVER_REASON_DURATION_ZERO:
+        case SERVER_REASON_DURATION_EXCEEDS_CONFIG:
+        case SERVER_REASON_DURATION_EXCEEDS_CEILING:
+            return "select a positive duration within the configured and 300 second limits";
+        case SERVER_REASON_UNATTENDED_NOT_SUPPORTED:
+        case SERVER_REASON_AUTOMATIC_RECOVERY_DISABLED:
+            return "keep unattended start and automatic recovery disabled in P015";
+        case SERVER_REASON_EVIDENCE_DENIED:
+        case SERVER_REASON_EVIDENCE_UNSAFE:
+            return "review the explicit hardware or resource safety result before any later request";
+        default:
+            return "complete P011 acceptance, P012 safety review, P013 compatibility, and physical recovery evidence";
+    }
+}
+
+static int server_policy_explain(FILE *out, const char *socket_path,
+                                 const char *config_path, int include_plan) {
+    server_config_t config;
+    server_policy_inputs_t inputs;
+    server_policy_result_t result;
+    char battery_percentage[16];
+    char recovery_detail[192] = {0};
+    const server_policy_evidence_t *battery_evidence;
+    const server_policy_evidence_t *thermal_evidence;
+    if (load_server_config(config_path, &config) != 0) return -1;
+    server_policy_inputs_init(&inputs);
+    inputs.operation = SERVER_OPERATION_MANUAL_BOUNDED_SESSION;
+    inputs.requested_duration_seconds = config.max_duration_seconds;
+    policy_recovery_observe(&inputs, recovery_detail, sizeof(recovery_detail));
+    policy_runtime_observe(socket_path, &inputs);
+    if (server_policy_evaluate(&config, &inputs, &result) != 0) return -1;
+    battery_evidence = &inputs.gates[SERVER_POLICY_GATE_BATTERY_SAFETY];
+    thermal_evidence = &inputs.gates[SERVER_POLICY_GATE_THERMAL_SAFETY];
+    if (inputs.battery_percentage < 0)
+        snprintf(battery_percentage, sizeof(battery_percentage), "UNAVAILABLE");
+    else
+        snprintf(battery_percentage, sizeof(battery_percentage), "%d", inputs.battery_percentage);
+
+    fprintf(out,
+            "policy.version=%u\n"
+            "policy.mode=%s\n"
+            "policy.config_stored=%s\n"
+            "policy.config_status=%s\n"
+            "policy.config_valid=%s\n"
+            "policy.config_source=%s\n"
+            "policy.requested=%s\n"
+            "requested_operation=%s\n"
+            "requested_duration_seconds=%llu\n"
+            "policy.max_duration_seconds=%u\n"
+            "decision=%s\n"
+            "eligible=%s\n"
+            "execution_authorized=%s\n"
+            "operator_authorization=NOT_GRANTED\n"
+            "operator_authorization_required=yes\n"
+            "runtime_activated=%s\n"
+            "runtime.observation=%s\n"
+            "runtime.source=%s\n"
+            "runtime.freshness=%s\n"
+            "runtime.observed_at_utc=%lld\n"
+            "recovery.journal=%s\n"
+            "recovery.process=%s\n"
+            "recovery.cleanup=%s\n"
+            "recovery.last_exit=%s\n"
+            "recovery.load_detail=%s\n"
+            "recovery.restart_decision=%s\n"
+            "recovery.restart_eligibility=no\n"
+            "recovery.supervisor=%s\n"
+            "recovery.automatic_runtime_enabled=no\n"
+            "launchd.compatibility=UNVERIFIED\n"
+            "battery.percentage=%s\n"
+            "battery.charging=%s\n"
+            "battery.source=%s\n"
+            "battery.confidence=%s\n"
+            "battery.observed_at_utc=%lld\n"
+            "battery.freshness=%s\n"
+            "thermal.status=%s\n"
+            "thermal.source=%s\n"
+            "thermal.confidence=%s\n"
+            "thermal.observed_at_utc=%lld\n"
+            "thermal.freshness=%s\n"
+            "reason.primary=%s\n"
+            "reason.count=%zu\n",
+            result.policy_version, server_policy_name(config.policy),
+            server_config_stored_name(config.status),
+            server_config_status_name(config.status),
+            config.status == SERVER_CONFIG_VALID ? "yes" : "no",
+            config_path,
+            config.status == SERVER_CONFIG_VALID && config.policy == SERVER_POLICY_BOUNDED_SESSION ? "yes" : "no",
+            server_policy_operation_name(inputs.operation),
+            (unsigned long long)inputs.requested_duration_seconds,
+            result.maximum_duration_seconds, server_policy_decision_name(result.decision),
+            result.eligible ? "yes" : "no", result.execution_authorized ? "yes" : "no",
+            server_policy_activation_name(result.runtime_activation),
+            server_policy_runtime_name(inputs.runtime_state),
+            server_evidence_source_name(inputs.runtime_source),
+            server_evidence_freshness_name(inputs.runtime_freshness),
+            (long long)inputs.runtime_observed_at_utc,
+            recovery_store_status_name(inputs.recovery_store_status),
+            recovery_process_state_name(result.recovery_process),
+            recovery_cleanup_state_name(result.recovery_cleanup),
+            recovery_exit_class_name(result.recovery_last_exit),
+            recovery_detail[0] ? recovery_detail : "not_available",
+            inputs.recovery_restart_decision_available
+                ? recovery_decision_name(result.automatic_recovery_decision) : "UNAVAILABLE",
+            server_policy_supervisor_name(inputs.supervisor_state),
+            battery_percentage,
+            server_policy_charging_name(inputs.charging_status),
+            server_evidence_source_name(battery_evidence->source),
+            server_evidence_confidence_name(battery_evidence->confidence),
+            (long long)battery_evidence->observed_at_utc,
+            server_evidence_freshness_name(battery_evidence->freshness),
+            server_policy_thermal_name(inputs.thermal_state),
+            server_evidence_source_name(thermal_evidence->source),
+            server_evidence_confidence_name(thermal_evidence->confidence),
+            (long long)thermal_evidence->observed_at_utc,
+            server_evidence_freshness_name(thermal_evidence->freshness),
+            server_policy_reason_name(result.primary_reason), result.blocker_count);
+
+    for (size_t i = SERVER_POLICY_GATE_P011_PACKAGE_ACCEPTANCE;
+         i < SERVER_POLICY_GATE_COUNT; ++i) {
+        server_policy_evidence_t *gate = &inputs.gates[i];
+        fprintf(out, "evidence.%s.state=%s\n"
+                     "evidence.%s.source=%s\n"
+                     "evidence.%s.freshness=%s\n"
+                     "evidence.%s.confidence=%s\n"
+                     "evidence.%s.reviewed=%s\n"
+                     "evidence.%s.observed_at_utc=%lld\n",
+                server_policy_gate_name((server_policy_gate_t)i), server_evidence_state_name(gate->state),
+                server_policy_gate_name((server_policy_gate_t)i), server_evidence_source_name(gate->source),
+                server_policy_gate_name((server_policy_gate_t)i), server_evidence_freshness_name(gate->freshness),
+                server_policy_gate_name((server_policy_gate_t)i), server_evidence_confidence_name(gate->confidence),
+                server_policy_gate_name((server_policy_gate_t)i), gate->reviewed ? "yes" : "no",
+                server_policy_gate_name((server_policy_gate_t)i), (long long)gate->observed_at_utc);
+    }
+    for (size_t i = 0; i < result.blocker_count; ++i) {
+        const server_policy_blocker_t *blocker = &result.blockers[i];
+        fprintf(out,
+                "reason.%zu.code=%s\n"
+                "reason.%zu.gate=%s\n"
+                "reason.%zu.state=%s\n"
+                "reason.%zu.source=%s\n"
+                "reason.%zu.freshness=%s\n"
+                "reason.%zu.required=%s\n",
+                i + 1, server_policy_reason_name(blocker->reason),
+                i + 1, server_policy_gate_name(blocker->gate),
+                i + 1, server_evidence_state_name(blocker->state),
+                i + 1, server_evidence_source_name(blocker->source),
+                i + 1, server_evidence_freshness_name(blocker->freshness),
+                i + 1, server_policy_reason_requirement(blocker->reason, blocker->gate));
+    }
+    fprintf(out,
+            "session.executor=NOT_IMPLEMENTED\n"
+            "automatic_start=no\n"
+            "restart_resume=no\n"
+            "runtime_action_performed=no\n"
+            "next_safe_step=%s\n",
+            policy_next_step(&result));
+    if (include_plan) {
+        fprintf(out, "plan.migration_writer=NOT_IMPLEMENTED\n"
+                     "plan.configuration_write=no\n"
+                     "plan.assertion_action=no\n"
+                     "plan.launchd_action=no\n");
+    }
+    return ferror(out) ? -1 : 0;
+}
+
+static int server_policy_migrate_preview(FILE *out, const char *config_path) {
+    server_config_t config;
+    if (load_server_config(config_path, &config) != 0) return -1;
+    fprintf(out, "migration.mode=DRY_RUN\n"
+                 "migration.write_performed=no\n"
+                 "migration.writer_supported=no\n"
+                 "migration.source_status=%s\n",
+            server_config_status_name(config.status));
+    if (config.status == SERVER_CONFIG_VALID && config.schema_version == 1) {
+        fprintf(out,
+                "migration.proposed_config={\"version\":2,\"policy\":\"%s\",\"session\":{\"max_duration_seconds\":300,\"require_operator_confirmation\":true,\"allow_automatic_start\":false,\"allow_restart_resume\":false}}\n"
+                "migration.original_preserved=yes\n"
+                "migration.session_activation=no\n",
+                config.policy == SERVER_POLICY_OBSERVE_ONLY ? "observe_only" : "disabled");
+    } else if (config.status == SERVER_CONFIG_VALID && config.schema_version == 2) {
+        fprintf(out, "migration.result=already_version_2\n");
+    } else if (config.status == SERVER_CONFIG_MISSING) {
+        fprintf(out, "migration.result=no_source_configuration\n"
+                     "migration.proposed_policy=disabled\n");
+    } else {
+        fprintf(out, "migration.result=blocked_source_not_valid\n"
+                     "migration.proposed_config=none\n");
+    }
+    return ferror(out) ? -1 : 0;
+}
+
+static int server_policy_command(int argc, char **argv, const char *socket_path,
+                                 const char *config_path) {
+    if (argc == 1 && strcmp(argv[0], "show") == 0)
+        return server_policy_show(stdout, config_path) == 0 ? 0 : 1;
+    if (argc == 1 && strcmp(argv[0], "validate") == 0)
+        return server_policy_validate(stdout, config_path);
+    if (argc == 1 && strcmp(argv[0], "explain") == 0)
+        return server_policy_explain(stdout, socket_path, config_path, 0) == 0 ? 0 : 1;
+    if (argc == 1 && strcmp(argv[0], "plan") == 0)
+        return server_policy_explain(stdout, socket_path, config_path, 1) == 0 ? 0 : 1;
+    if (argc == 2 && strcmp(argv[0], "migrate") == 0 &&
+        strcmp(argv[1], "--dry-run") == 0)
+        return server_policy_migrate_preview(stdout, config_path) == 0 ? 0 : 1;
+    usage();
+    return 2;
+}
+
 static int server_status(FILE *out, const char *socket_path, const char *config_path,
                          const char *schedule_path) {
     server_config_t config;
@@ -231,9 +590,13 @@ static int server_status(FILE *out, const char *socket_path, const char *config_
     int configured = config.status == SERVER_CONFIG_VALID &&
                      config.policy == SERVER_POLICY_OBSERVE_ONLY;
     int compatible = daemon == SERVER_DAEMON_COMPATIBLE;
-    const char *state = config.status == SERVER_CONFIG_INVALID || config.status == SERVER_CONFIG_UNSAFE
+    const char *state = config.status == SERVER_CONFIG_INVALID ||
+                        config.status == SERVER_CONFIG_UNSAFE ||
+                        config.status == SERVER_CONFIG_UNSUPPORTED
                             ? "BLOCKED"
-                            : configured ? "OBSERVE_ONLY" : "DISABLED";
+                            : config.policy == SERVER_POLICY_BOUNDED_SESSION
+                                ? "POLICY_STORED_INACTIVE"
+                                : configured ? "OBSERVE_ONLY" : "DISABLED";
 
     fprintf(out,
             "configured_policy=%s\n"
@@ -341,7 +704,8 @@ static int server_status(FILE *out, const char *socket_path, const char *config_
             "health.tailscale_connectivity=UNAVAILABLE\n"
             "tailscale_reachability=UNAVAILABLE\n",
             server_path_state(socket_path, 1), server_path_state(schedule_path, 0),
-            config.status == SERVER_CONFIG_INVALID || config.status == SERVER_CONFIG_UNSAFE
+            config.status == SERVER_CONFIG_INVALID || config.status == SERVER_CONFIG_UNSAFE ||
+            config.status == SERVER_CONFIG_UNSUPPORTED
                 ? "server_mode_config_invalid"
                 : compatible && strcmp(server_field(reply, "state_invariant", "OK"), "ERROR") == 0
                     ? "daemon_state_invariant_failure"
@@ -449,6 +813,10 @@ int main(int argc, char **argv) {
     char command[512] = {0};
 
     if (strcmp(argv[i], "server") == 0) {
+        if (i + 2 < argc && strcmp(argv[i + 1], "policy") == 0) {
+            return server_policy_command(argc - i - 2, argv + i + 2,
+                                         path, server_config_path);
+        }
         if (i + 2 == argc && strcmp(argv[i + 1], "status") == 0) {
             return server_status(stdout, path, server_config_path, schedule_path) == 0 ? 0 : 1;
         }

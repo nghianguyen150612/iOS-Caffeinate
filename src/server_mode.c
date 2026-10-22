@@ -48,6 +48,7 @@ const char *server_config_status_name(server_config_status_t status) {
         case SERVER_CONFIG_VALID: return "VALID";
         case SERVER_CONFIG_INVALID: return "INVALID";
         case SERVER_CONFIG_UNSAFE: return "UNSAFE";
+        case SERVER_CONFIG_UNSUPPORTED: return "UNSUPPORTED";
     }
     return "INVALID";
 }
@@ -56,6 +57,7 @@ const char *server_policy_name(server_policy_t policy) {
     switch (policy) {
         case SERVER_POLICY_DISABLED: return "DISABLED";
         case SERVER_POLICY_OBSERVE_ONLY: return "OBSERVE_ONLY";
+        case SERVER_POLICY_BOUNDED_SESSION: return "BOUNDED_SESSION";
     }
     return "DISABLED";
 }
@@ -167,6 +169,29 @@ typedef struct {
     const char *end;
 } parser_t;
 
+#ifdef IOSCAFFEINATE_SERVER_MODE_TESTING
+static char test_append_path[PATH_MAX];
+
+void server_mode_test_append_after_read(const char *path) {
+    if (!path || strlen(path) >= sizeof(test_append_path)) {
+        test_append_path[0] = '\0';
+        return;
+    }
+    snprintf(test_append_path, sizeof(test_append_path), "%s", path);
+}
+
+static void test_append_config_race(const char *path) {
+    if (!test_append_path[0] || strcmp(path, test_append_path) != 0) return;
+    test_append_path[0] = '\0';
+    int fd = open(path, O_WRONLY | O_APPEND | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0) return;
+    const char byte = ' ';
+    ssize_t written = write(fd, &byte, 1);
+    close(fd);
+    if (written != 1) return;
+}
+#endif
+
 static void skip_whitespace(parser_t *parser) {
     while (parser->cursor < parser->end &&
            (*parser->cursor == ' ' || *parser->cursor == '\t' ||
@@ -198,18 +223,102 @@ static int parse_string(parser_t *parser, char *out, size_t cap) {
     return 0;
 }
 
-static int parse_version(parser_t *parser) {
+static int parse_uint(parser_t *parser, uint64_t *value) {
     skip_whitespace(parser);
-    if (parser->cursor >= parser->end || *parser->cursor != '1') return -1;
-    parser->cursor++;
-    if (parser->cursor < parser->end && *parser->cursor >= '0' && *parser->cursor <= '9') return -1;
+    if (!value || parser->cursor >= parser->end ||
+        *parser->cursor < '0' || *parser->cursor > '9') return -1;
+    const char *start = parser->cursor;
+    uint64_t parsed = 0;
+    while (parser->cursor < parser->end &&
+           *parser->cursor >= '0' && *parser->cursor <= '9') {
+        uint64_t digit = (uint64_t)(*parser->cursor - '0');
+        if (parsed > (UINT64_MAX - digit) / 10) return -1;
+        parsed = parsed * 10 + digit;
+        parser->cursor++;
+    }
+    if (parser->cursor - start > 1 && *start == '0') return -1;
+    *value = parsed;
     return 0;
 }
 
-static int parse_config_json(const char *data, size_t length, server_policy_t *policy) {
+static int parse_bool(parser_t *parser, int *value) {
+    skip_whitespace(parser);
+    if (parser->end - parser->cursor >= 4 &&
+        memcmp(parser->cursor, "true", 4) == 0) {
+        parser->cursor += 4;
+        *value = 1;
+        return 0;
+    }
+    if (parser->end - parser->cursor >= 5 &&
+        memcmp(parser->cursor, "false", 5) == 0) {
+        parser->cursor += 5;
+        *value = 0;
+        return 0;
+    }
+    return -1;
+}
+
+static int parse_schema_version(parser_t *parser, unsigned *version) {
+    uint64_t parsed = 0;
+    if (parse_uint(parser, &parsed) != 0 || parsed > UINT_MAX) return -1;
+    *version = (unsigned)parsed;
+    return parsed == 1 || parsed == SERVER_MODE_CONFIG_VERSION ? 0 : 1;
+}
+
+static int parse_session(parser_t *parser, server_config_t *config) {
+    bool have_duration = false;
+    bool have_confirmation = false;
+    bool have_automatic = false;
+    bool have_resume = false;
+    if (expect(parser, '{') != 0) return -1;
+    for (;;) {
+        char key[40];
+        skip_whitespace(parser);
+        if (parser->cursor >= parser->end || *parser->cursor == '}') return -1;
+        if (parse_string(parser, key, sizeof(key)) != 0 || expect(parser, ':') != 0) return -1;
+        if (strcmp(key, "max_duration_seconds") == 0) {
+            uint64_t value = 0;
+            if (have_duration || parse_uint(parser, &value) != 0 ||
+                value == 0 || value > SERVER_MODE_MAX_SESSION_SECONDS) return -1;
+            config->max_duration_seconds = (unsigned)value;
+            have_duration = true;
+        } else if (strcmp(key, "require_operator_confirmation") == 0) {
+            if (have_confirmation || parse_bool(parser, &config->require_operator_confirmation) != 0)
+                return -1;
+            have_confirmation = true;
+        } else if (strcmp(key, "allow_automatic_start") == 0) {
+            if (have_automatic || parse_bool(parser, &config->allow_automatic_start) != 0)
+                return -1;
+            have_automatic = true;
+        } else if (strcmp(key, "allow_restart_resume") == 0) {
+            if (have_resume || parse_bool(parser, &config->allow_restart_resume) != 0)
+                return -1;
+            have_resume = true;
+        } else {
+            return -1;
+        }
+        skip_whitespace(parser);
+        if (parser->cursor < parser->end && *parser->cursor == '}') {
+            parser->cursor++;
+            break;
+        }
+        if (expect(parser, ',') != 0) return -1;
+        skip_whitespace(parser);
+        if (parser->cursor < parser->end && *parser->cursor == '}') return -1;
+    }
+    if (!have_duration || !have_confirmation || !have_automatic || !have_resume ||
+        !config->require_operator_confirmation || config->allow_automatic_start ||
+        config->allow_restart_resume) return -1;
+    return 0;
+}
+
+/* 0 accepted, 1 unsupported schema version, -1 invalid/ambiguous JSON. */
+static int parse_config_json(const char *data, size_t length, server_config_t *config) {
     parser_t parser = {.cursor = data, .end = data + length};
     bool have_version = false;
     bool have_policy = false;
+    bool have_session = false;
+    int version_status = 0;
     if (expect(&parser, '{') != 0) return -1;
     for (;;) {
         char key[32], value[32];
@@ -217,14 +326,21 @@ static int parse_config_json(const char *data, size_t length, server_policy_t *p
         if (parser.cursor >= parser.end || *parser.cursor == '}') return -1;
         if (parse_string(&parser, key, sizeof(key)) != 0 || expect(&parser, ':') != 0) return -1;
         if (strcmp(key, "version") == 0) {
-            if (have_version || parse_version(&parser) != 0) return -1;
+            if (have_version) return -1;
+            version_status = parse_schema_version(&parser, &config->schema_version);
+            if (version_status < 0) return -1;
             have_version = true;
         } else if (strcmp(key, "policy") == 0) {
             if (have_policy || parse_string(&parser, value, sizeof(value)) != 0) return -1;
-            if (strcmp(value, "disabled") == 0) *policy = SERVER_POLICY_DISABLED;
-            else if (strcmp(value, "observe_only") == 0) *policy = SERVER_POLICY_OBSERVE_ONLY;
+            if (strcmp(value, "disabled") == 0) config->policy = SERVER_POLICY_DISABLED;
+            else if (strcmp(value, "observe_only") == 0) config->policy = SERVER_POLICY_OBSERVE_ONLY;
+            else if (strcmp(value, "bounded_session") == 0)
+                config->policy = SERVER_POLICY_BOUNDED_SESSION;
             else return -1;
             have_policy = true;
+        } else if (strcmp(key, "session") == 0) {
+            if (have_session || parse_session(&parser, config) != 0) return -1;
+            have_session = true;
         } else {
             return -1;
         }
@@ -238,7 +354,18 @@ static int parse_config_json(const char *data, size_t length, server_policy_t *p
         if (parser.cursor < parser.end && *parser.cursor == '}') return -1;
     }
     skip_whitespace(&parser);
-    return have_version && have_policy && parser.cursor == parser.end ? 0 : -1;
+    if (version_status > 0) return 1;
+    if (!have_version || !have_policy || parser.cursor != parser.end) return -1;
+    if (config->schema_version == 1) {
+        if (have_session || config->policy == SERVER_POLICY_BOUNDED_SESSION) return -1;
+        config->max_duration_seconds = SERVER_MODE_MAX_SESSION_SECONDS;
+        config->require_operator_confirmation = 1;
+        config->allow_automatic_start = 0;
+        config->allow_restart_resume = 0;
+    } else {
+        if (!have_session) return -1;
+    }
+    return 0;
 }
 
 int server_mode_config_load(const char *path, server_config_t *config) {
@@ -246,6 +373,11 @@ int server_mode_config_load(const char *path, server_config_t *config) {
     memset(config, 0, sizeof(*config));
     config->status = SERVER_CONFIG_MISSING;
     config->policy = SERVER_POLICY_DISABLED;
+    config->schema_version = 0;
+    config->max_duration_seconds = SERVER_MODE_MAX_SESSION_SECONDS;
+    config->require_operator_confirmation = 1;
+    config->allow_automatic_start = 0;
+    config->allow_restart_resume = 0;
     snprintf(config->detail, sizeof(config->detail), "configuration file is absent");
 
     int fd = -1;
@@ -276,6 +408,9 @@ int server_mode_config_load(const char *path, server_config_t *config) {
         if (n == 0) break;
         used += (size_t)n;
     }
+#ifdef IOSCAFFEINATE_SERVER_MODE_TESTING
+    test_append_config_race(path ? path : SERVER_MODE_CONFIG_DEFAULT);
+#endif
     struct stat after_read;
     int stable = !read_error && fstat(fd, &after_read) == 0 &&
                  S_ISREG(after_read.st_mode) && after_read.st_uid == geteuid() &&
@@ -290,14 +425,18 @@ int server_mode_config_load(const char *path, server_config_t *config) {
         return 0;
     }
     data[used] = '\0';
-    if (parse_config_json(data, used, &config->policy) != 0) {
+    int parse_status = parse_config_json(data, used, config);
+    if (parse_status != 0) {
         config->policy = SERVER_POLICY_DISABLED;
-        config->status = SERVER_CONFIG_INVALID;
-        snprintf(config->detail, sizeof(config->detail), "strict version 1 schema parse failed");
+        config->status = parse_status > 0 ? SERVER_CONFIG_UNSUPPORTED : SERVER_CONFIG_INVALID;
+        snprintf(config->detail, sizeof(config->detail), parse_status > 0 ?
+                 "configuration schema version is unsupported" :
+                 "strict version 1 or version 2 schema parse failed");
         return 0;
     }
 
     config->status = SERVER_CONFIG_VALID;
-    snprintf(config->detail, sizeof(config->detail), "schema version 1 accepted");
+    snprintf(config->detail, sizeof(config->detail), "schema version %u accepted",
+             config->schema_version);
     return 0;
 }

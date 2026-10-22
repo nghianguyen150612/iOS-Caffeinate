@@ -50,11 +50,11 @@ Feature implementation, physical-device acceptance, and production reliability c
 
 **Depends on:** P012 research; P013 lifecycle controls; P014 recovery policy. P014 supplies a cleanup and recovery eligibility input only; it does not supply an active supervisor or verified automatic restart.
 
-**Deliverables:** versioned policy evaluation for bounded server sessions, explicit readiness reasons, policy migration, and a read-only explain/doctor path.
+**Deliverables:** strict v2 schema with v1 compatibility, pure C11 bounded-session evaluation, deterministic reason codes, read-only show/validate/explain/plan, dry-run migration preview, filesystem/parser and negative policy tests, exact-source CI evidence, and a supervised read-only device procedure.
 
-**Safety constraints:** opt-in policy, conservative defaults, no hidden indefinite hold, no automatic interpretation of network reachability as proof of awake state, and no assumption that launchd mutation, restart execution, unattended reliability, or SSH availability has been verified.
+**Safety constraints:** policy presence does not start a session; no config writer or automatic migration; maximum session duration is 300 seconds; P014 cleanup remains authoritative; P013 lifecycle gates remain closed; no automatic launchd, daemon, assertion, schedule, network, or wake action; physical evidence must be current, reviewed, and P009-compatible.
 
-**Validation and completion:** policy unit/property tests, migration tests, negative configuration cases, and supervised policy transitions on the target device. P015 must keep recovery blocked when P014 cleanup is unresolved and must report supervisor capability separately from policy eligibility.
+**Validation and completion:** cloud policy/schema/filesystem/CLI tests and P009–P014 regressions can complete without the iPad. Exact-head CI records the final source SHA and simulated/mock scope. Missing device evidence keeps policy blocked or deferred. Physical procedure remains read-only until later separately authorized bounded trials; policy eligibility is not execution authorization.
 
 ### P016 — Health, battery and thermal monitoring
 

@@ -77,6 +77,10 @@ The import format is [`connectivity-evidence-v1.schema.json`](schemas/connectivi
 
 P006 does not run a scanner, open remote connections, change SSH/Tailscale settings, or import fabricated evidence.
 
+## P015 version 2 policy compatibility
+
+P015 extends this same file path with strict schema version 2 and the `bounded_session` policy. Existing version 1 `disabled` and `observe_only` configurations retain their meaning. The P015 evaluator is separate from P006 observation and never performs a trial or assertion action. A stored bounded-session policy stays inactive until a later separately authorized implementation; no automatic start, restart resume, launchd registration, or unattended operation is introduced. See the [P015 schema](v0.2/P015-POLICY-SCHEMA.md), [decision states](v0.2/P015-POLICY-STATES.md), and [migration preview](v0.2/P015-CONFIG-MIGRATION.md).
+
 ## Recovery and overhead
 
 The event loop blocks on socket activity when idle without schedules or a held assertion. With no schedules, active assertion deadlines and bounded release retries wake at their deadlines. When P004 schedules exist, the existing one-second recheck bound is preserved. Diagnostics do not load IOKit, acquire assertions, write configuration, or rewrite schedule state.
