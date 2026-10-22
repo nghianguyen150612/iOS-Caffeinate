@@ -171,6 +171,52 @@ jobs:
             build/p009/readiness.md
             build/p009/source-commit.txt
 
+  p011-release-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Run offline P011 release and device-preflight regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/p011
+          sh -n scripts/p011_device_preflight.sh
+          python3 -m py_compile scripts/p011_release_preflight.py
+          python3 scripts/p011_release_preflight.py --help > build/p011/release-preflight-help.txt
+          python3 -m unittest discover -s tests -p 'test_p011_preflight.py' -v 2>&1 | tee build/p011/p011-tests.txt
+          git rev-parse HEAD > build/p011/source-commit.txt
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          output = Path("build/p011/p011-tests.txt").read_text()
+          match = re.search(r"Ran (\d+) tests? in ", output)
+          if not match or "\nOK\n" not in output:
+              raise SystemExit("P011 offline regression suite did not finish successfully")
+          source = Path("build/p011/source-commit.txt").read_text().strip()
+          Path("build/p011/P011-VALIDATION.txt").write_text(
+              "\n".join([
+                  "P011 offline regression suite: PASS",
+                  f"tests: {match.group(1)}",
+                  f"source_sha: {source}",
+                  "device_preflight_shell_syntax: PASS",
+                  "device_execution: NOT_PERFORMED",
+              ]) + "\n"
+          )
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P011-cloud-validation
+          if-no-files-found: error
+          path: |
+            build/p011/P011-VALIDATION.txt
+            build/p011/p011-tests.txt
+            build/p011/source-commit.txt
+            build/p011/release-preflight-help.txt
+
   p010-signing-release-gate:
     needs: [linux-protocol, ios-cross-build, ios-artifact-inspection, ios-rootful-package, p009-evidence-validation]
     runs-on: ubuntu-latest

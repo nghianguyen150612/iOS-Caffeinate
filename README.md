@@ -1,6 +1,6 @@
 # iOS-Caffeinate
 
-Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds read-only scheduled-wake diagnostics. P006 adds server diagnostics, bounded trials, health observations, readiness gates, and connectivity evidence. P007 adds rootful Debian packaging. P008 integrates P001–P007; P009 adds offline evidence review. On October 18, 2026, the operator reported successful target-device execution with an explicit private no-container entitlement, IOKit assertion lifecycle, cleanup, and locked-screen LAN/Tailscale SSH observations. Those results still need P009 evidence review. Signed package installation, rollback, the no-assertion comparison, battery/thermal behavior, scheduled wake, and long-duration reliability remain pending or unverified. Version 0.1 has not shipped and is not production-ready.
+Native C11 CLI and daemon for rootful jailbroken iOS 12.5.7 (Amethyst/Procursus), targeting iPad mini 2 A1489 / Apple A7 ARM64. P003 provides daemon lifecycle and IPC security; P004 adds bounded timed awake and persisted schedule evaluation. P005 adds read-only scheduled-wake diagnostics. P006 adds server diagnostics, bounded trials, health observations, readiness gates, and connectivity evidence. P007 adds rootful Debian packaging. P008 integrates P001–P007; P009 adds offline evidence review. The public GitHub stable release **v0.1.0** has shipped with package `com.ioscaffeinate.cli` version `0.1.0-1`; this release-channel designation does not mean the installed Debian package passed hardware acceptance. On October 18, 2026, the operator reported successful target-device execution with an explicit private no-container entitlement, IOKit assertion lifecycle, cleanup, and locked-screen LAN/Tailscale SSH observations. Those results still need P009 evidence review. Stable package installation, installed-binary execution, rollback, the no-assertion comparison, battery/thermal behavior, scheduled wake, and long-duration reliability remain pending or unverified. The project is not production reliability certified.
 
 Executables: **ios-caffeinate** (CLI), **ios-caffeinated** (daemon). **ic** is a filesystem symlink to the CLI, never a second executable or shell alias. The socket remains `/var/run/ioscaffeinated.sock`.
 
@@ -63,7 +63,7 @@ Outputs: `dist/ios-caffeinate`, `dist/ios-caffeinated`, relative symlink `dist/i
 
 ## Rootful package
 
-The P010 release candidate uses package `com.ioscaffeinate.cli` version `0.1.0~rc1-1`, Debian architecture `iphoneos-arm`, and thin ARM64 iOS 12.0 executables. The Debian package architecture is distinct from the binaries' ARM64 CPU architecture. The package includes a genuine `ic` symlink, docs, a read-only manager, empty persistent/log directories, and the inactive launchd template under `/usr/share/ioscaffeinate/`. It does not activate launchd or seed server/schedule configuration. The manager is installed at `/usr/local/libexec/ioscaffeinate-manager`, outside writable state directories.
+The P010 release candidate used package `com.ioscaffeinate.cli` version `0.1.0~rc1-1`; the published v0.1.0 stable package is version `0.1.0-1`. Both use Debian architecture `iphoneos-arm` and thin ARM64 iOS 12.0 executables. The Debian package architecture is distinct from the binaries' ARM64 CPU architecture. The stable package includes a genuine `ic` symlink, docs, a read-only manager, empty persistent/log directories, and the inactive launchd template under `/usr/share/ioscaffeinate/`. It does not activate launchd or seed server/schedule configuration. The manager is installed at `/usr/local/libexec/ioscaffeinate-manager`, outside writable state directories. The official package SHA-256 is `439d2543adbe1472f82cfd6c9e6bb9dd747da6c31c79f3da1f3da86b8ca9421c`.
 
 Read [P010 signing](docs/P010-SIGNING.md), [package validation](docs/P010-PACKAGING-VALIDATION.md), and [device acceptance](docs/P010-DEVICE-ACCEPTANCE.md) before using an artifact. CI `.deb` files remain **UNSIGNED / DEVICE-UNVERIFIED**. A locally signed package is not device-accepted until the supervised installation gates pass.
 
@@ -106,6 +106,12 @@ Mock, simulated, and CI evidence cannot pass hardware gates. The October 18, 202
 ## P010 hardware signing and RC1
 
 P010 adds the opt-in `amethyst-ios12-rootful` profile, exact entitlement extraction, source-to-signed-binary identity checks, final `.deb` validation, operator-reported evidence bundling, and the `v0.1.0-rc1` release process. The Debian version `0.1.0~rc1-1` sorts before `0.1.0-1`. The exact-source CI release manifest is an Actions artifact; it is not a signed installation package. See [P010 validation](docs/P010-VALIDATION.md) and [RC1 draft notes](docs/releases/v0.1.0-rc1.md).
+
+The subsequent public [v0.1.0 stable release](https://github.com/nghianguyen150612/iOS-Caffeinate/releases/tag/v0.1.0) contains a separately signed `SIGNED-DEVICE-UNVERIFIED` Debian package. Signature integrity remains `PENDING`; the stable package has not been installed or accepted on the reference iPad.
+
+## P011 and v0.2 roadmap
+
+P011 verifies the published stable artifact and prepares a read-only device preflight and supervised acceptance procedure. Its physical installation, installed-binary, rollback, power, and reliability gates remain pending. See the [v0.2 roadmap](docs/v0.2/ROADMAP.md), [P011 device procedure](docs/v0.2/P011-DEVICE-ACCEPTANCE.md), [evidence matrix](docs/v0.2/P011-EVIDENCE-MATRIX.md), and [validation commands](docs/v0.2/P011-VALIDATION.md).
 
 ## Scope and evidence
 
