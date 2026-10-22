@@ -626,6 +626,8 @@ def _validate_chain(source: dict[str, Any]) -> list[str]:
             issues.append(f"{milestone} PR #{pr} is {item['state']}")
         if item["mergeability"] == "CONFLICTING":
             issues.append(f"{milestone} PR #{pr} is conflicting")
+        if item["review_state"] in {"CHANGES_REQUESTED", "REVIEW_REQUIRED", "UNKNOWN"}:
+            issues.append(f"{milestone} PR #{pr} review state is {item['review_state']}")
         if item["exact_head_ci"] != "PASS":
             issues.append(f"{milestone} PR #{pr} exact-head CI is {item['exact_head_ci']}")
     if source["p020_base_branch"] != "main":

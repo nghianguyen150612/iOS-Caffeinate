@@ -115,6 +115,13 @@ class P020ReleaseGateTests(unittest.TestCase):
         self.assertEqual(result["decision"], "RELEASE_BLOCKED")
         self.assertEqual(len(result["chain_issues"]), 2)
 
+    def test_unknown_predecessor_review_state_blocks_release(self) -> None:
+        self.manifest["source"]["milestone_chain"][0]["review_state"] = "UNKNOWN"
+        self.write_manifest()
+        result = gate.assess(self.manifest_path, self.source_sha)
+        self.assertEqual(result["decision"], "RELEASE_BLOCKED")
+        self.assertTrue(any("review state is UNKNOWN" in issue for issue in result["chain_issues"]))
+
     def test_assess_and_report_are_offline_read_only_commands(self) -> None:
         before = self.manifest_path.read_bytes()
         assessed = subprocess.run([

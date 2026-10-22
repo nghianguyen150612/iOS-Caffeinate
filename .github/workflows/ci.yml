@@ -1671,7 +1671,9 @@ jobs:
                   detail = failed or pending or ["no exact-head checks returned"]
                   raise SystemExit(f"{milestone} PR #{number} exact-head CI is not green: {detail}")
               decision = view.get("reviewDecision") or "NONE"
-              review_state = decision if decision in ("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED") else "NONE"
+              review_state = decision if decision in ("APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED") else "UNKNOWN" if decision != "NONE" else "NONE"
+              if review_state in ("CHANGES_REQUESTED", "REVIEW_REQUIRED", "UNKNOWN"):
+                  raise SystemExit(f"{milestone} PR #{number} has unresolved review state {review_state}")
               records.append({
                   "milestone": milestone, "pr": number, "branch": branch, "head_sha": head,
                   "base_branch": base_branch, "base_sha": base_sha, "merge_sha": merge_sha, "state": state,
