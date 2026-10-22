@@ -29,3 +29,7 @@ No confirmed Critical or High exploitable source defect was identified in this c
 The P020 evaluator refuses arbitrary hardware `PASS` fields. It validates hash-bound evidence references and requires a detached GPG signature on each independent review receipt, checked against an absolute reviewer keyring provided outside the evidence bundle. The trust manager must provision that keyring through a separate reviewer identity process; absence of the keyring or a valid signature leaves evidence `UNVERIFIED`. This proves which trusted key signed a receipt, not that the underlying event occurred. A human reviewer must inspect P009 raw evidence and the P018 sanitized derivative separately. P019 simulated fixtures are explicitly rejected for hardware gates.
 
 A successful iOS cross-build, Mach-O inspection, package check, or exact-head workflow does not establish signature acceptance, device execution, assertion release on the target, launchd behavior, sensor availability, SSH continuity, or endurance.
+
+## H003 host-provenance follow-up
+
+H003 subsequently reproduced the pinned P010 host `ldid` hash from the exact Procursus source commit and independently re-inspected the v0.1.0 package's embedded entitlement sets. This updates the P011 host validation input; it does not alter the P020 candidate's unsigned status, establish signature integrity, satisfy hardware evidence gates, or authorize release. The dated H003 build and P011 receipts are in `H003-SIGNER-PROVENANCE.json` and `H003-P011-HOST-PREFLIGHT.json`.

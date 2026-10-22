@@ -24,9 +24,17 @@ The official v0.1.0 release API and all eight asset digests were checked. The ex
 
 P011 remains blocked because the exact H001 `ldid` executable and receipt files were not present in the engineering workspace. Its published version/SHA metadata matches the pinned H001 identity, but independent signer executable verification and embedded entitlement extraction are pending. Signature integrity remains `PENDING`; P011 device package acceptance remains `PENDING`. No iPad inspection or package installation was performed.
 
+## H003 current host result
+
+H003 subsequently rebuilt the exact Procursus source commit in a newly pinned Ubuntu environment. Two independent builds produced the P010 signer SHA-256 `15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c`; both embedded entitlement sets in the published v0.1.0 package were independently extracted and matched the approved profile. The H002 P011 command exited `0` with `P011_HOST_PREFLIGHT_PASS_DEVICE_ACCEPTANCE_PENDING`. The full result and reproducible build receipt are in [H003-P011-HOST-PREFLIGHT.json](H003-P011-HOST-PREFLIGHT.json) and [H003-SIGNER-PROVENANCE.json](H003-SIGNER-PROVENANCE.json).
+
+This H003 observation updates the present host-side signer/provenance state only. The historical H002 result above is preserved. The H001 historical image digest and snapshot receipt were not recovered, so H003 documents its new environment without presenting it as H001's former environment. Signature integrity and P011 device package acceptance remain `PENDING`; release authorization remains `BLOCKED`. No iPad was accessed, no package was installed, no service or assertion was activated, and no release was changed.
+
+After the separate P011 physical acceptance and P019 prerequisites are met, prepare a separately authorized P019 Phase 0 read-only inspection using the existing [P019 operator runbook](P019-OPERATOR-RUNBOOK.md). Phase 0 remains a future attended device session; this host result does not authorize or perform it.
+
 ## Current hardware state
 
-- P010 signer provenance: unresolved; exact executable/origin not verified.
+- H003 host signer provenance: verified for the exact P010 executable hash using the newly documented environment; historical H001 environment receipt remains unavailable.
 - P011 stable package acceptance: pending.
 - P012 physical 24-trial observations: none accepted.
 - P013 launchd lifecycle acceptance: pending; mutations remain disabled.

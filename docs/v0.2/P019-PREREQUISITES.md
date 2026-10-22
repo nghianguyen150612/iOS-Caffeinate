@@ -5,7 +5,7 @@ The matrix records what cloud work can establish and what remains a hardware or 
 | Dependency | Cloud state | Physical or review gate | Downstream effect |
 |---|---|---|---|
 | P009 evidence v1 | Validator, replay, schemas, and synthetic cases are available and regression-tested. | Genuine per-session observations, raw package hashes, provenance checks, and independent review. | Authority for all hardware acceptance decisions. |
-| P010 signing/package verification | Profile and package checks are in CI. | Exact host-compatible `ldid` executable must match version `2.1.5-procursus7` and SHA-256 `15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c`; no same-version substitute is allowed. | Missing exact executable blocks P011 and every hardware test. |
+| P010 signing/package verification | H003 rebuilt the exact host-compatible `ldid` twice from the pinned Procursus source and verified its version and SHA-256 against P010. | Physical package acceptance, signature-integrity assessment, target execution, and P009 review remain separate. | Exact host signer availability no longer blocks P011; physical P011 acceptance remains a prerequisite to power-trial acceptance. |
 | P011 stable package | Release identity and pinned digest are documented. | Supervised acceptance of `ioscaffeinate_0.1.0-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb`, SHA-256 `439d2543adbe1472f82cfd6c9e6bb9dd747da6c31c79f3da1f3da86b8ca9421c`, including installed paths, runtime, removal/rollback scope, and P009 review. | Required before P012 or P019 power trials. |
 | Development candidate | Cloud source and build workflows can identify the exact source. No candidate is built, signed, or installed by P019. | Signed, hash-verified candidate containing the tested P018/P019 source; exact package, CLI, daemon, profile, signer, entitlement, and installed-path identity; known accepted rollback artifact. | Required to attribute P018/P019-only behavior to tested source. |
 | P012 research | Protocol v1 and the existing one-shot probe, controller, analyzer, and tests are reused. | Fixed 24-trial A/B/C/D matrix with 3 repetitions per condition and route, quiet interval and timebase rules, actual acquire/release, screen-lock observation, and route-specific results. | Missing or confounded trials remain incomplete or inconclusive. |
@@ -19,7 +19,7 @@ The matrix records what cloud work can establish and what remains a hardware or 
 
 ## Current blockers
 
-- The exact P010 `ldid` executable has not been supplied or verified in this work. The recorded digest is known; P011 correctly blocks without the matching executable.
+- H003 verified the exact P010 `ldid` executable and completed the P011 host preflight. The historical H001 pinned image and signed package-snapshot receipt were unavailable; H003 records a new pinned build environment and does not claim it reconstructs H001.
 - P011 physical stable-package acceptance is pending. The public release label does not certify installation or runtime behavior.
 - No P012 physical controlled comparison is accepted. Historical operator-reported SSH observations are not P012 records and do not establish causality.
 - P013 target launchd semantics and P014 physical cleanup/recovery remain unverified. P014 has no production automatic restart executor.

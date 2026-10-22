@@ -1,0 +1,56 @@
+{
+  "build_environment": {
+    "apt_signature_verification": "VERIFIED_BY_APT",
+    "apt_snapshot": "https://snapshot.ubuntu.com/ubuntu/20261022T000000Z",
+    "apt_source_origin": "https://snapshot.ubuntu.com/ubuntu/20261022T000000Z",
+    "container_image": "ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac",
+    "operating_system": {
+      "id": "ubuntu",
+      "version": "24.04"
+    },
+    "platform": "linux/amd64"
+  },
+  "dependencies": {
+    "binutils": "2.42-4ubuntu2.10",
+    "ca-certificates": "20260816ubuntu0.24.04.1",
+    "g++-13": "13.3.0-6ubuntu2~24.04.1",
+    "gcc-13": "13.3.0-6ubuntu2~24.04.1",
+    "git": "1:2.43.0-1ubuntu7.4",
+    "libplist-dev": "2.3.0-1~exp2build2",
+    "libssl-dev": "3.0.13-0ubuntu3.16",
+    "make": "4.3-4.1build2",
+    "pkg-config": "1.8.1-2build1",
+    "python3": "3.12.3-0ubuntu2.1"
+  },
+  "executable": {
+    "architecture": "x86_64",
+    "elf_class": "ELF64",
+    "interpreter": "/lib64/ld-linux-x86-64.so.2",
+    "sha256": "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c",
+    "type": "ELF64-PIE",
+    "version": "2.1.5-procursus7"
+  },
+  "reproducibility": {
+    "build_1_sha256": "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c",
+    "build_2_sha256": "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c",
+    "outcome": "EXACT_MATCH"
+  },
+  "result": "VERIFIED",
+  "schema_version": 1,
+  "source": {
+    "commit": "aaf8f23d7975ecdb8e77e3a8f22253e0a2352cef",
+    "fetch_method": "git-fetch-exact-commit",
+    "independent_build_commit": "aaf8f23d7975ecdb8e77e3a8f22253e0a2352cef",
+    "independent_build_tree": "e473e8213e9821e986ac488ced802f5ee2b4bbea",
+    "repository": "https://github.com/ProcursusTeam/ldid.git",
+    "tree": "e473e8213e9821e986ac488ced802f5ee2b4bbea"
+  },
+  "toolchain": {
+    "binutils": "2.42",
+    "g++": "13.3.0",
+    "gcc": "13.3.0",
+    "libplist": "2.3.0",
+    "make": "4.3",
+    "openssl": "3.0.13"
+  }
+}

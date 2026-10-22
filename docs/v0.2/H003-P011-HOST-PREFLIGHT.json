@@ -1,0 +1,434 @@
+{
+  "checks": {
+    "approved_signing_profile_identity": "MATCH",
+    "debian_identity": "MATCH",
+    "expected_package_sha256": "MATCH",
+    "p010_package_validation": "PASS",
+    "package_sidecars_and_manifests": "MATCH",
+    "release_api": "VERIFIED",
+    "source_tag_commit": "VERIFIED",
+    "stable_release_identity": "VERIFIED_BY_GITHUB_RELEASE_API_AND_PINNED_ASSET_DIGESTS"
+  },
+  "errors": [],
+  "hardware": {
+    "device_acceptance": "PENDING",
+    "gate_states": {
+      "authenticated_ssh_verified": "PENDING",
+      "battery_observation_available": "PENDING",
+      "bounded_hold_verified": "PENDING",
+      "device_identity_verified": "PENDING",
+      "explicit_stop_verified": "PENDING",
+      "independent_observer_verified": "PENDING",
+      "installation_verified": "PENDING",
+      "iokit_acquire_verified": "PENDING",
+      "iokit_release_verified": "PENDING",
+      "ios_runtime_verified": "PENDING",
+      "launchd_remains_disabled": "PENDING",
+      "natural_expiry_verified": "PENDING",
+      "no_unresolved_assertion": "PENDING",
+      "package_integrity_verified": "PENDING",
+      "physical_recovery_confirmed": "PENDING",
+      "rollback_verified": "PENDING",
+      "scheduled_wake_verified": "PENDING",
+      "screen_locked_lan_verified": "PENDING",
+      "screen_locked_tailscale_verified": "PENDING",
+      "signature_acceptance_verified": "PENDING",
+      "sigterm_cleanup_verified": "PENDING",
+      "thermal_observation_available": "PENDING"
+    },
+    "release_authorization": "BLOCKED",
+    "scheduled_wake": "UNVERIFIED",
+    "unattended_24_7": "NOT_VALIDATED"
+  },
+  "package": {
+    "architecture": "iphoneos-arm",
+    "expected_sha256": "439d2543adbe1472f82cfd6c9e6bb9dd747da6c31c79f3da1f3da86b8ca9421c",
+    "file": "ioscaffeinate_0.1.0-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb",
+    "identity": "com.ioscaffeinate.cli",
+    "version": "0.1.0-1"
+  },
+  "release": {
+    "release_channel": "PUBLIC_STABLE",
+    "repository": "nghianguyen150612/iOS-Caffeinate",
+    "tag": "v0.1.0",
+    "url": "https://github.com/nghianguyen150612/iOS-Caffeinate/releases/tag/v0.1.0"
+  },
+  "schema_version": 1,
+  "status": "P011_HOST_PREFLIGHT_PASS_DEVICE_ACCEPTANCE_PENDING",
+  "verified_package": {
+    "checksum_coverage": "HISTORICALLY_PARTIAL",
+    "cryptographic_trust": "NOT_ESTABLISHED_BY_SIGNATURE_PRESENCE_OR_THIS_PREFLIGHT",
+    "debian": {
+      "Architecture": "iphoneos-arm",
+      "Package": "com.ioscaffeinate.cli",
+      "Version": "0.1.0-1"
+    },
+    "device_acceptance": "PENDING",
+    "embedded_entitlements": "EXACT_MATCH",
+    "historical_archive": "VERIFIED",
+    "legacy_checksum_manifest": "VERIFIED",
+    "legacy_validation": {
+      "artifact": {
+        "architecture": "iphoneos-arm",
+        "archive_sha256": "439d2543adbe1472f82cfd6c9e6bb9dd747da6c31c79f3da1f3da86b8ca9421c",
+        "filename": "ioscaffeinate_0.1.0-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb",
+        "package_identifier": "com.ioscaffeinate.cli",
+        "package_version": "0.1.0-1",
+        "repository": "nghianguyen150612/iOS-Caffeinate",
+        "source_commit_sha": "0cfdc645dc1d67ddc4320a00bb114763b9669b66",
+        "tag": "v0.1.0"
+      },
+      "artifact_scope": "EXACT_PUBLISHED_V0_1_0",
+      "claims": {
+        "device_execution": "UNVERIFIED",
+        "device_package_acceptance": "PENDING",
+        "release_authorization": "BLOCKED",
+        "signature_integrity": "PENDING"
+      },
+      "debian_control": {
+        "Architecture": "iphoneos-arm",
+        "Description": "Bounded power assertion CLI and daemon for rootful iOS\nNative C11 command-line client and manually managed daemon for rootful\njailbroken iOS 12. The daemon is not started or registered automatically.",
+        "Maintainer": "iOS-Caffeinate contributors <ios-caffeinate@users.noreply.github.com>",
+        "Package": "com.ioscaffeinate.cli",
+        "Priority": "optional",
+        "Section": "utils",
+        "Version": "0.1.0-1"
+      },
+      "historical_checksum_records": {
+        "usr/local/bin/ios-caffeinate": "a4957dfacbd2ff84fe4122578e050eee53d8db4b1b04dc89828d3b72494651fe",
+        "usr/local/bin/ios-caffeinated": "a692c0daff6df9f2aafeb89bbbeabd2439f1efd163cf88fbada75f203bef5cc0",
+        "usr/local/libexec/ioscaffeinate-manager": "fae0235b67c7b461c02d826becb395b3ae19f69055347361ce681bf0f975c28c",
+        "usr/share/ioscaffeinate/SIGNING-STATE": "dc17a4b9721505d803507b13cfbdffec482d0156107d733f1cf79497e35f50bd",
+        "usr/share/ioscaffeinate/launchd/com.ioscaffeinate.daemon.plist": "ef99bafc2f521dfdfbcf52009f87209b357c9058b0984f4d27856ee9b168cc63",
+        "usr/share/ioscaffeinate/package-build.json": "f188b7751fa09523f3e6c6d8a1b2b000b79e8e9bb62d99cd2418b1af3c3600c1",
+        "usr/share/ioscaffeinate/signing/amethyst-ios12-rootful.plist": "cd1358e7c8c3b01da98b5544e3c2ffcdc9d92cf9a3191e45038e8691ef2021ca"
+      },
+      "integrity_levels": {
+        "archive_sha256": "VERIFIED",
+        "derived_payload_inventory": "AVAILABLE_AFTER_PUBLICATION",
+        "derived_uncovered_regular_members": 52,
+        "device_execution": "UNVERIFIED",
+        "device_package_acceptance": "PENDING",
+        "embedded_entitlements": "EXACT_MATCH",
+        "full_payload_manifest": "NOT_PRESENT_IN_HISTORICAL_RELEASE",
+        "published_checksum_entries": 7,
+        "published_checksum_scope": "LEGACY_REQUIRED_SET",
+        "publisher_release_identity": "VERIFIED_BY_GITHUB_RELEASE_API_AND_PINNED_ASSET_DIGESTS",
+        "signature_integrity": "PENDING",
+        "signer_provenance": "VERIFIED"
+      },
+      "mach_o": {
+        "ios-caffeinate": {
+          "architecture": "arm64",
+          "code_signature_present": true,
+          "minimum_os": "12.0.0",
+          "platform": "iOS"
+        },
+        "ios-caffeinated": {
+          "architecture": "arm64",
+          "code_signature_present": true,
+          "minimum_os": "12.0.0",
+          "platform": "iOS"
+        }
+      },
+      "maintainer_scripts": {
+        "preinst": "SYNTAX_AND_SAFETY_VERIFIED",
+        "prerm": "SYNTAX_AND_SAFETY_VERIFIED"
+      },
+      "missing_verification_inputs": [],
+      "package_structure": "VERIFIED",
+      "schema_version": 1,
+      "uncovered_members": [
+        {
+          "path": "usr/share/doc/ioscaffeinate/LICENSE",
+          "purpose": "Top-level README or license documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/README.md",
+          "purpose": "Top-level README or license documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/ARCHITECTURE.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P001-HANDOFF.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P002-DEVICE-TEST.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P002-VALIDATION.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P003-DEVICE-TEST.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P003-VALIDATION.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P004-DEVICE-TEST.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P004-SCHEDULING.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P004-VALIDATION.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P005-DEVICE-TEST.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P005-VALIDATION.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P005-WAKE-FEASIBILITY.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P006-DEVICE-TEST.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P006-SERVER-MODE.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P006-VALIDATION.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P007-DEVICE-TEST.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P007-PACKAGING.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P007-ROLLBACK.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P007-VALIDATION.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P008-BACKLOG.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P008-DEVICE-ACCEPTANCE.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P008-INTEGRATION.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P008-RELEASE-READINESS.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P008-VALIDATION.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P009-ACCEPTANCE-HARNESS.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P009-DEVICE-RUNBOOK.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P009-EVIDENCE-FORMAT.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P009-READINESS.json",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P009-READINESS.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P009-SECURITY.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P009-VALIDATION.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P010-DEVICE-ACCEPTANCE.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P010-HARDWARE-FINDINGS.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P010-PACKAGING-VALIDATION.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P010-RELEASE-READINESS.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P010-SIGNING.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/P010-VALIDATION.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/PLAN.md",
+          "purpose": "Project planning, packaging, safety, and acceptance documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/evidence/P002-8534e88-inspection.txt",
+          "purpose": "Historical evidence notes included as documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/evidence/P010-OPERATOR-REPORTED.json",
+          "purpose": "Historical evidence notes included as documentation.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/releases/v0.1.0-rc1.json",
+          "purpose": "Historical release notes and records.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/releases/v0.1.0-rc1.md",
+          "purpose": "Historical release notes and records.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/releases/v0.1.0.md",
+          "purpose": "Historical release notes and records.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/schemas/connectivity-evidence-v1.schema.json",
+          "purpose": "JSON schemas for device and release evidence.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/schemas/device-acceptance-gates-v1.json",
+          "purpose": "JSON schemas for device and release evidence.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/schemas/device-acceptance-v1.schema.json",
+          "purpose": "JSON schemas for device and release evidence.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/schemas/evidence-manifest-v1.schema.json",
+          "purpose": "JSON schemas for device and release evidence.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/schemas/p008-release-candidate-v1.schema.json",
+          "purpose": "JSON schemas for device and release evidence.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/doc/ioscaffeinate/docs/templates/device-acceptance-v1.template.json",
+          "purpose": "Evidence template.",
+          "type": "regular"
+        },
+        {
+          "path": "usr/share/ioscaffeinate/SHA256SUMS",
+          "purpose": "Checksum metadata; self-reference is excluded from its own records.",
+          "type": "regular"
+        }
+      ],
+      "validation_status": "PASS",
+      "validator": "p011_legacy_package_validator"
+    },
+    "p010_blocker": null,
+    "p010_embedded_entitlement_reinspection": "EXACT_MATCH",
+    "p010_report": [
+      "historical_archive=VERIFIED",
+      "legacy_checksum_manifest=VERIFIED",
+      "checksum_coverage=HISTORICALLY_PARTIAL",
+      "package_structure=VERIFIED",
+      "signer_provenance=VERIFIED",
+      "embedded_entitlements=EXACT_MATCH",
+      "signature_integrity=PENDING",
+      "device_acceptance=PENDING"
+    ],
+    "p010_signed_candidate_manifest": "v0.1.0",
+    "p010_validator": "PASS",
+    "package_sha256": "439d2543adbe1472f82cfd6c9e6bb9dd747da6c31c79f3da1f3da86b8ca9421c",
+    "package_size_bytes": 95572,
+    "package_structure": "VERIFIED",
+    "profile_id": "amethyst-ios12-rootful",
+    "profile_sha256": "cd1358e7c8c3b01da98b5544e3c2ffcdc9d92cf9a3191e45038e8691ef2021ca",
+    "published_manifest_embedded_entitlements": "EXACT_MATCH",
+    "signature_integrity": "PENDING",
+    "signature_verification": "PENDING",
+    "signed_validation_report": "PASS",
+    "signer_provenance": "VERIFIED",
+    "signer_sha256": "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c",
+    "signer_version": "2.1.5-procursus7",
+    "signing_state": "SIGNATURE_PRESENT"
+  }
+}

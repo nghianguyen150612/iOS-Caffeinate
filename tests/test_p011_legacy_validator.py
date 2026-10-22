@@ -12,6 +12,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+import struct
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -19,6 +20,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import p011_legacy_package_validator as legacy  # noqa: E402
 import p011_release_preflight as p011  # noqa: E402
 from validate_rootful_package import REQUIRED_HASHES, check_sha_manifest  # noqa: E402
+from macho_ios import validate_ios12_arm64  # noqa: E402
 
 
 def make_offline_layout_fixture() -> tuple[dict[str, object], list[tarfile.TarInfo], dict[str, bytes]]:
@@ -74,6 +76,23 @@ def serialize_control(fields: dict[str, str]) -> bytes:
         lines.append(f"{name}: {parts[0]}")
         lines.extend(" " + part for part in parts[1:])
     return ("\n".join(lines) + "\n").encode()
+
+
+def unsigned_ios12_macho(dependencies: tuple[str, ...]) -> bytes:
+    commands = [
+        struct.pack("<IIIIII", 0x32, 24, 2, 12 << 16, 12 << 16, 0),
+        struct.pack("<II16sQQQQiiII", 0x19, 72, b"__LINKEDIT", 0x100000, 0, 0, 0, 7, 1, 0, 0),
+    ]
+    for dependency in dependencies:
+        encoded = dependency.encode("utf-8") + b"\x00"
+        size = (24 + len(encoded) + 7) & ~7
+        commands.append(struct.pack("<IIIIII", 0x0C, size, 24, 0, 0, 0) + encoded + b"\x00" * (size - 24 - len(encoded)))
+    header = struct.pack("<IiiIIIII", 0xFEEDFACF, 0x0100000C, 0, 2, len(commands), sum(map(len, commands)), 0, 0)
+    result = bytearray(header + b"".join(commands) + b"\x00" * 64)
+    segment_offset = 32 + 24
+    struct.pack_into("<Q", result, segment_offset + 32, len(result))
+    struct.pack_into("<Q", result, segment_offset + 48, len(result))
+    return bytes(result)
 
 
 def package_build_fixture() -> dict[str, object]:
@@ -187,6 +206,23 @@ class P011LegacyValidatorTests(unittest.TestCase):
     def test_wrong_pinned_signer_version_is_rejected(self) -> None:
         with self.assertRaisesRegex(legacy.LegacyValidationError, "version mismatch"):
             legacy.validate_pinned_signer_identity("2.1.5", legacy.SIGNER_SHA256)
+
+    def test_missing_cli_signature_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "ios-caffeinate"
+            binary.write_bytes(unsigned_ios12_macho(("/usr/lib/libSystem.B.dylib",)))
+            with self.assertRaisesRegex(ValueError, "code signature must be present"):
+                validate_ios12_arm64(binary, allow_signature=True, expected_dependencies=legacy.HISTORICAL_DEPENDENCIES[legacy.CLI_PATH])
+
+    def test_missing_daemon_signature_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "ios-caffeinated"
+            binary.write_bytes(unsigned_ios12_macho((
+                "/usr/lib/libSystem.B.dylib",
+                "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+            )))
+            with self.assertRaisesRegex(ValueError, "code signature must be present"):
+                validate_ios12_arm64(binary, allow_signature=True, expected_dependencies=legacy.HISTORICAL_DEPENDENCIES[legacy.DAEMON_PATH])
 
     def test_exact_entitlement_profile_is_accepted(self) -> None:
         profile = (ROOT / "packaging/signing/profiles/amethyst-ios12-rootful.plist").read_bytes()

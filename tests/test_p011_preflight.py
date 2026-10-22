@@ -6,12 +6,15 @@ import os
 import shutil
 import subprocess
 import sys
+import io
+import json
+import urllib.error
 import plistlib
 import tarfile
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -91,6 +94,18 @@ class P011ReleasePreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(p011.PreflightError, "unapproved"):
             p011._check_url("https://attacker.example/package.deb", p011.ALLOWED_DOWNLOAD_HOSTS)
 
+    def test_failed_github_download_is_reported_as_transport_blocker(self) -> None:
+        opener = Mock()
+        opener.open.side_effect = urllib.error.URLError("offline fixture")
+        with patch.object(p011.urllib.request, "build_opener", return_value=opener):
+            with self.assertRaisesRegex(p011.PreflightError, "release retrieval failed"):
+                p011.fetch_bytes(
+                    "https://api.github.com/repos/nghianguyen150612/iOS-Caffeinate/releases/tags/v0.1.0",
+                    accept="application/vnd.github+json",
+                    limit=1024,
+                    allowed_hosts={"api.github.com"},
+                )
+
     def test_download_destination_symlink_is_rejected_before_network(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -161,6 +176,31 @@ class P011ReleasePreflightTests(unittest.TestCase):
             sidecar.write_text("0" * 64 + "  " + p011.PACKAGE_FILENAME + "\n")
             with self.assertRaisesRegex(p011.PreflightError, "sidecar"):
                 p011.validate_package_checksum_sidecar(asset_dir, p011.EXPECTED_PACKAGE_SHA256)
+
+    def test_invalid_published_package_hash_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            asset_dir = Path(temporary)
+            package = asset_dir / p011.PACKAGE_FILENAME
+            package.write_bytes(b"x" * p011.EXPECTED_PACKAGE_SIZE)
+            with self.assertRaisesRegex(p011.PreflightError, "SHA-256"):
+                p011.verify_local_assets(package, asset_dir, None)
+
+    def test_invalid_json_report_destination_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary) / "existing.json"
+            report.write_text("{}\n")
+            with self.assertRaisesRegex(p011.PreflightError, "refusing to overwrite JSON report"):
+                p011.write_json_exclusive(report, p011.initial_report())
+
+    def test_json_report_destination_symlink_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "target.json"
+            target.write_text("{}\n")
+            link = root / "report.json"
+            link.symlink_to(target)
+            with self.assertRaisesRegex(p011.PreflightError, "refusing to overwrite JSON report"):
+                p011.write_json_exclusive(link, p011.initial_report())
 
     def test_tampered_package_manifest_relationship_is_rejected(self) -> None:
         manifest = {
@@ -246,6 +286,27 @@ class P011ReleasePreflightTests(unittest.TestCase):
         self.assertEqual(hardware["release_authorization"], "BLOCKED")
         self.assertEqual(hardware["unattended_24_7"], "NOT_VALIDATED")
         self.assertEqual(hardware["scheduled_wake"], "UNVERIFIED")
+
+    def test_host_preflight_pass_keeps_device_acceptance_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary) / p011.PACKAGE_FILENAME
+            package.write_bytes(b"fixture package")
+            verified = {
+                "p010_validator": "PASS",
+                "p010_blocker": None,
+                "legacy_validation": {"integrity_levels": {}},
+            }
+            output = io.StringIO()
+            with patch.object(p011, "fetch_release_metadata", return_value=({}, {})), patch.object(
+                p011, "verify_local_assets", return_value=verified
+            ), patch("sys.stdout", output):
+                result = p011.main(["--package", str(package), "--json"])
+            self.assertEqual(result, 0)
+            report = json.loads(output.getvalue())
+            self.assertEqual(report["status"], "P011_HOST_PREFLIGHT_PASS_DEVICE_ACCEPTANCE_PENDING")
+            self.assertEqual(report["hardware"]["device_acceptance"], "PENDING")
+            self.assertEqual(report["hardware"]["release_authorization"], "BLOCKED")
+            self.assertTrue(all(value == "PENDING" for value in report["hardware"]["gate_states"].values()))
 
     def test_device_preflight_is_posix_syntax_and_has_no_state_changing_commands(self) -> None:
         script = ROOT / "scripts/p011_device_preflight.sh"
