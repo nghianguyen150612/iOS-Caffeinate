@@ -465,6 +465,8 @@ def main() -> int:
             sys.executable,
             str(ROOT / "scripts/validate_rootful_package.py"),
             str(output),
+            "--expected-version",
+            version,
         ]
         if signer:
             validation_command.extend(("--ldid", str(signer)))
