@@ -1756,9 +1756,11 @@ jobs:
           packages = [next(Path(folder).glob("*.deb")) for folder in ("build/p020/package-first", "build/p020/package-second")]
           for package in packages:
               members = subprocess.run(["dpkg-deb", "--fsys-tarfile", str(package)], check=True, capture_output=True).stdout
+              private_key_markers = [b"-----BEGIN " + name + b" PRIVATE KEY-----"
+                                     for name in (b"OPENSSH", b"RSA", b"EC")]
+              private_key_markers.append(b"-----BEGIN " + b"PRIVATE KEY-----")
               forbidden = (
-                  b"-----BEGIN OPENSSH PRIVATE KEY-----", b"-----BEGIN RSA PRIVATE KEY-----",
-                  b"-----BEGIN EC PRIVATE KEY-----", b"-----BEGIN PRIVATE KEY-----",
+                  *private_key_markers,
                   b"ghp_", b"gho_", b"ghs_", b"ghu_", b"ghr_", b"github_pat_", b"xoxb-", b"xapp-",
                   b"AKIA", b"ASIA", b"AWS_SECRET_ACCESS_KEY", b"Authorization: Bearer ",
               )
