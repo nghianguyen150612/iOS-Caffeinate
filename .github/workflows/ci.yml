@@ -1747,35 +1747,8 @@ jobs:
           (cd build/p020/package-second && sha256sum -c *.deb.sha256)
           grep -q 'signing_state=UNSIGNED' build/p020/package-first/validation.txt
           grep -q 'device_package_acceptance=NOT_ACCEPTED' build/p020/package-first/validation.txt
-          python3 - <<'PY'
-          import os
-          import re
-          import subprocess
-          from pathlib import Path
-
-          packages = [next(Path(folder).glob("*.deb")) for folder in ("build/p020/package-first", "build/p020/package-second")]
-          for package in packages:
-              members = subprocess.run(["dpkg-deb", "--fsys-tarfile", str(package)], check=True, capture_output=True).stdout
-              private_key_markers = [b"-----BEGIN " + name + b" PRIVATE KEY-----"
-                                     for name in (b"OPENSSH", b"RSA", b"EC")]
-              private_key_markers.append(b"-----BEGIN " + b"PRIVATE KEY-----")
-              forbidden = (
-                  *private_key_markers,
-                  b"ghp_", b"gho_", b"ghs_", b"ghu_", b"ghr_", b"github_pat_", b"xoxb-", b"xapp-",
-                  b"AKIA", b"ASIA", b"AWS_SECRET_ACCESS_KEY", b"Authorization: Bearer ",
-              )
-              if any(token in members for token in forbidden):
-                  raise SystemExit("credential marker found in candidate package")
-              secret_values = [(name, value.encode()) for name, value in os.environ.items()
-                               if re.search(r"TOKEN|SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL", name, re.I) and len(value) >= 8]
-              leaked = [name for name, value in secret_values if value in members]
-              if leaked:
-                  raise SystemExit("runner secret environment value found in candidate package: " + ", ".join(leaked))
-              for marker in (b"/Users/runner/work/", b"/home/runner/work/", b"GITHUB_WORKSPACE", b"RUNNER_TEMP", b"/Users/", b"/home/runner/"):
-                  if marker in members:
-                      raise SystemExit("host development path found in candidate package")
-          print("Candidate package contains no checked secret markers or absolute CI workspace paths.")
-          PY
+          python3 scripts/p020_scan_candidate.py build/p020/package-first/*.deb
+          python3 scripts/p020_scan_candidate.py build/p020/package-second/*.deb
       - name: Record and validate exact build provenance
         env:
           P020_BRANCH: ${{ github.head_ref || github.ref_name }}
@@ -1834,9 +1807,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build/p020
-          python3 -m py_compile scripts/p020_release_gate.py scripts/p020_build_provenance.py
+          python3 -m py_compile scripts/p020_release_gate.py scripts/p020_build_provenance.py scripts/p020_scan_candidate.py
           ./scripts/build-linux-test.sh
-          python3 -m unittest tests.test_p020_release_gate tests.test_p020_build_provenance tests.test_p020_end_to_end -v 2>&1 | tee build/p020/p020-tests.txt
+          python3 -m unittest tests.test_p020_release_gate tests.test_p020_build_provenance tests.test_p020_candidate_scan tests.test_p020_end_to_end -v 2>&1 | tee build/p020/p020-tests.txt
           python3 -m unittest discover -s tests -v 2>&1 | tee build/p020/python-regressions.txt
           python3 -m unittest discover -s tests/packaging -v 2>&1 | tee build/p020/packaging-regressions.txt
           python3 tests/integration.py 2>&1 | tee build/p020/protocol-integration.txt
