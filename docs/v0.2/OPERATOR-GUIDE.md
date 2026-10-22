@@ -135,3 +135,8 @@ P019 has separate cloud and hardware completion. Cloud tools are offline. The in
 P012 v1 remains fixed: 120-second initial quiet period, 180-second proposed hold, 300-second ceiling, one route and at most one SSH probe per trial, 24 manually conducted trials. The P019 endurance plan adds 12 attended bounded cycles across three separate dates, with five-minute unasserted rests. No automatic trial runner, silent assertion renewal, unattended overnight run, or 24/7 claim is allowed.
 
 Preserve original P009 evidence securely. A P018 export is a separately reviewed sanitized derivative; it does not replace raw observations. Unknown battery/thermal values remain unavailable, and a trial is deferred when resource safety cannot be assessed. Stage A status is `P019_CLOUD_COMPLETE_HARDWARE_ACCEPTANCE_PENDING` until independent physical evidence review completes.
+
+
+## P020 release readiness and hardware handoff
+
+P020's cloud result does not authorize installation or publication. The current development candidate is unsigned and device-unverified; P010 signer provenance and all physical gates remain pending. Follow the exact prerequisite order in [P020 Hardware Handoff](P020-HARDWARE-HANDOFF.md), and stop on any failed provenance, safety, cleanup, or critical security gate. Never treat CI, a successful SSH probe, or a P018 export hash as proof of continuous awake state or physical acceptance.

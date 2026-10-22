@@ -144,6 +144,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-dir", type=Path, required=True, help="directory containing iOS executables and SHA256SUMS")
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--package-version",
+        help="explicit Debian version for an isolated prerelease candidate; defaults to packaging/rootful/VERSION",
+    )
     parser.add_argument("--sign-with-ldid", type=Path, help="absolute path to an operator-supplied, host-compatible ldid executable")
     parser.add_argument("--entitlements", type=Path, help="explicit approved entitlement profile; required with --sign-with-ldid")
     return parser.parse_args()
@@ -182,7 +186,7 @@ def main() -> int:
         fail(f"input directory does not exist: {input_dir}")
     if shutil.which("dpkg-deb") is None:
         fail("dpkg-deb is required; no package was built")
-    version = VERSION_FILE.read_text().strip()
+    version = args.package_version or VERSION_FILE.read_text().strip()
     if not re.fullmatch(r"[0-9][A-Za-z0-9.+:~_-]*", version):
         fail(f"invalid Debian package version in {VERSION_FILE}")
     if bool(args.sign_with_ldid) != bool(args.entitlements):

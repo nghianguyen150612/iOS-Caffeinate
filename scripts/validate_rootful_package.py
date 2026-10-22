@@ -241,7 +241,8 @@ def read_key_values(path: Path) -> dict[str, str]:
     return fields
 
 
-def inspect_package(deb: Path, ldid: Path | None = None) -> str:
+def inspect_package(deb: Path, ldid: Path | None = None, expected_version: str | None = None) -> str:
+    expected_version = VERSION if expected_version is None else expected_version
     require(deb.is_file() and not deb.is_symlink(), f"package artifact missing or not regular: {deb}")
     require(shutil.which("dpkg-deb") is not None, "dpkg-deb is required for package inspection")
     fields = {}
@@ -250,7 +251,7 @@ def inspect_package(deb: Path, ldid: Path | None = None) -> str:
         if result.returncode == 0:
             fields[key] = result.stdout.strip()
     require(fields.get("Package") == PACKAGE, f"wrong package identifier: {fields.get('Package')}")
-    require(fields.get("Version") == VERSION, f"wrong package version: {fields.get('Version')}")
+    require(fields.get("Version") == expected_version, f"wrong package version: {fields.get('Version')}")
     require(fields.get("Architecture") == "iphoneos-arm", f"wrong Debian architecture: {fields.get('Architecture')}")
     require(fields.get("Section") == "utils" and fields.get("Priority") == "optional", "unexpected package section or priority")
     require(fields.get("Maintainer", "").startswith("iOS-Caffeinate contributors <"), "unexpected maintainer metadata")
@@ -438,10 +439,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("package", type=Path)
     parser.add_argument("--ldid", type=Path, help="explicit host-compatible ldid path required to inspect embedded signed entitlements")
+    parser.add_argument("--expected-version", default=VERSION, help="expected Debian package version (defaults to repository VERSION)")
     parser.add_argument("--report", type=Path, help="write the validation report to a file")
     args = parser.parse_args()
     try:
-        report = inspect_package(args.package.resolve(), args.ldid.resolve() if args.ldid else None)
+        if not re.fullmatch(r"[0-9][A-Za-z0-9.+:~_-]*", args.expected_version):
+            raise ValueError("invalid expected Debian package version")
+        report = inspect_package(args.package.resolve(), args.ldid.resolve() if args.ldid else None, args.expected_version)
     except (ValueError, OSError, subprocess.CalledProcessError, tarfile.TarError) as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1
