@@ -1809,14 +1809,16 @@ jobs:
           mkdir -p build/p020
           python3 -m py_compile scripts/p020_release_gate.py scripts/p020_build_provenance.py scripts/p020_scan_candidate.py
           ./scripts/build-linux-test.sh
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y zsh
           python3 -m unittest tests.test_p020_release_gate tests.test_p020_build_provenance tests.test_p020_candidate_scan tests.test_p020_end_to_end -v 2>&1 | tee build/p020/p020-tests.txt
           python3 -m unittest discover -s tests -v 2>&1 | tee build/p020/python-regressions.txt
           python3 -m unittest discover -s tests/packaging -v 2>&1 | tee build/p020/packaging-regressions.txt
           python3 tests/integration.py 2>&1 | tee build/p020/protocol-integration.txt
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y zsh
           python3 scripts/check_p018_docs_shell.py | tee build/p020/shell-syntax.txt
-          sh -n packaging/rootful/manager packaging/rootful/DEBIAN/preinst packaging/rootful/DEBIAN/prerm
+          sh -n packaging/rootful/manager
+          sh -n packaging/rootful/DEBIAN/preinst
+          sh -n packaging/rootful/DEBIAN/prerm
           bash -n scripts/build-macos.sh
           python3 - <<'PY'
           import json
