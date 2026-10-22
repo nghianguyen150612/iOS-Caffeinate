@@ -1711,12 +1711,19 @@ jobs:
                           or parent["head"]["sha"] != expected_base_sha
                           or parent["base"]["ref"] != "main"):
                       raise SystemExit("H002 stack does not target the open P020 PR #19 at its pinned head")
+                  main = json.loads(subprocess.run(
+                      ["gh", "api", f"repos/{repo}/branches/main"],
+                      check=True, capture_output=True, text=True).stdout)
+                  if parent["base"]["sha"] != main["commit"]["sha"]:
+                      raise SystemExit("open P020 PR #19 no longer targets the current integrated main head")
                   branch = json.loads(subprocess.run(
                       ["gh", "api", f"repos/{repo}/branches/release/p020-v02-integration"],
                       check=True, capture_output=True, text=True).stdout)
                   if branch["commit"]["sha"] != expected_base_sha:
                       raise SystemExit("P020 integration branch no longer matches its pinned source head")
-                  integration_base = {"branch": current["base"]["ref"], "sha": current["base"]["sha"]}
+                  # The candidate release gate evaluates P020's eventual main
+                  # integration; the H002 PR itself remains stacked on P020.
+                  integration_base = {"branch": "main", "sha": parent["base"]["sha"]}
                   integration_mode = "STACKED_H002"
               else:
                   raise SystemExit("current PR base branch is not a supported P020 integration target")
