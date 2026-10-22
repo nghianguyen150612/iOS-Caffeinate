@@ -353,16 +353,28 @@ static void reply_error(int fd, const char *operation, const char *error) {
     respond(fd, out);
 }
 
+static bool is_read_only_status_prefix(const char *command, size_t length) {
+    static const char *const commands[] = {"STATUS\n", "SERVER STATUS\n"};
+    if (length == 0) return false;
+    for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) {
+        size_t command_length = strlen(commands[i]);
+        if (length <= command_length && memcmp(command, commands[i], length) == 0) return true;
+    }
+    return false;
+}
+
 static int read_command(int fd, char *command, size_t cap) {
     size_t used = 0;
     double until = now() + 1.0;
     while (keep_running && now() < until) {
-        expire_if_due();
         struct pollfd pfd = {.fd = fd, .events = POLLIN};
         int rc = poll(&pfd, 1, 50);
         if (rc < 0 && errno == EINTR) continue;
         if (rc < 0) return -1;
-        if (rc == 0) continue;
+        if (rc == 0) {
+            if (!is_read_only_status_prefix(command, used)) expire_if_due();
+            continue;
+        }
         ssize_t n = recv(fd, command + used, cap - 1 - used, MSG_DONTWAIT);
         if (n < 0 && (errno == EINTR || errno == EAGAIN)) continue;
         if (n <= 0) break;
@@ -378,6 +390,7 @@ static int read_command(int fd, char *command, size_t cap) {
         }
         used = total;
         if (used == cap - 1) goto malformed;
+        if (!is_read_only_status_prefix(command, used)) expire_if_due();
     }
 malformed:
     respond(fd, "ERR malformed or incomplete command\n");
@@ -405,7 +418,10 @@ static void handle_client(int fd) {
 
     char command[512];
     if (read_command(fd, command, sizeof(command)) != 0 || !keep_running) return;
-    expire_if_due();
+    /* A status query is observational.  The event loop owns deadline expiry;
+     * servicing a read-only client request must not itself release a hold. */
+    if (strcmp(command, "STATUS") != 0 && strcmp(command, "SERVER STATUS") != 0)
+        expire_if_due();
 
     if (strcmp(command, "STATUS") == 0) {
         char out[1024];
@@ -572,6 +588,19 @@ static void handle_client(int fd) {
             if (clear_hold(error, sizeof(error)) != 0) reply_error(fd, "release", error);
             else respond(fd, "OK active=no release_rc=0x00000000\n");
         }
+    } else if (strcmp(command, "SHUTDOWN") == 0) {
+        if (daemon_state == DAEMON_STATE_RELEASE_FAILED || daemon_state == DAEMON_STATE_BLOCKED ||
+            daemon_state == DAEMON_STATE_RELEASING || daemon_state == DAEMON_STATE_ACQUIRING) {
+            respond(fd, "ERR shutdown blocked: assertion or daemon state is unresolved\n");
+            return;
+        }
+        char error[256] = {0};
+        if (clear_hold(error, sizeof(error)) != 0) {
+            reply_error(fd, "shutdown assertion release", error);
+            return;
+        }
+        respond(fd, "OK shutdown=accepted assertion_released=yes\n");
+        keep_running = false;
     } else if (strcmp(command, "SCHEDULE LIST") == 0) {
         char out[16384] = "OK schedules=";
         char item_str[256];

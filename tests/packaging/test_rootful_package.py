@@ -308,8 +308,9 @@ class RootfulPackageTests(unittest.TestCase):
                 self.assertNotRegex(script, r"(?m)^\s*rm(?:\s|$)")
 
             # Repeated preinst calls fail at the same architecture gate under
-            # a controlled fake dpkg, and prerm only repeats the same endpoint
-            # observation. Neither script writes to the host filesystem.
+            # a controlled fake dpkg. The removal guard performs read-only
+            # endpoint/service observations and blocks unknown state. Neither
+            # script writes to the host filesystem.
             fake_bin = Path(temporary) / "fake-bin"
             fake_bin.mkdir()
             fake_dpkg = fake_bin / "dpkg"

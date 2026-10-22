@@ -4,6 +4,7 @@
 #endif
 #define _POSIX_C_SOURCE 200809L
 #include "schedule.h"
+#include "service.h"
 #include "server_mode.h"
 #include "wake_capability.h"
 #include <errno.h>
@@ -46,6 +47,7 @@ static void usage(void) {
          "  ios-caffeinate [--socket /absolute/path.sock] schedule remove <schedule-id>\n"
          "  ios-caffeinate wake status\n"
          "  ios-caffeinate server status|doctor|plan\n"
+         "  ios-caffeinate service status|doctor|plan|enable|disable|start|stop|restart\n"
          "  ios-caffeinate server trial start --for 1s..5m\n"
          "  ios-caffeinate server trial stop\n"
          "  ios-caffeinate [--server-config /absolute/path] [--schedule-state /absolute/path] server status|doctor|plan\n"
@@ -438,6 +440,10 @@ int main(int argc, char **argv) {
     }
     if (i == argc || strcmp(argv[i], "help") == 0 || strcmp(argv[i], "--help") == 0) {
         usage(); return i + 1 == argc ? 0 : 2;
+    }
+
+    if (strcmp(argv[i], "service") == 0) {
+        return service_command(argc - i - 1, argv + i + 1, stdout, stderr);
     }
 
     char command[512] = {0};

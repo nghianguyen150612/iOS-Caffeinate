@@ -30,11 +30,11 @@ Feature implementation, physical-device acceptance, and production reliability c
 
 **Depends on:** P011 package layout and acceptance procedure; P012 safety findings before any persistent-service trial.
 
-**Deliverables:** explicit opt-in install/enable/disable/status actions, ownership and plist validation, and an uninstall path that preserves user data.
+**Deliverables:** read-only service status/doctor/plan, explicit privilege-checked lifecycle commands, launchctl capability reporting, secure managed-plist generation/validation, graceful shutdown acknowledgement, package-removal checks, deterministic tests, and a supervised device procedure.
 
-**Safety constraints:** default remains disabled; no activation during package install; no hidden reboot/respring; no service action unless the operator requests it.
+**Safety constraints:** default remains disabled; no activation during package install; no hidden reboot/respring or power assertion; `KeepAlive=false` in managed configuration; no launchctl mutation while iOS 12.5.7 command syntax and semantics are unverified; no false success on assertion-release or cleanup failure.
 
-**Validation and completion:** mocked lifecycle tests, package-script audits, disabled-by-default checks, and a supervised manual enable/disable trial with physical recovery. The staged template remains under `/usr/share/ioscaffeinate/` until P013 is accepted.
+**Validation and completion:** injected command-runner tests, package-script audits, disabled-by-default checks, exact-SHA CI, and supervised lifecycle acceptance with physical recovery. P013 cloud validation does not run a service operation. The staged template remains under `/usr/share/ioscaffeinate/`; the live profile is generated separately and uses `KeepAlive=false`. Hardware acceptance remains pending on P011 package acceptance, P012 safety review, direct recovery, and explicit operator authorization.
 
 ### P014 — Daemon crash recovery and restart-loop protection
 

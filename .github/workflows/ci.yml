@@ -466,3 +466,78 @@ jobs:
             build/p012/simulated-all-success.json
             build/p012/analysis-report.json
             build/p012/analysis-report.md
+
+  p013-launchd-lifecycle-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Compile C11 CLI and injected lifecycle test runner
+        run: |
+          set -euo pipefail
+          mkdir -p build/p013 build/test
+          ./scripts/build-linux-test.sh
+          cc -std=c11 -Wall -Wextra -Werror -O2 -DIOSCAFFEINATE_SERVICE_TESTING \
+            tests/p013_service_unit.c src/service.c -o build/p013/service-unit
+          build/p013/service-unit 2>&1 | tee build/p013/native-tests.txt
+          cc -std=c11 -Wall -Wextra -Werror -O2 -DIOSCAFFEINATE_TEST_MOCK \
+            tests/daemon_readonly_test.c src/power.c src/schedule.c -o build/p013/daemon-readonly
+          build/p013/daemon-readonly 2>&1 | tee build/p013/daemon-readonly-tests.txt
+          build/p013/service-unit --emit-managed build/p013/managed-live.plist
+      - name: Validate disabled package template and managed KeepAlive false profile
+        env:
+          P013_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$P013_SOURCE_SHA"
+          printf '%s\n' "$P013_SOURCE_SHA" > build/p013/source-commit.txt
+          python3 scripts/p013_validate.py \
+            --managed build/p013/managed-live.plist \
+            --source-sha "$P013_SOURCE_SHA" \
+            --output build/p013/P013-VALIDATION.txt
+          sh -n packaging/rootful/DEBIAN/preinst
+          sh -n packaging/rootful/DEBIAN/prerm
+      - name: Run P013 command, fail-closed, and package-removal tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_p013_service.py' -v 2>&1 | tee build/p013/command-tests.txt
+          python3 -m unittest discover -s tests/packaging -p 'test_rootful_package.py' -v 2>&1 | tee build/p013/package-tests.txt
+      - name: Record deterministic evidence summary
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          records = []
+          for label, path in (("P013 command tests", "build/p013/command-tests.txt"),
+                              ("rootful package tests", "build/p013/package-tests.txt")):
+              text = Path(path).read_text()
+              match = re.search(r"Ran (\d+) tests? in ", text)
+              if not match or "\nOK\n" not in text:
+                  raise SystemExit(f"{label} did not pass")
+              records.append(f"{label}: {match.group(1)} PASS")
+          records.insert(0, "P013 native C lifecycle checks: PASS (see native-tests.txt)")
+          records.insert(1, "P013 daemon read-only status checks: PASS (see daemon-readonly-tests.txt)")
+          records.extend((
+              "package installation activation: NOT_PERFORMED",
+              "launchctl mutation: NOT_PERFORMED",
+              "power assertions: NOT_ACQUIRED",
+              "device lifecycle compatibility: UNVERIFIED",
+              "source_sha: " + Path("build/p013/source-commit.txt").read_text().strip(),
+          ))
+          Path("build/p013/P013-CLOUD-VALIDATION.txt").write_text("\n".join(records) + "\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P013-launchd-lifecycle-validation
+          if-no-files-found: error
+          path: |
+            build/p013/P013-VALIDATION.txt
+            build/p013/P013-CLOUD-VALIDATION.txt
+            build/p013/native-tests.txt
+            build/p013/daemon-readonly-tests.txt
+            build/p013/command-tests.txt
+            build/p013/package-tests.txt
+            build/p013/source-commit.txt
+            build/p013/managed-live.plist
