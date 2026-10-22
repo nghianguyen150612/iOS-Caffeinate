@@ -1,0 +1,121 @@
+{
+  "protocol_id": "P012",
+  "protocol_version": 1,
+  "protocol_status": "PREREGISTERED_PROPOSAL",
+  "preregistered_on": "2026-10-20",
+  "target_platform": {
+    "device": "iPad mini 2 A1489 / iPad4,4",
+    "soc": "Apple A7 ARM64",
+    "ios": "12.5.7",
+    "bootstrap": "Amethyst / Procursus rootful"
+  },
+  "research_questions": ["RQ1", "RQ2", "RQ3", "RQ4"],
+  "conditions": [
+    {"id": "A", "name": "Baseline", "daemon_state": "STOPPED", "assertion_state": "INACTIVE", "definition": "Daemon stopped; no daemon-owned iOS-Caffeinate assertion is active. This does not claim that all system assertions are absent."},
+    {"id": "B", "name": "Daemon-only", "daemon_state": "RUNNING_IDLE", "assertion_state": "INACTIVE", "definition": "Foreground daemon reports IDLE; no active iOS-Caffeinate assertion."},
+    {"id": "C", "name": "Active hold", "daemon_state": "RUNNING_HOLD", "assertion_state": "ACTIVE", "definition": "Foreground daemon holds one explicitly acquired, bounded assertion; probe occurs before expiry."},
+    {"id": "D", "name": "Post-expiry", "daemon_state": "RUNNING_IDLE", "assertion_state": "EXPIRED_RELEASED", "definition": "Daemon remains running and confirms its assertion expired or was released before the quiet interval."}
+  ],
+  "assertion": {
+    "active_hold_seconds": 180,
+    "maximum_hold_seconds": 300,
+    "measurement_must_precede_expiry": true,
+    "actual_acquisition_and_release_confirmation_required": true
+  },
+  "quiet_period": {
+    "seconds": 120,
+    "minimum_seconds": 60,
+    "maximum_seconds": 180,
+    "required_before_each_probe": true,
+    "incoming_ssh_probes_allowed": false,
+    "operator_interactions_allowed": false
+  },
+  "probe": {
+    "timeout_seconds": 8,
+    "maximum_timeout_seconds": 15,
+    "maximum_probes_per_trial": 1,
+    "remote_command": "true",
+    "ssh_options": ["BatchMode=yes", "ConnectionAttempts=1", "StrictHostKeyChecking=yes"]
+  },
+  "design": {
+    "repetitions_per_condition_per_route": 3,
+    "routes": ["LAN", "TAILSCALE"],
+    "one_route_per_trial": true,
+    "pairing_rule": "Pair route trials by condition and repetition using one sanitized pair_id; assign a distinct trial_id to each route trial.",
+    "total_planned_probe_trials": 24,
+    "route_order_by_repetition": [["LAN", "TAILSCALE"], ["TAILSCALE", "LAN"], ["LAN", "TAILSCALE"]],
+    "condition_order_by_repetition": [["A", "B", "C", "D"], ["B", "D", "A", "C"], ["C", "A", "D", "B"]],
+    "automated_physical_trial_series": false,
+    "interpretation": "Exploratory only; observations from one device and one session are not independent statistical proof."
+  },
+  "required_operator_confirmations": [
+    "operator_present",
+    "direct_physical_recovery_available",
+    "p011_stable_package_preflight_passed",
+    "package_installation_separately_authorized",
+    "installed_cli_and_daemon_verified",
+    "assertion_acquire_release_cleanup_verified",
+    "battery_and_thermal_safe",
+    "screen_locked",
+    "wifi_association_confirmed",
+    "route_state_confirmed",
+    "daemon_state_confirmed",
+    "assertion_state_confirmed"
+  ],
+  "inclusion_criteria": [
+    "Operator is physically present and direct recovery is available.",
+    "P011 stable-package prerequisites and separately authorized installation have been completed and reviewed.",
+    "Screen is operator-confirmed LOCKED from quiet-period start through the probe.",
+    "The condition's daemon and daemon-owned assertion states match the preregistered definition.",
+    "The configured quiet interval completed with no incoming probes or operator interactions.",
+    "Exactly one route-specific SSH probe is recorded for this trial; failed and interrupted probes remain outcomes.",
+    "Battery, thermal, charging, Wi-Fi, route, clock uncertainty, trial order, and carryover observations are recorded."
+  ],
+  "exclusion_criteria": [
+    "A required state is unknown or not operator-confirmed.",
+    "Screen becomes unlocked or cannot be confirmed locked.",
+    "Quiet interval is missing or contaminated.",
+    "Probe route, condition, or repetition does not match the preregistered plan.",
+    "Assertion state is contradictory, acquisition fails, release is unconfirmed, or the hold exceeds 300 seconds.",
+    "Device reboot/respring, trial overlap, clock discontinuity, or material state change makes the observation window non-comparable."
+  ],
+  "stop_conditions": [
+    "Operator cannot confirm the display state.",
+    "Unexpected heat or battery below the operator-approved threshold.",
+    "Assertion release fails or its state is uncertain.",
+    "SSH host identity changes or host-key validation fails.",
+    "Physical recovery becomes unavailable or operator leaves.",
+    "Approved duration is exceeded, or a previous trial leaves uncertain daemon/assertion state."
+  ],
+  "recovery_requirements": [
+    "Operator remains physically present with a recovery method independent of SSH and Tailscale.",
+    "State-changing device operations are performed manually and separately authorized.",
+    "Do not automatically restart, kill, install, remove, reboot, respring, change networking, or acquire/release assertions."
+  ],
+  "data_retention": {
+    "retain": ["sanitized trial ID", "condition and route", "UTC timestamps", "observer timebase and uncertainty", "latency/result classification", "operator-confirmed states", "failure categories"],
+    "exclude": ["destination address", "passwords", "private keys", "tokens", "raw SSH logs", "unrelated files", "sensitive environment variables"],
+    "operator_storage": "Store operator records in a private local evidence directory; do not commit physical measurements to the source repository."
+  },
+  "p011_prerequisite": {
+    "required_before_hardware_trials": true,
+    "current_status": "PENDING",
+    "note": "P011 cloud CI does not establish installed-package acceptance. Preserve the exact ldid provenance blocker; do not bypass it in P012."
+  },
+  "known_sources_of_bias": [
+    "Authenticated SSH can affect wakefulness and background execution; the quiet interval has no probes and each trial has one probe.",
+    "LAN and Tailscale route results are separate. Route order is counterbalanced across repetitions; paired observations remain clustered by repetition.",
+    "A successful API call does not prove OS suspend behavior; a successful SSH command does not prove assertion effectiveness.",
+    "A screen lock does not prove deep sleep. Network association, daemon availability, TCP transport, authenticated SSH, and Tailscale peer state are distinct.",
+    "Battery, thermal, Wi-Fi, network route, operator activity, host/device clock offsets, reboot/respring, elapsed time, and carryover may differ between trials.",
+    "This single-device, small exploratory design cannot establish long-duration reliability or a causal power-management effect."
+  ],
+  "evidence_source_classes": ["SIMULATED", "MOCK", "CI", "DEVICE_REPORTED", "EXTERNAL_OBSERVER", "OPERATOR_RECORDED"],
+  "p009_mapping": {
+    "schema_version": 1,
+    "emit_only_explicitly_timestamped_events": true,
+    "do_not_create_full_acceptance_session": true,
+    "unsupported_trial_states": ["quiet-period contamination", "route order", "repetition pairing", "charging state", "Wi-Fi association", "daemon-only condition", "trial validity"],
+    "limitation": "P009 v1 observations can carry existing event types, but cannot encode all P012 trial metadata. Keep the P012 record authoritative for this research and require human review of any P009 session."
+  }
+}
