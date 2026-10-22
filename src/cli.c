@@ -4,6 +4,8 @@
 #endif
 #define _POSIX_C_SOURCE 200809L
 #include "schedule.h"
+#include "health.h"
+#include "health_policy.h"
 #include "service.h"
 #include "server_mode.h"
 #include "server_policy.h"
@@ -47,6 +49,8 @@ static void usage(void) {
          "  ios-caffeinate [--socket /absolute/path.sock] schedule list\n"
          "  ios-caffeinate [--socket /absolute/path.sock] schedule remove <schedule-id>\n"
          "  ios-caffeinate wake status\n"
+         "  ios-caffeinate health status|battery|thermal|doctor|sources\n"
+         "  ios-caffeinate health status [--trial-id ID --condition-id A|B|C|D --outside-quiet-interval]\n"
          "  ios-caffeinate server status|doctor|plan\n"
          "  ios-caffeinate server policy show|validate|explain|plan|migrate --dry-run\n"
          "  ios-caffeinate service status|doctor|plan|recovery status|recovery plan|recovery reset --reviewed-cleanup --reviewed-supervisor-state|enable|disable|start|stop|restart\n"
@@ -182,9 +186,9 @@ static const char *server_query_name(server_daemon_result_t result) {
 }
 
 static const char *server_field(const char *reply, const char *key, const char *fallback) {
-    static char values[16][64];
+    static char values[32][64];
     static size_t next_value;
-    char *value = values[next_value++ % 16];
+    char *value = values[next_value++ % (sizeof(values) / sizeof(values[0]))];
     char pattern[48];
     if (snprintf(pattern, sizeof(pattern), "%s=", key) >= (int)sizeof(pattern)) return fallback;
     const char *found = strstr(reply, pattern);
@@ -213,6 +217,314 @@ static const char *server_path_state(const char *path, int socket_expected) {
         snprintf(state, sizeof(states[0]), "%s", S_ISREG(st.st_mode) ? "AVAILABLE" : "UNSAFE");
     }
     return state;
+}
+
+static int health_refresh_observation(health_observation_t *observation,
+                                     const health_clock_sample_t *now) {
+    if (!observation || !now || !observation->value_valid) return 0;
+    return health_recheck_freshness(observation, now->utc_seconds, now->monotonic_ns,
+                                    now->timebase_id, now->clock_uncertainty_ms,
+                                    HEALTH_DEFAULT_FRESHNESS_SECONDS);
+}
+
+static void health_refresh_snapshot(health_snapshot_t *snapshot) {
+    health_clock_sample_t now;
+    if (!snapshot || health_clock_read(NULL, &now) != 0) return;
+    (void)health_refresh_observation(&snapshot->battery_percentage_observation, &now);
+    (void)health_refresh_observation(&snapshot->charging_observation, &now);
+    (void)health_refresh_observation(&snapshot->thermal_observation, &now);
+    (void)health_refresh_observation(&snapshot->device_uptime_observation, &now);
+}
+
+static const char *health_yes_no(int value) {
+    return value ? "yes" : "no";
+}
+
+static void health_print_observation(FILE *out, const char *prefix,
+                                     const health_observation_t *observation) {
+    fprintf(out,
+            "%s.status=%s\n"
+            "%s.source=%s\n"
+            "%s.source_class=%s\n"
+            "%s.source_detected=%s\n"
+            "%s.measurement_acquired=%s\n"
+            "%s.value_valid=%s\n"
+            "%s.observed_at_utc=%lld\n"
+            "%s.freshness=%s\n"
+            "%s.age_seconds=",
+            prefix, health_status_name(observation->status),
+            prefix, observation->source_name,
+            prefix, health_source_class_name(observation->source_class),
+            prefix, health_yes_no(observation->source_detected),
+            prefix, health_yes_no(observation->measurement_acquired),
+            prefix, health_yes_no(observation->value_valid),
+            prefix, (long long)observation->observed_at_utc,
+            prefix, health_freshness_name(observation->freshness), prefix);
+    if (observation->age_available) fprintf(out, "%llu\n", (unsigned long long)observation->age_seconds);
+    else fprintf(out, "UNAVAILABLE\n");
+    fprintf(out,
+            "%s.clock_uncertainty_ms=%llu\n"
+            "%s.timebase=boot_scoped_monotonic\n"
+            "%s.timebase_id=%s\n"
+            "%s.confidence=%s\n"
+            "%s.physical_source_verified=%s\n"
+            "%s.safety_interpretation_reviewed=%s\n"
+            "%s.p009_evidence_accepted=%s\n",
+            prefix, (unsigned long long)observation->clock_uncertainty_ms,
+            prefix, prefix, observation->timebase_id[0] ? observation->timebase_id : "UNKNOWN",
+            prefix, health_confidence_name(observation->confidence),
+            prefix, health_yes_no(observation->physical_source_verified),
+            prefix, health_yes_no(observation->safety_interpretation_reviewed),
+            prefix, health_yes_no(observation->p009_evidence_accepted));
+}
+
+static int health_decimal_field(const char *reply, const char *key,
+                                unsigned long long maximum,
+                                char *out, size_t out_cap) {
+    const char *value = server_field(reply, key, NULL);
+    if (!value || value[0] < '0' || value[0] > '9' || out_cap == 0) return 0;
+    unsigned long long parsed = 0;
+    for (size_t i = 0; value[i]; ++i) {
+        if (value[i] < '0' || value[i] > '9') return 0;
+        unsigned digit = (unsigned)(value[i] - '0');
+        if ((unsigned long long)digit > maximum ||
+            parsed > (maximum - digit) / 10ULL) return 0;
+        parsed = parsed * 10ULL + digit;
+    }
+    if (parsed > maximum || snprintf(out, out_cap, "%llu", parsed) >= (int)out_cap) return 0;
+    return 1;
+}
+
+static int health_daemon_status(FILE *out, const char *socket_path) {
+    char reply[4096] = {0}, error[128] = {0};
+    char uptime[32], remaining[32], acquire[32], release[32], errors[32], schedules[32];
+    server_daemon_result_t result = server_query_daemon(socket_path, reply, sizeof(reply),
+                                                        error, sizeof(error));
+    if (result != SERVER_DAEMON_COMPATIBLE) {
+        fprintf(out,
+                "daemon.status=%s\n"
+                "daemon.source=existing_SERVER_STATUS_IPC\n"
+                "daemon.detail=%s\n"
+                "daemon.state=UNAVAILABLE\n"
+                "daemon.uptime_seconds=UNAVAILABLE\n"
+                "daemon.assertion_owned=UNKNOWN\n"
+                "daemon.remaining_hold_seconds=UNAVAILABLE\n"
+                "daemon.last_acquisition_epoch=UNAVAILABLE\n"
+                "daemon.last_release_epoch=UNAVAILABLE\n"
+                "daemon.last_release_error=UNAVAILABLE\n"
+                "daemon.recent_errors=UNAVAILABLE\n"
+                "daemon.schedule_status=UNAVAILABLE\n"
+                "daemon.recovery_status=UNAVAILABLE\n"
+                "daemon.recovery_restart_eligibility=UNAVAILABLE\n"
+                "daemon.supervisor=UNAVAILABLE\n"
+                "daemon.read_only_query=yes\n",
+                result == SERVER_DAEMON_UNAVAILABLE ? "UNAVAILABLE" : "ERROR",
+                error[0] ? error : server_query_name(result));
+        return result == SERVER_DAEMON_ERROR ? -1 : 0;
+    }
+
+    int owned = strcmp(server_field(reply, "assertion_owned", "unknown"), "1") == 0;
+    const char *owned_value = strcmp(server_field(reply, "assertion_owned", "unknown"), "0") == 0
+        ? "no" : owned ? "yes" : "UNKNOWN";
+    const char *last_release_error = server_field(reply, "last_release_error", "UNKNOWN");
+    fprintf(out,
+            "daemon.status=AVAILABLE\n"
+            "daemon.source=existing_SERVER_STATUS_IPC\n"
+            "daemon.state=%s\n"
+            "daemon.uptime_seconds=%s\n"
+            "daemon.assertion_owned=%s\n"
+            "daemon.remaining_hold_seconds=%s\n"
+            "daemon.last_acquisition_epoch=%s\n"
+            "daemon.last_release_epoch=%s\n"
+            "daemon.last_release_error=%s\n"
+            "daemon.recent_errors=%s\n"
+            "daemon.schedule_count=%s\n"
+            "daemon.schedule_active=%s\n"
+            "daemon.recovery_status=%s\n"
+            "daemon.recovery_cleanup=%s\n"
+            "daemon.recovery_restart_eligibility=%s\n"
+            "daemon.supervisor=%s\n"
+            "daemon.state_invariant=%s\n"
+            "daemon.read_only_query=yes\n",
+            server_field(reply, "state", "UNKNOWN"),
+            health_decimal_field(reply, "uptime_seconds", 315360000ULL, uptime, sizeof(uptime))
+                ? uptime : "INVALID",
+            owned_value,
+            health_decimal_field(reply, "remaining_seconds", 86400ULL, remaining, sizeof(remaining))
+                ? remaining : "INVALID",
+            health_decimal_field(reply, "last_acquire_epoch", 4102444800ULL, acquire, sizeof(acquire))
+                ? acquire : "UNAVAILABLE",
+            health_decimal_field(reply, "last_release_epoch", 4102444800ULL, release, sizeof(release))
+                ? release : "UNAVAILABLE",
+            strcmp(last_release_error, "none") == 0 ? "none" : last_release_error,
+            health_decimal_field(reply, "recent_errors", 100000000ULL, errors, sizeof(errors))
+                ? errors : "INVALID",
+            health_decimal_field(reply, "schedule_count", 100000ULL, schedules, sizeof(schedules))
+                ? schedules : "INVALID",
+            server_field(reply, "schedule_active", "UNKNOWN"),
+            server_field(reply, "recovery_state", "UNKNOWN"),
+            server_field(reply, "recovery_cleanup", "UNKNOWN"),
+            server_field(reply, "recovery_restart_eligibility", "UNKNOWN"),
+            server_field(reply, "recovery_supervisor", "UNKNOWN"),
+            server_field(reply, "state_invariant", "UNKNOWN"));
+    return ferror(out) ? -1 : 0;
+}
+
+static void health_print_battery(FILE *out, const health_snapshot_t *snapshot) {
+    if (snapshot->battery_percentage_observation.value_valid)
+        fprintf(out, "battery.percentage=%d\n", snapshot->battery_percentage);
+    else
+        fprintf(out, "battery.percentage=UNAVAILABLE\n");
+    fprintf(out, "battery.charging=%s\n", health_charging_name(snapshot->charging_state));
+    health_print_observation(out, "battery.percentage_observation",
+                             &snapshot->battery_percentage_observation);
+    health_print_observation(out, "battery.charging_observation",
+                             &snapshot->charging_observation);
+    fprintf(out, "battery.resource_data_status=%s\n",
+            health_resource_state_name(health_classify_battery(snapshot)));
+    fprintf(out, "battery.source_disagreement=%s\n",
+            health_yes_no(snapshot->battery_sources_disagree));
+    fprintf(out, "battery.health_metric=UNAVAILABLE\n");
+}
+
+static void health_print_thermal(FILE *out, const health_snapshot_t *snapshot) {
+    fprintf(out, "thermal.state=%s\n", health_thermal_name(snapshot->thermal_state));
+    fprintf(out, "thermal.raw_platform_state=%s\n",
+            health_thermal_raw_name(snapshot->thermal_raw_state));
+    health_print_observation(out, "thermal.observation", &snapshot->thermal_observation);
+    fprintf(out, "thermal.resource_data_status=%s\n",
+            health_resource_state_name(health_classify_thermal(snapshot)));
+    fprintf(out, "thermal.source_disagreement=%s\n",
+            health_yes_no(snapshot->thermal_sources_disagree));
+    fprintf(out, "thermal.temperature_celsius=UNAVAILABLE\n");
+}
+
+static const char *health_observation_reason(const health_observation_t *observation,
+                                            health_resource_state_t resource_state) {
+    if (!observation) return "observation metadata missing";
+    if (observation->status == HEALTH_STATUS_UNSUPPORTED)
+        return "platform interface is unsupported or has ambiguous semantics";
+    if (observation->status == HEALTH_STATUS_UNAVAILABLE)
+        return observation->measurement_acquired
+            ? "source responded without a usable value" : "no supported read-only value is available";
+    if (observation->status == HEALTH_STATUS_INVALID)
+        return "source value failed strict validation";
+    if (observation->status == HEALTH_STATUS_ERROR)
+        return "platform read failed";
+    if (observation->freshness == HEALTH_FRESHNESS_STALE)
+        return "observation exceeds the freshness limit";
+    if (observation->freshness != HEALTH_FRESHNESS_CURRENT)
+        return "clock or timebase cannot prove freshness";
+    if (!observation->physical_source_verified)
+        return "measurement source has not been verified on the reference device";
+    if (resource_state == HEALTH_RESOURCE_CRITICAL)
+        return "verified critical thermal observation blocks resource safety";
+    if (resource_state == HEALTH_RESOURCE_WARNING)
+        return "sources disagree or the resource category is elevated";
+    return "current diagnostic measurement; safety review remains separate";
+}
+
+static int health_command(FILE *out, const char *command, const char *socket_path,
+                          const char *trial_id, const char *condition_id,
+                          int outside_quiet_interval) {
+    health_snapshot_t snapshot;
+    if (strcmp(command, "sources") == 0) {
+        health_sources_write(out);
+        return ferror(out) ? 1 : 0;
+    }
+    if (strcmp(command, "status") != 0 && strcmp(command, "battery") != 0 &&
+        strcmp(command, "thermal") != 0 && strcmp(command, "doctor") != 0) return 2;
+    if (health_collect(&snapshot) != 0) {
+        fprintf(stderr, "health observation failed\n");
+        return 1;
+    }
+    health_refresh_snapshot(&snapshot);
+    if (!health_snapshot_validate(&snapshot)) {
+        fprintf(stderr, "health observation validation failed\n");
+        return 1;
+    }
+    if (strcmp(command, "battery") == 0) {
+        health_print_battery(out, &snapshot);
+        if (snapshot.battery_percentage_observation.status == HEALTH_STATUS_ERROR ||
+            snapshot.charging_observation.status == HEALTH_STATUS_ERROR) return 1;
+        return snapshot.battery_percentage_observation.value_valid ||
+               snapshot.charging_observation.value_valid ? 0 : 3;
+    }
+    if (strcmp(command, "thermal") == 0) {
+        health_print_thermal(out, &snapshot);
+        if (snapshot.thermal_observation.status == HEALTH_STATUS_ERROR) return 1;
+        return snapshot.thermal_observation.value_valid ? 0 : 3;
+    }
+
+    if (strcmp(command, "status") == 0) {
+        fprintf(out, "health.schema_version=%u\n", snapshot.schema_version);
+        fprintf(out, "health.platform=%s\n", health_platform_backend_name());
+        if (snapshot.device_uptime_observation.value_valid)
+            fprintf(out, "device.uptime_seconds=%llu\n",
+                    (unsigned long long)snapshot.device_uptime_seconds);
+        else
+            fprintf(out, "device.uptime_seconds=UNAVAILABLE\n");
+        health_print_observation(out, "device.uptime_observation",
+                                 &snapshot.device_uptime_observation);
+        health_print_battery(out, &snapshot);
+        health_print_thermal(out, &snapshot);
+        if (trial_id && condition_id && outside_quiet_interval) {
+            fprintf(out,
+                    "trial.association=EXPLICIT\n"
+                    "trial.trial_id=%s\n"
+                    "trial.condition_id=%s\n"
+                    "trial.sampling_window=OPERATOR_ASSERTED_OUTSIDE_QUIET_INTERVAL\n"
+                    "trial.record_written=no\n"
+                    "trial.independent_host_observation=UNAVAILABLE\n",
+                    trial_id, condition_id);
+        }
+        if (health_daemon_status(out, socket_path) != 0)
+            fprintf(out, "daemon.query_result=ERROR\n");
+        fprintf(out,
+                "health.polling=ON_DEMAND\n"
+                "health.record_persisted=no\n"
+                "health.hardware_acceptance=NOT_ESTABLISHED\n");
+        return ferror(out) ? 1 : 0;
+    }
+
+    fprintf(out, "doctor.platform=%s\n", health_platform_backend_name());
+    health_print_battery(out, &snapshot);
+    health_print_thermal(out, &snapshot);
+    fprintf(out,
+            "doctor.battery_interpretation=%s\n"
+            "doctor.thermal_interpretation=%s\n"
+            "doctor.battery_reason=%s\n"
+            "doctor.thermal_reason=%s\n"
+            "doctor.uptime_status=%s\n"
+            "doctor.uptime_runtime_verification=RUNTIME_UNVERIFIED\n"
+            "doctor.read_only=yes\n"
+            "doctor.background_polling=no\n"
+            "doctor.launchd_activation=no\n"
+            "doctor.assertion_acquisition=no\n"
+            "doctor.unattended_server_mode=no\n",
+            health_status_name(snapshot.battery_percentage_observation.status),
+            health_status_name(snapshot.thermal_observation.status),
+            health_observation_reason(&snapshot.battery_percentage_observation,
+                                      health_classify_battery(&snapshot)),
+            health_observation_reason(&snapshot.thermal_observation,
+                                      health_classify_thermal(&snapshot)),
+            health_status_name(snapshot.device_uptime_observation.status));
+    return ferror(out) ? 1 : 0;
+}
+
+static int health_trial_id_valid(const char *value) {
+    if (!value) return 0;
+    size_t length = strlen(value);
+    if (length == 0 || length > 64 ||
+        !((value[0] >= 'a' && value[0] <= 'z') ||
+          (value[0] >= 'A' && value[0] <= 'Z') ||
+          (value[0] >= '0' && value[0] <= '9'))) return 0;
+    for (size_t i = 1; i < length; ++i) {
+        char c = value[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-')) return 0;
+    }
+    return 1;
 }
 
 static int load_server_config(const char *path, server_config_t *config) {
@@ -391,12 +703,19 @@ static int server_policy_explain(FILE *out, const char *socket_path,
     server_config_t config;
     server_policy_inputs_t inputs;
     server_policy_result_t result;
+    health_snapshot_t telemetry;
     char battery_percentage[16];
     char recovery_detail[192] = {0};
     const server_policy_evidence_t *battery_evidence;
     const server_policy_evidence_t *thermal_evidence;
     if (load_server_config(config_path, &config) != 0) return -1;
     server_policy_inputs_init(&inputs);
+    if (health_collect(&telemetry) == 0) {
+        health_refresh_snapshot(&telemetry);
+        health_apply_to_server_policy(&telemetry, &inputs);
+    } else {
+        health_snapshot_init(&telemetry);
+    }
     inputs.operation = SERVER_OPERATION_MANUAL_BOUNDED_SESSION;
     inputs.requested_duration_seconds = config.max_duration_seconds;
     policy_recovery_observe(&inputs, recovery_detail, sizeof(recovery_detail));
@@ -451,6 +770,30 @@ static int server_policy_explain(FILE *out, const char *socket_path,
             "thermal.confidence=%s\n"
             "thermal.observed_at_utc=%lld\n"
             "thermal.freshness=%s\n"
+            "telemetry.battery.status=%s\n"
+            "telemetry.battery.source=%s\n"
+            "telemetry.battery.source_class=%s\n"
+            "telemetry.battery.source_detected=%s\n"
+            "telemetry.battery.measurement_acquired=%s\n"
+            "telemetry.battery.valid=%s\n"
+            "telemetry.battery.current=%s\n"
+            "telemetry.battery.freshness=%s\n"
+            "telemetry.battery.physical_source_verified=%s\n"
+            "telemetry.battery.safety_reviewed=%s\n"
+            "telemetry.battery.p009_accepted=%s\n"
+            "telemetry.thermal.status=%s\n"
+            "telemetry.thermal.source=%s\n"
+            "telemetry.thermal.source_class=%s\n"
+            "telemetry.thermal.source_detected=%s\n"
+            "telemetry.thermal.measurement_acquired=%s\n"
+            "telemetry.thermal.valid=%s\n"
+            "telemetry.thermal.current=%s\n"
+            "telemetry.thermal.state=%s\n"
+            "telemetry.thermal.raw_state=%s\n"
+            "telemetry.thermal.freshness=%s\n"
+            "telemetry.thermal.physical_source_verified=%s\n"
+            "telemetry.thermal.safety_reviewed=%s\n"
+            "telemetry.thermal.p009_accepted=%s\n"
             "reason.primary=%s\n"
             "reason.count=%zu\n",
             result.policy_version, server_policy_name(config.policy),
@@ -487,6 +830,32 @@ static int server_policy_explain(FILE *out, const char *socket_path,
             server_evidence_confidence_name(thermal_evidence->confidence),
             (long long)thermal_evidence->observed_at_utc,
             server_evidence_freshness_name(thermal_evidence->freshness),
+            health_status_name(telemetry.battery_percentage_observation.status),
+            telemetry.battery_percentage_observation.source_name,
+            health_source_class_name(telemetry.battery_percentage_observation.source_class),
+            health_yes_no(telemetry.battery_percentage_observation.source_detected),
+            health_yes_no(telemetry.battery_percentage_observation.measurement_acquired),
+            health_yes_no(telemetry.battery_percentage_observation.value_valid),
+            health_yes_no(telemetry.battery_percentage_observation.value_valid &&
+                          telemetry.battery_percentage_observation.freshness == HEALTH_FRESHNESS_CURRENT),
+            health_freshness_name(telemetry.battery_percentage_observation.freshness),
+            health_yes_no(telemetry.battery_percentage_observation.physical_source_verified),
+            health_yes_no(telemetry.battery_percentage_observation.safety_interpretation_reviewed),
+            health_yes_no(telemetry.battery_percentage_observation.p009_evidence_accepted),
+            health_status_name(telemetry.thermal_observation.status),
+            telemetry.thermal_observation.source_name,
+            health_source_class_name(telemetry.thermal_observation.source_class),
+            health_yes_no(telemetry.thermal_observation.source_detected),
+            health_yes_no(telemetry.thermal_observation.measurement_acquired),
+            health_yes_no(telemetry.thermal_observation.value_valid),
+            health_yes_no(telemetry.thermal_observation.value_valid &&
+                          telemetry.thermal_observation.freshness == HEALTH_FRESHNESS_CURRENT),
+            health_thermal_name(telemetry.thermal_state),
+            health_thermal_raw_name(telemetry.thermal_raw_state),
+            health_freshness_name(telemetry.thermal_observation.freshness),
+            health_yes_no(telemetry.thermal_observation.physical_source_verified),
+            health_yes_no(telemetry.thermal_observation.safety_interpretation_reviewed),
+            health_yes_no(telemetry.thermal_observation.p009_evidence_accepted),
             server_policy_reason_name(result.primary_reason), result.blocker_count);
 
     for (size_t i = SERVER_POLICY_GATE_P011_PACKAGE_ACCEPTANCE;
@@ -808,6 +1177,46 @@ int main(int argc, char **argv) {
 
     if (strcmp(argv[i], "service") == 0) {
         return service_command(argc - i - 1, argv + i + 1, stdout, stderr);
+    }
+
+    if (strcmp(argv[i], "health") == 0) {
+        if (i + 1 >= argc) { usage(); return 2; }
+        const char *trial_id = NULL;
+        const char *condition_id = NULL;
+        int outside_quiet_interval = 0;
+        int invalid_option = 0;
+        int option = i + 2;
+        while (option < argc) {
+            if (strcmp(argv[option], "--trial-id") == 0 && option + 1 < argc && !trial_id) {
+                trial_id = argv[option + 1];
+                option += 2;
+            } else if (strcmp(argv[option], "--condition-id") == 0 &&
+                       option + 1 < argc && !condition_id) {
+                condition_id = argv[option + 1];
+                option += 2;
+            } else if (strcmp(argv[option], "--outside-quiet-interval") == 0 &&
+                       !outside_quiet_interval) {
+                outside_quiet_interval = 1;
+                option++;
+            } else {
+                invalid_option = 1;
+                break;
+            }
+        }
+        int valid_condition = condition_id &&
+            (strcmp(condition_id, "A") == 0 || strcmp(condition_id, "B") == 0 ||
+             strcmp(condition_id, "C") == 0 || strcmp(condition_id, "D") == 0);
+        if (invalid_option ||
+            ((trial_id || condition_id || outside_quiet_interval) &&
+             (strcmp(argv[i + 1], "status") != 0 || !trial_id || !valid_condition ||
+              !outside_quiet_interval || !health_trial_id_valid(trial_id)))) {
+            fprintf(stderr, "P012 association requires health status, a valid --trial-id, --condition-id A|B|C|D, and --outside-quiet-interval.\n");
+            return 2;
+        }
+        int rc = health_command(stdout, argv[i + 1], path, trial_id, condition_id,
+                                outside_quiet_interval);
+        if (rc == 2) usage();
+        return rc;
     }
 
     char command[512] = {0};

@@ -60,11 +60,11 @@ Feature implementation, physical-device acceptance, and production reliability c
 
 **Depends on:** P012 measurement protocol and P015 policy/diagnostic interfaces.
 
-**Deliverables:** read-only health snapshots, battery and thermal observations where iOS exposes them, data freshness and unavailable-state reporting.
+**Deliverables:** versioned native snapshots, on-demand CLI health commands, source/freshness metadata, iOS uptime, existing-daemon health reporting, and a strict P015 diagnostic adapter. P016 cloud engineering is implemented on stacked branch `ios/p016-health-telemetry`.
 
-**Safety constraints:** no polling that keeps the device awake, no unsupported private API assumptions, and no battery/thermal safety claims from a single trial.
+**Safety constraints:** no polling, persistent telemetry, private sensor interface, or battery-monitoring enablement. Battery percentage and charging remain unavailable; `NSProcessInfo.thermalState` is rejected because unknown or unsupported state maps to nominal. The iOS uptime adapter has not run on the reference iPad. Telemetry cannot pass a P009 gate, alter P014 cleanup rules, or enable unattended operation.
 
-**Validation and completion:** deterministic parser tests and documented sampling bounds; device acceptance requires repeated attended measurements and P009 evidence. Reliability claims require P019.
+**Validation and completion:** deterministic native and CLI tests, P009/P012 compatibility checks, exact-SHA CI, and iOS ARM64 cross-build. Hardware runtime verification remains pending; any future battery/thermal acceptance needs a supported read-only source and reviewed P009 evidence. Reliability claims require P019.
 
 ### P017 — Timed and recurring schedule improvements
 
