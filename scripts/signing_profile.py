@@ -77,7 +77,7 @@ def signer_identity(path: Path, expected_sha256: str | None = None) -> tuple[str
         result = subprocess.run([str(path)], capture_output=True, text=True, check=False)
     except OSError as error:
         raise SigningError(f"could not identify signing tool: {error}") from None
-    output = result.stdout + result.stderr
+    output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout + "\n" + result.stderr)
     match = re.search(r"Link Identity Editor\s+([^\s]+)", output)
     if not match:
         raise SigningError("unsupported ldid: version banner 'Link Identity Editor <version>' is unavailable")

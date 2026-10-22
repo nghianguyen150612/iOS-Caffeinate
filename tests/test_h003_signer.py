@@ -116,7 +116,7 @@ class H003SignerTests(unittest.TestCase):
         binary = self.write_executable("ldid", elf64_pie_fixture())
         result = Mock(
             stdout="Usage: ldid [options] binary",
-            stderr="Link Identity Editor 2.1.5-procursus7\n",
+            stderr="\x1b[1mLink Identity Editor 2.1.5-procursus7\x1b[0m\n",
         )
         with patch.object(signer.subprocess, "run", return_value=result) as run:
             banner = signer.read_version_banner(binary)

@@ -145,12 +145,17 @@ def read_version_banner(path: Path) -> str:
         result = subprocess.run([str(path)], capture_output=True, text=True, check=False)
     except OSError as error:
         raise H003Error(f"could not read verified signer version: {type(error).__name__}") from None
+    ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
     for stream in (result.stdout, result.stderr):
-        for line in stream.splitlines():
-            banner = line.strip()
-            if banner.startswith("Link Identity Editor "):
-                return banner
-    raise H003Error("verified signer did not return the expected Link Identity Editor version banner")
+        normalized = ansi.sub("", stream)
+        match = re.search(r"Link Identity Editor\s+([^\s]+)", normalized)
+        if match is not None:
+            return f"Link Identity Editor {match.group(1)}"
+    diagnostic = (result.stdout + "\n" + result.stderr)[:256]
+    raise H003Error(
+        "verified signer did not return the expected Link Identity Editor version banner; "
+        f"output={diagnostic!r}"
+    )
 
 
 def verify_binary_identity(

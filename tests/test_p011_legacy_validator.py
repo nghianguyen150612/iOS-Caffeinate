@@ -13,12 +13,14 @@ import tempfile
 import unittest
 from pathlib import Path
 import struct
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import p011_legacy_package_validator as legacy  # noqa: E402
 import p011_release_preflight as p011  # noqa: E402
+import signing_profile as signing_profile_module  # noqa: E402
 from validate_rootful_package import REQUIRED_HASHES, check_sha_manifest  # noqa: E402
 from macho_ios import validate_ios12_arm64  # noqa: E402
 
@@ -206,6 +208,19 @@ class P011LegacyValidatorTests(unittest.TestCase):
     def test_wrong_pinned_signer_version_is_rejected(self) -> None:
         with self.assertRaisesRegex(legacy.LegacyValidationError, "version mismatch"):
             legacy.validate_pinned_signer_identity("2.1.5", legacy.SIGNER_SHA256)
+
+    def test_pinned_signer_version_banner_accepts_terminal_formatting_after_hash_check(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            signer = Path(temporary) / "ldid"
+            signer.write_bytes(b"verified test fixture")
+            signer.chmod(0o700)
+            expected_digest = hashlib.sha256(signer.read_bytes()).hexdigest()
+            output = Mock(stdout="Usage: ldid", stderr="\x1b[1mLink Identity Editor 2.1.5-procursus7\x1b[0m\n")
+            with patch.object(signing_profile_module.subprocess, "run", return_value=output) as run:
+                version, digest = legacy.signer_identity(signer, expected_sha256=expected_digest)
+            self.assertEqual(version, "2.1.5-procursus7")
+            self.assertEqual(digest, expected_digest)
+            run.assert_called_once()
 
     def test_missing_cli_signature_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
