@@ -47,7 +47,7 @@ static void usage(void) {
          "  ios-caffeinate [--socket /absolute/path.sock] schedule remove <schedule-id>\n"
          "  ios-caffeinate wake status\n"
          "  ios-caffeinate server status|doctor|plan\n"
-         "  ios-caffeinate service status|doctor|plan|enable|disable|start|stop|restart\n"
+         "  ios-caffeinate service status|doctor|plan|recovery status|recovery plan|recovery reset --reviewed-cleanup --reviewed-supervisor-state|enable|disable|start|stop|restart\n"
          "  ios-caffeinate server trial start --for 1s..5m\n"
          "  ios-caffeinate server trial stop\n"
          "  ios-caffeinate [--server-config /absolute/path] [--schedule-state /absolute/path] server status|doctor|plan\n"

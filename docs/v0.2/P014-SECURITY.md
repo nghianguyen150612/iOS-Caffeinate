@@ -1,0 +1,11 @@
+# P014 — Security and Failure Boundaries
+
+The recovery ledger is root-owned, mode `0600`, bounded to 4 KiB, and contains only policy metadata. Its parser is strict; its path traversal rejects symlinks; its target checks reject hard links, unexpected owners, modes, and file types. Writes use an exclusive same-directory temporary file, `fsync`, atomic rename, and parent-directory `fsync`. The daemon's existing socket lock serializes the only production writer.
+
+The implementation does not call launchctl, spawn another privileged process, add a network endpoint, remove stale sockets, delete or replace lock files, reboot, respring, connect over SSH, change Tailscale, or acquire a real IOKit assertion in cloud validation. If the standard daemon lock file is absent, the explicit reviewed reset may create that empty root-owned lock file so it can hold the same lock the daemon uses. No credentials, SSH material, tokens, raw assertion identifiers, or arbitrary environment data enter the record.
+
+Corrupt, unsupported, untrusted, missing, partially written, or clock-ambiguous state blocks new assertion acquisition. A stale socket or missing PID is not treated as cleanup confirmation. Release failure and unknown prior assertion ownership stay visible and blocking until an operator completes the reviewed recovery process. Time passing and retrying a CLI command do not clear the blocker.
+
+`ic service recovery status` and `plan` are read-only. `ic service recovery reset --reviewed-cleanup --reviewed-supervisor-state` is an explicit root-only ledger mutation. It acquires and holds the daemon socket lock while rechecking that service registration is absent, the daemon is not observed, and the socket is absent, then writes the journal before releasing the lock. It refuses to rewrite corrupt or unsafe records. The flags record the operator's review and must not be used as a substitute for physical cleanup review. The command does not invoke launchctl or perform cleanup itself.
+
+The policy output can say `ELIGIBLE_FOR_ATTENDED_START`; this is not automatic restart permission. `automatic_runtime_enabled` is always false. P013 `enable`, `start`, and `restart` remain blocked by the unverified iOS 12 lifecycle gate, and the managed profile retains `KeepAlive=false`.

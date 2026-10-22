@@ -73,6 +73,14 @@ Server trials share the existing P004 assertion owner. They require an explicit 
 
 The connectivity evidence contract lives in `docs/schemas/connectivity-evidence-v1.schema.json`. LAN and Tailscale records are independent and include their own connection, authenticated SSH, latency, time, and screen-lock observations. Daemon status cannot establish reachability. The bundled launchd template remains disabled and is not activated.
 
+## P014 Crash Recovery Policy
+
+P014 adds `src/recovery.c` as a separate C11 decision engine. The engine consumes caller-supplied exit, cleanup, supervisor, socket, lock, clock, and persisted-accounting observations. It returns a reasoned policy result and attended-start eligibility; it never runs a process or calls launchctl. The current iOS implementation has no enabled supervisor adapter, so automatic runtime restart is reported as `no`.
+
+The root-owned `/var/lib/ioscaffeinate/recovery-state.json` journal records a durable `RUNNING` marker before the daemon evaluates P004 schedules. An unclean or untrusted prior record gates new assertion acquisition from schedules, probe, start, and server trials. It preserves P004 schedule data and permits ordinary evaluation after trusted clean state or an explicit operator-reviewed cleanup reset. P013 mutation gates remain closed and the managed launchd profile remains `KeepAlive=false`.
+
+Crash detection, exit classification, assertion cleanup, restart eligibility, process restart, launchd boot persistence, SSH reachability, OS awake state, and long-duration reliability remain distinct. Cloud mocks and simulations validate policy and persistence behavior only; they do not establish kernel cleanup after SIGKILL or physical reliability.
+
 ## Timed Awake, Scheduled Awake, and Scheduled Wake
 
 These are separate capabilities:

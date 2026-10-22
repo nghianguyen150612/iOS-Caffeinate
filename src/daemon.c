@@ -7,6 +7,7 @@
 #endif
 #define _POSIX_C_SOURCE 200809L
 #include "power.h"
+#include "recovery.h"
 #include "schedule.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -62,6 +63,14 @@ static bool state_invariant_reported;
 static bool state_invariant_failed;
 static const char *socket_path = DEFAULT_SOCKET;
 static const char *schedule_file_path = NULL;
+static const char *recovery_file_path = RECOVERY_DEFAULT_PATH;
+static recovery_record_t recovery_record;
+static bool recovery_assertions_blocked = true;
+static bool recovery_journal_started;
+static bool recovery_block_logged;
+static volatile sig_atomic_t termination_signal;
+static recovery_exit_class_t process_exit_class = RECOVERY_EXIT_UNKNOWN_UNOBSERVED;
+static int process_exit_signal;
 
 static schedule_store_t sched_store;
 static int current_active_sched_idx = -1;
@@ -109,7 +118,7 @@ static double now(void) {
 }
 
 static void on_signal(int sig) {
-    (void)sig;
+    termination_signal = sig;
     keep_running = 0;
 }
 
@@ -136,7 +145,32 @@ static void copy_error_token(char *out, size_t cap, const char *error) {
 }
 
 static bool can_acquire(void) {
-    return held_id == 0 && daemon_state == DAEMON_STATE_IDLE && !is_release_pending();
+    return !recovery_assertions_blocked && held_id == 0 &&
+           daemon_state == DAEMON_STATE_IDLE && !is_release_pending();
+}
+
+static const char *recovery_runtime_state(void) {
+    if (!recovery_assertions_blocked) return "HEALTHY";
+    if (recovery_record.last_exit_class == RECOVERY_EXIT_RELEASE_FAILURE ||
+        recovery_record.last_exit_class == RECOVERY_EXIT_ASSERTION_OWNERSHIP_UNKNOWN)
+        return "CLEANUP_UNVERIFIED";
+    return "RECOVERY_UNVERIFIED";
+}
+
+static const char *recovery_runtime_cleanup(void) {
+    if (recovery_record.cleanup_state != RECOVERY_CLEANUP_CONFIRMED) return "UNVERIFIED";
+    if (recovery_record.last_exit_class == RECOVERY_EXIT_RELEASE_FAILURE ||
+        recovery_record.last_exit_class == RECOVERY_EXIT_ASSERTION_OWNERSHIP_UNKNOWN)
+        return "REVIEW_REQUIRED";
+    return recovery_record.last_exit_class == RECOVERY_EXIT_OPERATOR_REVIEWED_CLEANUP ?
+           "OPERATOR_REVIEWED" : "CONFIRMED";
+}
+
+static const char *recovery_runtime_eligibility(void) {
+    return recovery_record.cleanup_state == RECOVERY_CLEANUP_CONFIRMED &&
+           recovery_record.last_exit_class != RECOVERY_EXIT_RELEASE_FAILURE &&
+           recovery_record.last_exit_class != RECOVERY_EXIT_ASSERTION_OWNERSHIP_UNKNOWN ?
+           "BLOCKED_SUPERVISOR_UNVERIFIED" : "BLOCK_CLEANUP_UNVERIFIED";
 }
 
 static void validate_runtime_state(void) {
@@ -172,6 +206,16 @@ static int clear_hold(char *error, size_t cap) {
         copy_error_token(last_release_error, sizeof(last_release_error), error);
         if (releasing_trial) trial_state = "RELEASE_FAILED";
         retry_at = release_attempts < MAX_RELEASE_ATTEMPTS ? now() + 1.0 : 0;
+        if (recovery_journal_started) {
+            recovery_record.last_exit_class = RECOVERY_EXIT_RELEASE_FAILURE;
+            recovery_record.last_exit_signal = 0;
+            recovery_record.cleanup_state = RECOVERY_CLEANUP_UNVERIFIED;
+            recovery_assertions_blocked = true;
+            char journal_error[256] = {0};
+            if (recovery_store_save_atomic(recovery_file_path, geteuid(), &recovery_record,
+                                           journal_error, sizeof(journal_error)) != 0)
+                log_msg("ERROR", "Could not persist release-failure recovery state: %s", journal_error);
+        }
         log_msg("ERROR", "Releasing assertion %u failed: %s; %s", held_id, error, power_diagnostics());
         return -1;
     }
@@ -208,7 +252,13 @@ static void expire_if_due(void) {
 }
 
 static void check_and_trigger_schedules(void) {
-    if (!can_acquire()) return;
+    if (!can_acquire()) {
+        if (recovery_assertions_blocked && sched_store.count > 0 && !recovery_block_logged) {
+            recovery_block_logged = true;
+            log_msg("WARN", "Scheduled and manual assertions are blocked: prior cleanup is unverified");
+        }
+        return;
+    }
 
     time_t now_wall = time(NULL);
     int active_idx = -1;
@@ -427,10 +477,15 @@ static void handle_client(int fd) {
         char out[1024];
         double left = (daemon_state == DAEMON_STATE_ACTIVE) ? (deadline - now()) : 0;
         unsigned remaining = left > 0 ? (unsigned)left + 1 : 0;
-        snprintf(out, sizeof(out), "OK active=%s state=%s remaining_seconds=%u assertion_id=%u release_pending=%s schedule_count=%zu backend=%s type=PreventUserIdleSystemSleep %s\n",
+        snprintf(out, sizeof(out), "OK active=%s state=%s remaining_seconds=%u assertion_id=%u release_pending=%s schedule_count=%zu recovery_state=%s recovery_last_exit=%s recovery_attempt_budget=%u/%u recovery_cooldown=INACTIVE recovery_cleanup=%s recovery_restart_eligibility=%s recovery_supervisor=UNVERIFIED recovery_runtime_activated=no recovery_schedule_gate=%s backend=%s type=PreventUserIdleSystemSleep %s\n",
                  is_holding() ? "yes" : "no", daemon_state_name(daemon_state),
                  remaining, held_id, is_release_pending() ? "yes" : "no",
                  sched_store.count,
+                 recovery_runtime_state(),
+                 recovery_exit_class_name(recovery_record.last_exit_class),
+                 RECOVERY_MAX_ATTEMPTS - recovery_record.attempt_count, RECOVERY_MAX_ATTEMPTS,
+                 recovery_runtime_cleanup(), recovery_runtime_eligibility(),
+                 recovery_assertions_blocked ? "BLOCKED" : "OPEN",
                  power_backend_name(), power_diagnostics());
         respond(fd, out);
 #ifdef IOSCAFFEINATE_TEST_MOCK
@@ -456,7 +511,7 @@ static void handle_client(int fd) {
             snprintf(release_epoch, sizeof(release_epoch), "%lld", (long long)last_release_epoch);
         else snprintf(release_epoch, sizeof(release_epoch), "UNAVAILABLE");
         snprintf(out, sizeof(out),
-                 "OK SERVER protocol=1 uptime_seconds=%u state=%s state_invariant=%s active=%s assertion_owned=%s assertion_id=%u source=%s trial=%s trial_state=%s trial_stop_seen=%s remaining_seconds=%u release_pending=%s release_attempts=%u last_acquire_epoch=%s last_release_epoch=%s last_release_error=%s schedule_count=%zu schedule_active=%s recent_errors=%u backend=%s backend_verification=UNVERIFIED backend_diagnostics=%s\n",
+                 "OK SERVER protocol=1 uptime_seconds=%u state=%s state_invariant=%s active=%s assertion_owned=%s assertion_id=%u source=%s trial=%s trial_state=%s trial_stop_seen=%s remaining_seconds=%u release_pending=%s release_attempts=%u last_acquire_epoch=%s last_release_epoch=%s last_release_error=%s schedule_count=%zu schedule_active=%s recovery_state=%s recovery_last_exit=%s recovery_attempt_budget=%u/%u recovery_cooldown=INACTIVE recovery_cleanup=%s recovery_restart_eligibility=%s recovery_supervisor=UNVERIFIED recovery_runtime_activated=no recovery_schedule_gate=%s recent_errors=%u backend=%s backend_verification=UNVERIFIED backend_diagnostics=%s\n",
                  elapsed > 0 ? (unsigned)elapsed : 0, daemon_state_name(daemon_state),
                  state_invariant_failed ? "ERROR" : "OK",
                  is_holding() ? "yes" : "no", is_holding() ? "1" : "0", held_id,
@@ -464,11 +519,20 @@ static void handle_client(int fd) {
                  trial_state, trial_stop_seen ? "yes" : "no", remaining,
                  is_release_pending() ? "yes" : "no", release_attempts,
                  acquire_epoch, release_epoch, last_release_error,
-                 sched_store.count, schedule_active, recent_errors,
+                 sched_store.count, schedule_active,
+                 recovery_runtime_state(),
+                 recovery_exit_class_name(recovery_record.last_exit_class),
+                 RECOVERY_MAX_ATTEMPTS - recovery_record.attempt_count, RECOVERY_MAX_ATTEMPTS,
+                 recovery_runtime_cleanup(), recovery_runtime_eligibility(),
+                 recovery_assertions_blocked ? "BLOCKED" : "OPEN", recent_errors,
                  power_backend_name(), power_diagnostics());
         respond(fd, out);
     } else if (strcmp(command, "PROBE") == 0) {
-        if (is_holding()) {
+        if (recovery_assertions_blocked) {
+            respond(fd, "ERR recovery blocked: prior assertion cleanup is unverified\n");
+            return;
+        }
+        if (!can_acquire()) {
             respond(fd, "ERR already active; stop before probing\n");
             return;
         }
@@ -505,7 +569,9 @@ static void handle_client(int fd) {
             respond(fd, "ERR server trial duration must be 1..300 seconds\n"); return;
         }
         if (!can_acquire()) {
-            respond(fd, "ERR assertion owner is busy; stop the current hold before a trial\n");
+            respond(fd, recovery_assertions_blocked ?
+                    "ERR recovery blocked: prior assertion cleanup is unverified\n" :
+                    "ERR assertion owner is busy; stop the current hold before a trial\n");
             return;
         }
         daemon_state = DAEMON_STATE_ACQUIRING;
@@ -552,7 +618,11 @@ static void handle_client(int fd) {
         if (errno || *end || duration == 0 || duration > MAX_DURATION_SECONDS) {
             respond(fd, "ERR duration must be 1..86400 seconds\n"); return;
         }
-        if (is_holding()) {
+        if (recovery_assertions_blocked) {
+            respond(fd, "ERR recovery blocked: prior assertion cleanup is unverified\n");
+            return;
+        }
+        if (!can_acquire()) {
             respond(fd, "ERR already active; stop before restarting\n");
             return;
         }
@@ -600,6 +670,7 @@ static void handle_client(int fd) {
             return;
         }
         respond(fd, "OK shutdown=accepted assertion_released=yes\n");
+        process_exit_class = RECOVERY_EXIT_EXPLICIT_STOP;
         keep_running = false;
     } else if (strcmp(command, "SCHEDULE LIST") == 0) {
         char out[16384] = "OK schedules=";
@@ -691,7 +762,7 @@ static void handle_client(int fd) {
 }
 
 static void usage(const char *exe) {
-    fprintf(stderr, "Usage: %s [--socket /absolute/path.sock] [--schedules /path/to/schedules.json] [--foreground]\n", exe);
+    fprintf(stderr, "Usage: %s [--socket /absolute/path.sock] [--schedules /path/to/schedules.json] [--recovery-state /path/to/recovery-state.json] [--foreground]\n", exe);
 }
 
 int main(int argc, char **argv) {
@@ -699,6 +770,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--foreground") == 0) continue;
         if (strcmp(argv[i], "--socket") == 0 && i + 1 < argc) socket_path = argv[++i];
         else if (strcmp(argv[i], "--schedules") == 0 && i + 1 < argc) schedule_file_path = argv[++i];
+        else if (strcmp(argv[i], "--recovery-state") == 0 && i + 1 < argc) recovery_file_path = argv[++i];
         else { usage(argv[0]); return 2; }
     }
     if (*socket_path != '/' || strlen(socket_path) >= sizeof(((struct sockaddr_un *)0)->sun_path)) {
@@ -707,6 +779,9 @@ int main(int argc, char **argv) {
     if (schedule_file_path &&
         (*schedule_file_path != '/' || strlen(schedule_file_path) >= sizeof(sched_store.state_file_path))) {
         fprintf(stderr, "Schedule state path must be absolute and fit the supported path bound\n"); return 2;
+    }
+    if (!recovery_file_path || recovery_file_path[0] != '/' || strlen(recovery_file_path) >= 512) {
+        fprintf(stderr, "Recovery state path must be absolute and fit the supported path bound\n"); return 2;
     }
     if (strcmp(socket_path, DEFAULT_SOCKET) == 0 && geteuid() != 0) {
         fprintf(stderr, "Default socket requires root; use a private --socket directory for tests\n"); return 1;
@@ -745,8 +820,24 @@ int main(int argc, char **argv) {
     if (chmod(socket_path, 0600) != 0 || listen(listen_fd, 8) != 0) {
         perror("chmod/listen"); result = 1; goto cleanup;
     }
+    char recovery_error[256] = {0};
+    int assertions_blocked = 1;
+    recovery_record_init(&recovery_record);
+    if (recovery_store_begin_run(recovery_file_path, geteuid(), &recovery_record,
+                                 &assertions_blocked, recovery_error,
+                                 sizeof(recovery_error)) == 0) {
+        recovery_journal_started = true;
+        recovery_assertions_blocked = assertions_blocked != 0;
+    } else {
+        recovery_assertions_blocked = true;
+        log_msg("ERROR", "Recovery journal unavailable; new assertions are blocked: %s", recovery_error);
+    }
     log_msg("INFO", "ios-caffeinated starting: socket=%s backend=%s schedules=%zu",
             socket_path, power_backend_name(), sched_store.count);
+    if (recovery_assertions_blocked)
+        log_msg("WARN", "Recovery state is unverified; schedule, probe, trial, and manual assertion acquisition are blocked");
+    else
+        log_msg("INFO", "Recovery journal confirms prior cleanup; current daemon generation is recorded");
 
     check_and_trigger_schedules();
 
@@ -769,7 +860,8 @@ int main(int argc, char **argv) {
             timeout_ms = ms;
         }
 
-        if (sched_store.count > 0 && !is_holding() && !is_release_pending()) {
+        if (sched_store.count > 0 && !recovery_assertions_blocked &&
+            !is_holding() && !is_release_pending()) {
             time_t now_w = time(NULL);
             int act_i = -1, nxt_i = -1;
             uint32_t act_rem = 0;
@@ -809,13 +901,31 @@ int main(int argc, char **argv) {
 cleanup:;
     log_msg("INFO", "ios-caffeinated shutting down");
     char error[256] = {0};
-    if (clear_hold(error, sizeof(error)) != 0) {
+    int current_cleanup_confirmed = clear_hold(error, sizeof(error)) == 0;
+    if (!current_cleanup_confirmed) {
         log_msg("ERROR", "UNRESOLVED assertion release at exit; device verification required");
         result = 1;
+        process_exit_class = RECOVERY_EXIT_RELEASE_FAILURE;
+    }
+    if (process_exit_class == RECOVERY_EXIT_UNKNOWN_UNOBSERVED) {
+        if (termination_signal) {
+            process_exit_class = RECOVERY_EXIT_SIGNAL_TERMINATION;
+            process_exit_signal = (int)termination_signal;
+        } else process_exit_class = result == 0 ? RECOVERY_EXIT_GRACEFUL_CONFIRMED :
+                                                  RECOVERY_EXIT_UNEXPECTED_EXIT;
     }
     daemon_state = DAEMON_STATE_SHUTTING_DOWN;
     close(listen_fd);
     if (remove_owned_socket(&bound) != 0 || clock_failed) result = 1;
+    if (recovery_journal_started &&
+        recovery_store_finish_run(recovery_file_path, geteuid(), &recovery_record,
+                                  current_cleanup_confirmed, process_exit_class,
+                                  process_exit_signal, recovery_error,
+                                  sizeof(recovery_error)) != 0) {
+        log_msg("ERROR", "Could not persist final recovery classification; next start will remain blocked: %s",
+                recovery_error);
+        result = 1;
+    }
     close(lock_fd);
     power_cleanup();
     return result;

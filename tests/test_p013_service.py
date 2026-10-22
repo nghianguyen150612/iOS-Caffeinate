@@ -27,8 +27,19 @@ class P013ServiceCommandTests(unittest.TestCase):
     def test_service_commands_are_in_help(self) -> None:
         result = self.run_cli("--help")
         self.assertEqual(result.returncode, 0)
-        for action in ("status", "doctor", "plan", "enable", "disable", "start", "stop", "restart"):
+        for action in ("status", "doctor", "plan", "recovery", "reset", "enable", "disable", "start", "stop", "restart"):
             self.assertIn(action, result.stdout)
+
+    def test_recovery_reset_requires_explicit_review_and_safe_state(self) -> None:
+        usage = self.run_cli("service", "recovery", "reset")
+        self.assertEqual(usage.returncode, 2)
+        self.assertIn("--reviewed-cleanup", usage.stderr)
+        self.assertIn("--reviewed-supervisor-state", usage.stderr)
+
+        result = self.run_cli("service", "recovery", "reset", "--reviewed-cleanup",
+                              "--reviewed-supervisor-state")
+        self.assertIn(result.returncode, (3, 4, 6))
+        self.assertIn("changed=no", result.stderr)
 
     def test_read_only_service_commands_report_no_changes(self) -> None:
         for action in ("status", "doctor", "plan"):
