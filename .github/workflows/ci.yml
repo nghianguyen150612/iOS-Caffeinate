@@ -1360,3 +1360,135 @@ jobs:
             build/p018/export-created/**
             build/p018/deterministic-fixture.txt
             build/p018/deterministic-fixture-validation.json
+
+  p019-supervised-reliability-validation:
+    name: P019 supervised reliability and acceptance validation
+    runs-on: ubuntu-latest
+    needs:
+      - linux-protocol
+      - ios-cross-build
+      - ios-artifact-inspection
+      - ios-rootful-package
+      - p009-evidence-validation
+      - p011-release-preflight
+      - p010-signing-release-gate
+      - p012-idle-research-validation
+      - p013-launchd-lifecycle-validation
+      - p014-crash-recovery-validation
+      - p015-server-policy-validation
+      - p016-health-telemetry-validation
+      - p017-scheduling-validation
+      - p018-cli-package-ux-validation
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Record and verify exact checked-out source SHA
+        env:
+          P019_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/p019
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$P019_SOURCE_SHA"
+          printf '%s\n' "$actual_sha" | tee build/p019/source-commit.txt
+      - name: Validate preregistered P019 protocol and strict schemas
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/p019_session.py tests/p019_fixtures.py tests/test_p019_session.py
+          python3 scripts/p019_session.py plan --format json > build/p019/plan.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "scripts")
+          import p012_common
+          protocol = json.loads(Path("experiments/p019/protocol-v1.json").read_text())
+          schema = json.loads(Path("experiments/p019/protocol-v1.schema.json").read_text())
+          for path in ("experiments/p019/session-v1.schema.json", "experiments/p019/acceptance-result-v1.schema.json"):
+              value = json.loads(Path(path).read_text())
+              assert isinstance(value.get("$id"), str), path
+          issues = p012_common.validate_json_schema(protocol, schema)
+          if issues:
+              raise SystemExit("P019 protocol schema failed: " + "; ".join(issues))
+          plan = json.loads(Path("build/p019/plan.json").read_text())
+          assert plan["cloud_only"] is True and plan["device_actions_started"] is False
+          assert plan["p012_matrix"]["planned_probe_trials"] == 24
+          assert plan["p012_matrix"]["maximum_hold_seconds"] == 300
+          PY
+      - name: Run P019 fault, safety, evidence, and side-effect-boundary tests
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tests -p 'test_p019_session.py' -v 2>&1 | tee build/p019/p019-tests.txt
+      - name: Run P009, P012, and P018 evidence compatibility suites
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_p009_evidence.py' -v 2>&1 | tee build/p019/p009-compatibility-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p012_research.py' -v 2>&1 | tee build/p019/p012-compatibility-tests.txt
+          python3 -m unittest discover -s tests -p 'test_p018_export.py' -v 2>&1 | tee build/p019/p018-export-compatibility-tests.txt
+      - name: Generate and analyze deterministic SIMULATED-only session
+        env:
+          P019_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          python3 tests/create_p019_simulation_artifacts.py --source-sha "$P019_SOURCE_SHA" --output-dir build/p019/simulation
+          python3 scripts/p019_session.py validate --session build/p019/simulation/session-simulated.json > build/p019/simulation/validation.json
+          python3 scripts/p019_session.py analyze --session build/p019/simulation/session-simulated.json > build/p019/simulation/analysis.json
+          python3 scripts/p019_session.py report --session build/p019/simulation/session-simulated.json --format markdown > build/p019/simulation/report.md
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          root = Path("build/p019/simulation")
+          source = os.environ["P019_SOURCE_SHA"]
+          session = json.loads((root / "session-simulated.json").read_text())
+          validation = json.loads((root / "validation.json").read_text())
+          analysis = json.loads((root / "analysis.json").read_text())
+          summary = json.loads((root / "SIMULATED-ONLY.json").read_text())
+          assert session["source_commit_sha"] == source
+          assert session["evidence_class"] == "SIMULATED"
+          assert all(row["evidence_origin"] == "SIMULATED" for row in session["trial_records"])
+          assert all(row["source_class"] == "SIMULATED" for row in session["bounded_cycles"])
+          assert validation["session_validation"] == "PASS"
+          assert validation["hardware_acceptance"] == "NOT_ESTABLISHED"
+          assert analysis["status"] == "PREREQUISITES_BLOCKED"
+          assert analysis["hardware_acceptance"] == "NOT_ESTABLISHED"
+          assert analysis["source_commit_sha"] == source
+          assert summary["fixture_provenance"] == "SIMULATED"
+          assert summary["hardware_acceptance"] == "NOT_ESTABLISHED"
+          assert summary["device_actions"] == "NOT_PERFORMED"
+          (root / "P019-CI-SUMMARY.json").write_text(json.dumps({
+              "manifest_version": 1,
+              "milestone": "P019",
+              "source_sha": source,
+              "cloud_status": "P019_CLOUD_COMPLETE_HARDWARE_ACCEPTANCE_PENDING",
+              "fixture_provenance": "SIMULATED_ONLY",
+              "simulated_analysis_decision": analysis["status"],
+              "hardware_acceptance": "NOT_ESTABLISHED",
+              "physical_device_execution": "NOT_PERFORMED",
+              "exact_source_sha_verified": True,
+          }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          PY
+      - name: Confirm no device execution and exact source is unchanged
+        env:
+          P019_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$P019_SOURCE_SHA"
+          test "$(cat build/p019/source-commit.txt)" = "$P019_SOURCE_SHA"
+          ! rg -n 'DEVICE_REPORTED|EXTERNAL_OBSERVER' build/p019/simulation
+          grep -q '"hardware_acceptance": "NOT_ESTABLISHED"' build/p019/simulation/P019-CI-SUMMARY.json
+          grep -q '"device_actions": "NOT_PERFORMED"' build/p019/simulation/SIMULATED-ONLY.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P019-SIMULATED-Cloud-Validation
+          if-no-files-found: error
+          path: |
+            build/p019/source-commit.txt
+            build/p019/plan.json
+            build/p019/p019-tests.txt
+            build/p019/p009-compatibility-tests.txt
+            build/p019/p012-compatibility-tests.txt
+            build/p019/p018-export-compatibility-tests.txt
+            build/p019/simulation/**

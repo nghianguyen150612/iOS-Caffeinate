@@ -119,6 +119,10 @@ P011 verifies the published stable artifact and prepares a read-only device pref
 
 P018 adds `ic help`, `ic --version`, read-only `ic doctor`, manager-backed package status and upgrade/rollback readiness, evidence inventory, and explicit privacy-filtered export. Package operations do not install/remove packages, and evidence export does not establish P009 acceptance. Current status is `P018_CLOUD_COMPLETE_DEVICE_UX_PENDING`; see the [operator guide](docs/v0.2/OPERATOR-GUIDE.md), [CLI contract](docs/v0.2/P018-CLI-CONTRACT.md), and [device runbook](docs/v0.2/P018-DEVICE-ACCEPTANCE.md).
 
+## P019 supervised reliability
+
+P019 adds a preregistered, offline reliability protocol and session analyzer around the existing P009 v1 evidence authority, P012 controlled-idle research, and P018 privacy-filtered export. Stage A cloud work cannot establish physical acceptance. Stage B requires exact package/signer provenance, separately authorized attended sessions, independent recovery, reviewed raw P009 records, and explicit tested scope. The current status is `P019_CLOUD_COMPLETE_HARDWARE_ACCEPTANCE_PENDING` only after the exact-head cloud job passes; no 24/7 claim is supported. See the [P019 prerequisite matrix](docs/v0.2/P019-PREREQUISITES.md), [protocol](docs/v0.2/P019-EXPERIMENT-PROTOCOL.md), [runbook](docs/v0.2/P019-OPERATOR-RUNBOOK.md), and [release gates](docs/v0.2/P019-RELEASE-GATES.md).
+
 ## P012 controlled idle research
 
 P012 adds a preregistered A/B/C/D research protocol, an inert-by-default host SSH probe, an operator record controller, a deterministic offline analyzer, and a conservative P009 v1 event mapper. The probe requires `--run-attended`, an operator-supplied destination, a completed quiet period, locked-screen/state confirmations, P011 package/runtime prerequisites, and direct recovery before it can connect. Tests use subprocess mocks. P012 does not automate device operations, infer assertion cleanup, or claim that SSH or an IOKit API call proves OS sleep behavior. No P012 hardware trials were run during cloud engineering.

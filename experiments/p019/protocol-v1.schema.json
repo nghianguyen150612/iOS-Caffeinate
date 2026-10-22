@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ios-caffeinate.invalid/schemas/p019-protocol-v1.schema.json",
+  "title": "P019 preregistered supervised reliability protocol v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol_id", "protocol_version", "protocol_status", "preregistered_at_utc", "target_platform", "package_identity", "prerequisite_gates", "p012_reference", "phases", "endurance_plan", "observation_design", "inclusion_criteria", "exclusion_criteria", "stop_conditions", "failure_handling", "analysis_plan", "evidence_review", "acceptance_criteria", "revision_policy"],
+  "properties": {
+    "protocol_id": {"const": "P019"},
+    "protocol_version": {"const": 1},
+    "protocol_status": {"const": "PREREGISTERED"},
+    "preregistered_at_utc": {"type": "string", "format": "date-time"},
+    "target_platform": {
+      "type": "object", "additionalProperties": false, "required": ["device", "soc", "ios", "bootstrap"],
+      "properties": {"device": {"const": "iPad mini 2 A1489 / iPad4,4"}, "soc": {"const": "Apple A7 ARM64"}, "ios": {"const": "12.5.7"}, "bootstrap": {"const": "Amethyst / Procursus rootful"}}
+    },
+    "package_identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["stable_artifact", "stable_package_sha256", "stable_package_use", "recorded_ldid_version", "recorded_ldid_sha256", "development_candidate_required", "development_candidate_auto_build_or_install", "candidate_identity_fields"],
+      "properties": {
+        "stable_artifact": {"const": "ioscaffeinate_0.1.0-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb"},
+        "stable_package_sha256": {"const": "439d2543adbe1472f82cfd6c9e6bb9dd747da6c31c79f3da1f3da86b8ca9421c"},
+        "stable_package_use": {"type": "string", "minLength": 1},
+        "recorded_ldid_version": {"const": "2.1.5-procursus7"},
+        "recorded_ldid_sha256": {"const": "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c"},
+        "development_candidate_required": {"const": true},
+        "development_candidate_auto_build_or_install": {"const": false},
+        "candidate_identity_fields": {"type": "array", "minItems": 10, "uniqueItems": true, "items": {"type": "string"}}
+      }
+    },
+    "prerequisite_gates": {"type": "array", "minItems": 14, "uniqueItems": true, "items": {"type": "string"}},
+    "p012_reference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "protocol_id", "protocol_version", "sha256", "conditions", "routes", "quiet_interval_seconds", "quiet_interval_minimum_seconds", "quiet_interval_maximum_seconds", "active_hold_seconds", "maximum_hold_seconds", "probe_timeout_seconds", "maximum_probe_timeout_seconds", "maximum_probes_per_trial", "repetitions_per_condition_per_route", "planned_probe_trials", "condition_order_by_repetition", "route_order_by_repetition", "automated_physical_trial_series"],
+      "properties": {
+        "path": {"const": "experiments/p012/protocol-v1.json"}, "protocol_id": {"const": "P012"}, "protocol_version": {"const": 1},
+        "sha256": {"const": "5cf6c44806be0f3d510cbef368ecf96a95d9092585b7f02d6f04674760af3169"},
+        "conditions": {"const": ["A", "B", "C", "D"]}, "routes": {"const": ["LAN", "TAILSCALE"]},
+        "quiet_interval_seconds": {"const": 120}, "quiet_interval_minimum_seconds": {"const": 60}, "quiet_interval_maximum_seconds": {"const": 180},
+        "active_hold_seconds": {"const": 180}, "maximum_hold_seconds": {"const": 300}, "probe_timeout_seconds": {"const": 8}, "maximum_probe_timeout_seconds": {"const": 15},
+        "maximum_probes_per_trial": {"const": 1}, "repetitions_per_condition_per_route": {"const": 3}, "planned_probe_trials": {"const": 24},
+        "condition_order_by_repetition": {"const": [["A", "B", "C", "D"], ["B", "D", "A", "C"], ["C", "A", "D", "B"]]},
+        "route_order_by_repetition": {"const": [["LAN", "TAILSCALE"], ["TAILSCALE", "LAN"], ["LAN", "TAILSCALE"]]},
+        "automated_physical_trial_series": {"const": false}
+      }
+    },
+    "phases": {"type": "array", "minItems": 6, "maxItems": 6, "items": {"type": "object", "additionalProperties": false, "required": ["id", "name", "entry_gate", "operations", "state_changes_allowed"], "properties": {"id": {"type": "integer", "minimum": 0, "maximum": 5}, "name": {"type": "string", "minLength": 1}, "entry_gate": {"type": "string", "minLength": 1}, "operations": {"type": "array", "minItems": 1, "items": {"type": "string"}}, "state_changes_allowed": {"type": ["boolean", "string"]}}}},
+    "endurance_plan": {"type": "object", "additionalProperties": false, "required": ["observation_periods", "period_separation", "manual_cycles_per_period", "planned_bounded_cycles", "attended_for_every_cycle", "target_hold_seconds", "maximum_hold_seconds", "minimum_unasserted_rest_seconds_between_cycles", "automated_runner", "overnight_or_unattended_execution", "sample_rationale"], "properties": {"observation_periods": {"const": 3}, "period_separation": {"const": "separate calendar dates"}, "manual_cycles_per_period": {"const": 4}, "planned_bounded_cycles": {"const": 12}, "attended_for_every_cycle": {"const": true}, "target_hold_seconds": {"const": 180}, "maximum_hold_seconds": {"const": 300}, "minimum_unasserted_rest_seconds_between_cycles": {"const": 300}, "automated_runner": {"const": false}, "overnight_or_unattended_execution": {"const": false}, "sample_rationale": {"type": "string", "minLength": 1}}},
+    "observation_design": {"type": "object", "additionalProperties": false, "required": ["source_classes", "required_time_fields", "clock_reconciliation", "lan_and_tailscale", "resource_sources", "secret_exclusions"], "properties": {"source_classes": {"const": ["DEVICE_REPORTED", "EXTERNAL_OBSERVER", "OPERATOR_RECORDED", "SIMULATED", "MOCK", "CI"]}, "required_time_fields": {"type": "array", "minItems": 7, "uniqueItems": true, "items": {"type": "string"}}, "clock_reconciliation": {"type": "string", "minLength": 1}, "lan_and_tailscale": {"type": "string", "minLength": 1}, "resource_sources": {"type": "string", "minLength": 1}, "secret_exclusions": {"type": "array", "minItems": 5, "uniqueItems": true, "items": {"type": "string"}}}},
+    "inclusion_criteria": {"type": "array", "minItems": 6, "items": {"type": "string", "minLength": 1}},
+    "exclusion_criteria": {"type": "array", "minItems": 5, "items": {"type": "string", "minLength": 1}},
+    "stop_conditions": {"type": "array", "minItems": 15, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "failure_handling": {"type": "object", "additionalProperties": false, "required": ["ssh_failure", "unsafe_stop", "prohibited_automatic_actions"], "properties": {"ssh_failure": {"type": "string", "minLength": 1}, "unsafe_stop": {"type": "string", "minLength": 1}, "prohibited_automatic_actions": {"type": "array", "minItems": 10, "uniqueItems": true, "items": {"type": "string"}}}},
+    "analysis_plan": {"type": "object", "additionalProperties": false, "required": ["p012_comparisons", "group_routes_separately", "report_denominators", "latency", "reliability_metrics", "claim_limits"], "properties": {"p012_comparisons": {"const": ["A/C", "B/C", "C/D"]}, "group_routes_separately": {"const": true}, "report_denominators": {"type": "array", "minItems": 6, "uniqueItems": true, "items": {"type": "string"}}, "latency": {"type": "string", "minLength": 1}, "reliability_metrics": {"type": "array", "minItems": 10, "uniqueItems": true, "items": {"type": "string"}}, "claim_limits": {"type": "array", "minItems": 5, "uniqueItems": true, "items": {"type": "string"}}}},
+    "evidence_review": {"type": "object", "additionalProperties": false, "required": ["p009_v1_is_acceptance_authority", "raw_evidence_is_preserved", "p018_export_is_sanitized_derivative_only", "cloud_fixture_source_classes_are_not_physical", "independent_human_review_required", "p009_event_extension"], "properties": {"p009_v1_is_acceptance_authority": {"const": true}, "raw_evidence_is_preserved": {"const": true}, "p018_export_is_sanitized_derivative_only": {"const": true}, "cloud_fixture_source_classes_are_not_physical": {"const": true}, "independent_human_review_required": {"const": true}, "p009_event_extension": {"type": "string", "minLength": 1}}},
+    "acceptance_criteria": {"type": "object", "additionalProperties": false, "required": ["required_controlled_trials", "required_valid_controlled_trials", "required_bounded_cycles", "required_confirmed_acquisitions", "required_confirmed_releases", "maximum_release_failures", "maximum_unexpected_daemon_exits", "maximum_unexpected_restarts", "required_p009_human_review", "required_p018_export_validation", "required_independent_reviewer", "accepted_scope_must_name_conditions_and_routes", "excluded_claims"], "properties": {"required_controlled_trials": {"const": 24}, "required_valid_controlled_trials": {"const": 24}, "required_bounded_cycles": {"const": 12}, "required_confirmed_acquisitions": {"const": 12}, "required_confirmed_releases": {"const": 12}, "maximum_release_failures": {"const": 0}, "maximum_unexpected_daemon_exits": {"const": 0}, "maximum_unexpected_restarts": {"const": 0}, "required_p009_human_review": {"const": "REVIEWED"}, "required_p018_export_validation": {"const": "VALID"}, "required_independent_reviewer": {"const": true}, "accepted_scope_must_name_conditions_and_routes": {"const": true}, "excluded_claims": {"type": "array", "minItems": 7, "uniqueItems": true, "items": {"type": "string"}}}},
+    "revision_policy": {"type": "object", "additionalProperties": false, "required": ["immutable_after_collection_begins", "future_changes_require_new_version", "revision_record_fields", "retroactive_trial_redefinition_allowed"], "properties": {"immutable_after_collection_begins": {"const": true}, "future_changes_require_new_version": {"const": true}, "revision_record_fields": {"type": "array", "minItems": 6, "uniqueItems": true, "items": {"type": "string"}}, "retroactive_trial_redefinition_allowed": {"const": false}}}
+  }
+}

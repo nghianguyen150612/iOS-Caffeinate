@@ -90,11 +90,11 @@ Feature implementation, physical-device acceptance, and production reliability c
 
 **Depends on:** accepted P011 package; P012 protocol; P013/P014 lifecycle; P015 policy; P016 observability; P017 schedules; P018 operating instructions.
 
-**Deliverables:** preregistered endurance plan; explicit duration, charging, screen, route, battery/thermal, and observation criteria; stop/failure criteria; genuine P009 device and independent-observer events; incident handling; and reviewed export bundle.
+**Deliverables:** preregistered protocol v1 and schemas; inert offline session tooling; reuse of the P012 24-trial controller/analyzer; 12 attended bounded cycles across three dates; evidence mapping to unchanged P009 v1; P018 sanitized-export review; fault fixtures; stop and incident handling; and a P020 gate summary.
 
-**Safety constraints:** operator attendance and physical recovery; bounded trials; stop on uncertain assertion cleanup, thermal concern, or state corruption. No unattended testing without a separately reviewed safety plan.
+**Safety constraints:** distinguish cloud completion from physical acceptance; require exact P010 signer and package provenance, operator attendance, independent physical recovery, and safe P014 state; preserve P012's one-probe and 300-second ceiling; no automatic run/restart/install/rollback, launchd mutation, journal reset, or unattended test.
 
-**Validation and completion:** repeated target-device sessions across the preregistered conditions, exact source/package identity, acquire/release and cleanup records, screen-lock and independent LAN/Tailscale observations when authorized, physical recovery, P009 human review, and explicit limitations. P018 export checks consistency and privacy; it cannot establish physical provenance. Passing CI or one attended trial does not certify production reliability.
+**Validation and completion:** Stage A is `P019_CLOUD_COMPLETE_HARDWARE_ACCEPTANCE_PENDING` after exact-head CI and documentation pass. Stage B requires complete reviewed physical sessions, P009 raw evidence, P018 privacy validation, and explicit tested scope. Passing CI cannot establish hardware reliability or 24/7 operation. See [P019 prerequisites](P019-PREREQUISITES.md), [protocol](P019-EXPERIMENT-PROTOCOL.md), [operator runbook](P019-OPERATOR-RUNBOOK.md), [analysis](P019-ANALYSIS.md), and [release gates](P019-RELEASE-GATES.md).
 
 ### P020 — Integration, security hardening and v0.2 release
 
@@ -109,12 +109,12 @@ Feature implementation, physical-device acceptance, and production reliability c
 ## Dependency summary
 
 ```text
-P011 ──┬──> P012 ──> P015 ──> P016 ──> P017 ──┐
-       └──> P013 ──> P014 ──> P015            ├──> P019 ──> P020
-P004 ───────────────────────────────> P017     │
-P011 ───────────────────────────────> P018 ────┘
+P009/P010 ──> P011 ──┬──> P012 ──> P015 ──> P016 ──> P017 ──┐
+                     ├──> P013 ──> P014 ──> P015            ├──> P019 ──> P020
+                     └──> P018 ──────────────────────────────┘
+P004 ───────────────────────────────────────> P017
 ```
 
-P012 cloud engineering is complete on stacked branch `ios/p012-controlled-idle-power-research` while P011 physical package testing remains pending. P012 device experiments, and every later state-changing device trial, still depend on P011 package acceptance and a confirmed physical recovery path. P019 production reliability certification is a separate gate from feature implementation and from v0.1.0's public stable channel.
+P012 cloud engineering is complete on stacked branch `ios/p012-controlled-idle-power-research` while P011 physical package testing remains pending. P012 device experiments, and every later state-changing device trial, still depend on P011 package acceptance, exact signer provenance, and a confirmed physical recovery path. P019 cloud completion is separate from hardware acceptance and from v0.1.0's public stable channel. v0.2 release assessment remains blocked until all release-critical physical gates are reviewed.
 
 P012 preserves the P009 event vocabulary and records the P009 v1 mapping limitation rather than changing historical acceptance semantics. The October 18, 2026 observations remain operator-reported, used manually staged binaries, lack a no-assertion baseline, and are not P012 trial data. See [P012 research questions](P012-RESEARCH-QUESTIONS.md), [protocol](P012-EXPERIMENT-PROTOCOL.md), [operator runbook](P012-OPERATOR-RUNBOOK.md), [measurement format](P012-MEASUREMENT-FORMAT.md), [analysis](P012-ANALYSIS.md), [evidence matrix](P012-EVIDENCE-MATRIX.md), [validation](P012-VALIDATION.md), and [manifest](P012-MANIFEST.md).
