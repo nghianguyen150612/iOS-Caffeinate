@@ -108,6 +108,7 @@ jobs:
           test "$(sha256sum "$RUNNER_TEMP/h003-signer/ldid" | awk '{print $1}')" = '15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c'
           mkdir -m 700 -p build/p020/signer
           cp "$RUNNER_TEMP/h003-signer/ldid" build/p020/signer/ldid
+          cp "$RUNNER_TEMP/h003-signer/libplist-2.0.so.4" build/p020/signer/libplist-2.0.so.4
           cp "$RUNNER_TEMP/h003-signer/signer-provenance.json" build/p020/signer-provenance.json
           chmod 0755 build/p020/signer/ldid
           python3 - <<'PY'
@@ -115,18 +116,25 @@ jobs:
           import json
           from pathlib import Path
           signer = Path("build/p020/signer/ldid")
+          runtime = Path("build/p020/signer/libplist-2.0.so.4")
           receipt = json.loads(Path("build/p020/signer-provenance.json").read_text())
           digest = hashlib.sha256(signer.read_bytes()).hexdigest()
           if digest != "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c":
               raise SystemExit("rebuilt ldid does not match the H003 signer pin")
           if receipt["result"] != "VERIFIED" or receipt["executable"]["sha256"] != digest or receipt["reproducibility"]["outcome"] != "EXACT_MATCH":
               raise SystemExit("H003 signer provenance does not report two identical pinned builds")
+          runtime_record = receipt["runtime_dependencies"]["libplist"]
+          if runtime_record["soname"] != "libplist-2.0.so.4" or runtime_record["package"] != "libplist-2.0-4":
+              raise SystemExit("H003 signer runtime dependency identity is unexpected")
+          if runtime_record["package_version"] != "2.3.0-1~exp2build2" or runtime_record["sha256"] != hashlib.sha256(runtime.read_bytes()).hexdigest():
+              raise SystemExit("H003 signer runtime library differs from the pinned provenance")
           PY
       - name: Sign and validate the exact-source v0.2.0-rc1 Debian package
         env:
           P020_SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
           set -euo pipefail
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/build/p020/signer${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           mkdir -m 700 -p build/p020/signed-input
           ./scripts/package-rootful.sh \
             --input-dir build/p020/candidate-inputs/p020-first \
@@ -238,6 +246,7 @@ jobs:
           P020_SOURCE_SHA: ${{ needs.sign-exact-source.outputs.source_sha }}
         run: |
           set -euo pipefail
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/build/p020/signer${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           test -s build/p020/macos/signature-integrity-verification.json
           python3 scripts/finalize_signed_candidate.py \
             --package build/p020/signed-input/ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb \

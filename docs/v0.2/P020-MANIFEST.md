@@ -29,8 +29,8 @@ PR mergeability is `UNKNOWN` after merge because GitHub no longer computes an op
 ## Release state
 
 - Stable release remains `v0.1.0` / package `0.1.0-1`.
-- P020 candidate version is `0.2.0~rc1-1`, unsigned and device-unverified.
-- P010 signer provenance is unresolved.
+- P020 CI candidate version is `0.2.0~rc1-1`, unsigned and device-unverified; the separate R05 workflow prepares a signed, device-unverified run-scoped artifact.
+- H003 has verified the pinned signer; candidate-bound P010 evidence and independent review remain pending.
 - P019 physical acceptance has no accepted trial evidence.
 - No v0.2 stable tag, release, or public artifact is created.
 - Current release decision: `RELEASE_BLOCKED` until physical gates, trusted reviewer verification, and separate human authorization close.
