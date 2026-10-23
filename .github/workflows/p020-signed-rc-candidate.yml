@@ -246,6 +246,27 @@ jobs:
           P020_SOURCE_SHA: ${{ needs.sign-exact-source.outputs.source_sha }}
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          signer = Path("build/p020/signer/ldid")
+          runtime = Path("build/p020/signer/libplist-2.0.so.4")
+          receipt = json.loads(Path("build/p020/signer-provenance.json").read_text())
+          if signer.is_symlink() or not signer.is_file():
+              raise SystemExit("downloaded H003 signer is not a regular file")
+          signer_sha = hashlib.sha256(signer.read_bytes()).hexdigest()
+          if signer_sha != "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c" or receipt["executable"]["sha256"] != signer_sha:
+              raise SystemExit("downloaded H003 signer bytes do not match the provenance receipt")
+          runtime_record = receipt["runtime_dependencies"]["libplist"]
+          if runtime.is_symlink() or not runtime.is_file() or hashlib.sha256(runtime.read_bytes()).hexdigest() != runtime_record["sha256"]:
+              raise SystemExit("downloaded H003 libplist runtime does not match the provenance receipt")
+          if runtime_record["package_version"] != "2.3.0-1~exp2build2":
+              raise SystemExit("downloaded H003 runtime package version is unexpected")
+          os.chmod(signer, 0o755)
+          PY
           export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/build/p020/signer${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           test -s build/p020/macos/signature-integrity-verification.json
           python3 scripts/finalize_signed_candidate.py \
