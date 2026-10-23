@@ -29,7 +29,7 @@ PR mergeability is `UNKNOWN` after merge because GitHub no longer computes an op
 ## Release state
 
 - Stable release remains `v0.1.0` / package `0.1.0-1`.
-- P020 CI candidate version is `0.2.0~rc1-1`, unsigned and device-unverified; the separate R05 workflow prepares a signed, device-unverified run-scoped artifact.
+- P020 CI candidate version is `0.2.0~rc1-1`, unsigned and device-unverified. R05's exact-source signing run produced a signed-input artifact, but Apple `codesign` failed for both binaries; no finalized signed-candidate manifest or complete checksum inventory was emitted. See the [R05 blocker matrix](R05-RELEASE-BLOCKER-MATRIX.md).
 - H003 has verified the pinned signer; candidate-bound P010 evidence and independent review remain pending.
 - P019 physical acceptance has no accepted trial evidence.
 - No v0.2 stable tag, release, or public artifact is created.

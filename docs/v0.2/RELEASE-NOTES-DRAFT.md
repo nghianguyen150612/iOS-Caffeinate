@@ -25,7 +25,7 @@ P014 does not include a production automatic restart executor. P013 launchd acti
 
 ## Package and upgrade
 
-The package identity remains `com.ioscaffeinate.cli`; rootful architecture remains `iphoneos-arm`. P020 CI creates an unsigned `0.2.0~rc1-1` development package. R05 separately prepares a signed, device-unverified candidate using the exact H003 signer; neither artifact is installation-ready before the attended H004/P011 and physical gates pass. The candidate does not replace the published v0.1.0 package or assets. Upgrade preview is read-only; package scripts do not start services, acquire assertions, delete state, reset recovery, or change SSH/Tailscale.
+The package identity remains `com.ioscaffeinate.cli`; rootful architecture remains `iphoneos-arm`. P020 CI creates an unsigned `0.2.0~rc1-1` development package. R05's exact-source signing run used the H003 signer and approved entitlement profile, but Apple `codesign` rejected both binaries as “code object is not signed at all”; no finalized signed RC is available, and the runbook blocks installation. The candidate does not replace the published v0.1.0 package or assets. Upgrade preview is read-only; package scripts do not start services, acquire assertions, delete state, reset recovery, or change SSH/Tailscale.
 
 ## Known limitations and unsupported operations
 

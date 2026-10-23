@@ -5,7 +5,7 @@
 | Stage | Identity | State in P020 |
 |---|---|---|
 | Unsigned development build | Exact P020 source, iPhoneOS SDK, ARM64 binaries and isolated `.deb` | Prepared by CI; explicitly unsigned and device-unverified |
-| Signed candidate | Same source and payload with H003 reproducibly verified signer and approved profile | R05 exact-source RC workflow prepares a signed device-unverified artifact; Apple host verification and device acceptance remain separate gates |
+| Signed candidate | Same source and payload with H003 reproducibly verified signer and approved profile | R05 produced a run-scoped signed-input package, but Apple `codesign` rejected both ARM64 binaries as “code object is not signed at all”; finalization did not run and no finalized RC artifact is available |
 | Device-tested candidate | Exact signed package installed under attended authorization | Not performed |
 | Hardware-accepted candidate | Required P011/P012/P013/P014/P016/P018/P019 evidence accepted | Pending physical evidence and independent review |
 | Stable v0.2.0 | Stable package and public release | Not authorized or published |

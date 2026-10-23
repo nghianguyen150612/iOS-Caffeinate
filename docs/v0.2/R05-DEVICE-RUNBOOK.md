@@ -4,6 +4,8 @@ This runbook prepares staged procedures for the reference iPad mini 2 (`iPad4,4`
 
 Every package installation, removal, daemon start, recovery reset, state restoration, or other persistent/runtime mutation requires separate explicit operator authorization and a passing prior gate. Stop on unknown assertion ownership, failed release, package/audit mismatch, uncertain recovery, loaded launchd state, or missing physical recovery. Never use a force option or delete persistent state to clear a blocker.
 
+**Current candidate stop:** exact-source run [39975913477](https://github.com/nghianguyen150612/iOS-Caffeinate/actions/runs/39975913477) failed Apple host signature-integrity verification for both ARM64 executables (“code object is not signed at all”). It emitted no finalized candidate manifest or full checksum inventory. Do not perform the v0.2 RC transfer or installation steps below unless a later exact-source run succeeds and its receipt and complete inventory are reviewed.
+
 ## 1. Retrieve and verify the published v0.1.0 P011 package
 
 On the attended operator host, use a new private directory and retrieve the official release assets:
@@ -33,7 +35,7 @@ Require `P011_HOST_PREFLIGHT_PASS_DEVICE_ACCEPTANCE_PENDING`, exact package iden
 
 ## 2. Download and verify the exact v0.2.0-rc1 artifact
 
-Download only the successful `P020 signed v0.2.0 RC candidate` run whose `headSha` equals the PR's reviewed source SHA. Check the run and fetch the named artifact:
+After the candidate stop above is cleared, download only the successful `P020 signed v0.2.0 RC candidate` run whose `headSha` equals the PR's reviewed source SHA. Check the run and fetch the named artifact:
 
 ```sh
 RC_SOURCE_SHA='<exact reviewed 40-character source SHA>'

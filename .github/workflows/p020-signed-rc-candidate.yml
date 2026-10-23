@@ -198,7 +198,6 @@ jobs:
           path: build/p020
       - name: Verify both signed executables with Apple codesign
         id: codesign
-        continue-on-error: true
         env:
           P020_SOURCE_SHA: ${{ needs.sign-exact-source.outputs.source_sha }}
         run: |

@@ -54,6 +54,20 @@ class SignedCandidateToolTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
+    def test_rc_codesign_failure_fails_job_but_preserves_receipt(self) -> None:
+        workflow = (ROOT / ".github/workflows/p020-signed-rc-candidate.yml").read_text()
+        verifier = workflow.split(
+            "      - name: Verify both signed executables with Apple codesign\n", 1
+        )[1].split(
+            "      - name: Upload actual Apple signature-integrity receipt, including failures\n", 1
+        )[0]
+        upload = workflow.split(
+            "      - name: Upload actual Apple signature-integrity receipt, including failures\n", 1
+        )[1].split("  finalize-candidate:\n", 1)[0]
+        self.assertNotIn("continue-on-error: true", verifier)
+        self.assertIn("if: always()", upload)
+        self.assertIn("if: needs.macos-signature-integrity.result == 'success'", workflow)
+
     def test_pinned_h003_signer_identity_survives_missing_runtime_banner(self) -> None:
         signer = self.root / "ldid"
         signer.write_bytes(b"verified pinned signer")
