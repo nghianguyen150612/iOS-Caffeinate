@@ -16,6 +16,12 @@ PROFILE_ID = "amethyst-ios12-rootful"
 PROFILE_RELATIVE_PATH = Path("packaging/signing/profiles/amethyst-ios12-rootful.plist")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_ENTITLEMENTS = {"com.apple.private.security.no-container": True}
+# The H003 receipt binds this exact Procursus ldid executable to its source,
+# build inputs, and version. Some execution environments omit the no-argument
+# banner even though the executable bytes still match this verified identity.
+PINNED_SIGNER_IDENTITIES = {
+    "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c": "2.1.5-procursus7",
+}
 
 
 class SigningError(ValueError):
@@ -80,7 +86,13 @@ def signer_identity(path: Path, expected_sha256: str | None = None) -> tuple[str
     output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout + "\n" + result.stderr)
     match = re.search(r"Link Identity Editor\s+([^\s]+)", output)
     if not match:
-        raise SigningError("unsupported ldid: version banner 'Link Identity Editor <version>' is unavailable")
+        # Fall back only for the exact signer whose independently rebuilt
+        # H003 provenance binds its SHA-256 to the version. Unknown binaries
+        # still need to identify themselves and are rejected.
+        pinned_version = PINNED_SIGNER_IDENTITIES.get(digest)
+        if pinned_version is None:
+            raise SigningError("unsupported ldid: version banner 'Link Identity Editor <version>' is unavailable")
+        return pinned_version, digest
     return match.group(1), digest
 
 

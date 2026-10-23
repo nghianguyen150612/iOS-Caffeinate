@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import build_candidate_inventory as inventory  # noqa: E402
 import finalize_signed_candidate as finalizer  # noqa: E402
 import p020_signed_rc_manifest as rc_manifest  # noqa: E402
+import signing_profile  # noqa: E402
 import verify_signed_candidate_macos as macos_verify  # noqa: E402
 
 
@@ -52,6 +53,27 @@ class SignedCandidateToolTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="ioscaf-r05-signed-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+
+    def test_pinned_h003_signer_identity_survives_missing_runtime_banner(self) -> None:
+        signer = self.root / "ldid"
+        signer.write_bytes(b"verified pinned signer")
+        signer.chmod(0o755)
+        digest = "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c"
+        with patch.object(signing_profile, "sha256", return_value=digest), patch.object(
+            signing_profile.subprocess, "run", return_value=SimpleNamespace(stdout="", stderr="", returncode=0)
+        ):
+            self.assertEqual(
+                signing_profile.signer_identity(signer),
+                ("2.1.5-procursus7", digest),
+            )
+
+    def test_unpinned_signer_without_runtime_banner_is_rejected(self) -> None:
+        signer = self.root / "unknown-ldid"
+        signer.write_bytes(b"unknown signer")
+        signer.chmod(0o755)
+        with patch.object(signing_profile.subprocess, "run", return_value=SimpleNamespace(stdout="", stderr="", returncode=0)):
+            with self.assertRaisesRegex(signing_profile.SigningError, "version banner"):
+                signing_profile.signer_identity(signer)
 
     def test_macos_verifier_records_both_binary_results_and_exact_package_hash(self) -> None:
         package = self.root / "candidate.deb"
