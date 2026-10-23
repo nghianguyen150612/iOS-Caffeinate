@@ -21,7 +21,7 @@ The command fetches the locked source commit twice into clean directories, verif
 make -C /path/to/ldid VERSION=2.1.5-procursus7
 ```
 
-The two build outputs must match each other and the exact SHA-256 recorded in the lock. A mismatch aborts before executing the candidate binary. A successful run emits `ldid`, `build-env.txt`, and `signer-provenance.json` in the private output directory. Keep only the reviewed JSON receipt where durable evidence is needed; do not publish the executable as a release artifact.
+The two build outputs must match each other and the exact SHA-256 recorded in the lock. A mismatch aborts before executing the candidate binary. A successful run emits `ldid`, the exact pinned `libplist-2.0.so.4` runtime, `build-env.txt`, and `signer-provenance.json` in the private output directory. The JSON receipt binds the runtime library hash and package version to the signed Ubuntu snapshot. Downstream host use must set `LD_LIBRARY_PATH` to this output directory; do not substitute a host-installed libplist. Keep only the reviewed JSON receipt where durable evidence is needed; do not publish the executable or runtime as a public release asset.
 
 ## P011 command
 

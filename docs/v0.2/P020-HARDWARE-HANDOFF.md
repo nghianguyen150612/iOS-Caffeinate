@@ -2,6 +2,8 @@
 
 **Current target:** iPad mini 2 A1489 (`iPad4,4`), Apple A7 ARM64, iOS 12.5.7, Amethyst/Procursus rootful. Cloud work must not connect to the target, install a package, run device tests, reboot, or respring.
 
+The separately authorized H004 Phase 0 read-only baseline may precede this sequence. It records existing state only and does not satisfy P011 acceptance or waive any prerequisite below.
+
 ## Required sequence
 
 1. Resolve and independently verify the pinned P010 `ldid` executable identity and origin, then verify the approved entitlement profile bytes.
@@ -30,7 +32,7 @@ H003 subsequently rebuilt the exact Procursus source commit in a newly pinned Ub
 
 This H003 observation updates the present host-side signer/provenance state only. The historical H002 result above is preserved. The H001 historical image digest and snapshot receipt were not recovered, so H003 documents its new environment without presenting it as H001's former environment. Signature integrity and P011 device package acceptance remain `PENDING`; release authorization remains `BLOCKED`. No iPad was accessed, no package was installed, no service or assertion was activated, and no release was changed.
 
-After the separate P011 physical acceptance and P019 prerequisites are met, prepare a separately authorized P019 Phase 0 read-only inspection using the existing [P019 operator runbook](P019-OPERATOR-RUNBOOK.md). Phase 0 remains a future attended device session; this host result does not authorize or perform it.
+The H004 Phase 0 baseline is a separate, earlier read-only inspection and may precede P011 physical acceptance under its own checklist. Any later P019 session still requires separate P011 physical acceptance and the P019 prerequisites; use the existing [P019 operator runbook](P019-OPERATOR-RUNBOOK.md). Neither host receipts nor H004 authorizes those later actions.
 
 ## Current hardware state
 

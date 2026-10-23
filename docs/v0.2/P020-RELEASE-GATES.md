@@ -45,7 +45,7 @@ A signed, independently reviewed security closeout must enumerate findings and s
 
 ## Current decision
 
-The current evidence inventory contains no accepted physical P019 trial. The pinned signer is also unresolved. The expected outcome is `RELEASE_BLOCKED`, with hardware statuses pending and publication false. The exact blockers are emitted by the evaluator and retained with the CI report; no status string is hardcoded into the decision logic.
+The current evidence inventory contains no accepted physical P019 trial. H003 has verified the pinned signer, but R05's exact-source package failed Apple host signature-integrity verification for both ARM64 binaries, so no finalized signed RC is available for candidate-bound P010 evidence admission or device acceptance. Independent review, P011, and the remaining physical gates are also pending. The outcome remains `RELEASE_BLOCKED` and publication false. The exact blockers are emitted by the evaluator and retained with the CI report; no readiness status is hardcoded into the decision logic.
 
 ```sh
 python3 scripts/p020_release_gate.py assess \

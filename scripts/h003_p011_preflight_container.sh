@@ -29,6 +29,7 @@ apt-get -o "Acquire::https::CaInfo=$ca_file" -o APT::Update::Error-Mode=any upda
 packages=(
   "python3=$H003_PYTHON3_PACKAGE_VERSION"
   "ca-certificates=$H003_CA_CERTIFICATES_PACKAGE_VERSION"
+  "libplist-2.0-4=$H003_LIBPLIST_RUNTIME_PACKAGE_VERSION"
   "libplist-dev=$H003_LIBPLIST_PACKAGE_VERSION"
   "libssl-dev=$H003_OPENSSL_PACKAGE_VERSION"
 )

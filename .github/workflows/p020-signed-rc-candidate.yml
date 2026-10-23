@@ -1,0 +1,310 @@
+name: P020 signed v0.2.0 RC candidate
+on:
+  push:
+    branches: [docs/h004-device-phase0-readiness]
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+concurrency:
+  group: p020-signed-rc-candidate-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  sign-exact-source:
+    name: Sign exact-source reproducible v0.2.0-rc1 candidate
+    if: github.repository == 'nghianguyen150612/iOS-Caffeinate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+      ci_run_id: ${{ steps.wait_ci.outputs.run_id }}
+    steps:
+      - name: Checkout the pushed source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Enforce repository, branch, commit, and clean source identity
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'nghianguyen150612/iOS-Caffeinate'
+          test "$GITHUB_REF" = 'refs/heads/docs/h004-device-phase0-readiness'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      - name: Wait for successful exact-source PR CI
+        id: wait_ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          P020_SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=''
+          for attempt in $(seq 1 120); do
+            data=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$P020_SOURCE_SHA&per_page=100")
+            row=$(jq -c --arg sha "$P020_SOURCE_SHA" '[.workflow_runs[] | select(.name == "iOS-Caffeinate CI" and .event == "pull_request" and .head_sha == $sha)] | sort_by(.run_number) | last // empty' <<<"$data")
+            if test -n "$row"; then
+              id=$(jq -r .id <<<"$row")
+              status=$(jq -r .status <<<"$row")
+              conclusion=$(jq -r '.conclusion // "pending"' <<<"$row")
+              echo "Exact-source CI run=$id status=$status conclusion=$conclusion"
+              if test "$status" = completed; then
+                test "$conclusion" = success || { echo 'Exact-source PR CI did not pass'; exit 1; }
+                echo "run_id=$id" >> "$GITHUB_OUTPUT"
+                found=yes
+                break
+              fi
+            fi
+            sleep 10
+          done
+          test "$found" = yes || { echo 'Timed out waiting for exact-source PR CI'; exit 1; }
+      - name: Download the exact-source P020 build and blocked readiness evidence
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.wait_ci.outputs.run_id }}
+          github-token: ${{ github.token }}
+          name: iOS-Caffeinate-P020-Release-Readiness-UNSIGNED-BLOCKED
+          path: build/p020
+      - name: Validate exact native build provenance and physical blockers
+        env:
+          P020_SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test -s build/p020/P020-BUILD-PROVENANCE.json
+          test -s build/p020/release-manifest.json
+          test -s build/p020/release-assessment.json
+          python3 scripts/p020_build_provenance.py validate --manifest build/p020/P020-BUILD-PROVENANCE.json
+          python3 - "$P020_SOURCE_SHA" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          root = Path("build/p020")
+          source = sys.argv[1]
+          build = json.loads((root / "P020-BUILD-PROVENANCE.json").read_text())
+          assessment = json.loads((root / "release-assessment.json").read_text())
+          if build["source"]["commit_sha"] != source or build["source"]["worktree_clean"] is not True:
+              raise SystemExit("P020 build provenance does not bind the pushed clean source")
+          if build["reproducibility"]["status"] != "REPRODUCIBLE" or build["reproducibility"]["independent_builds"] != 2:
+              raise SystemExit("exact-source native build did not pass independent reproducibility")
+          if assessment["decision"] != "RELEASE_BLOCKED" or assessment["publication_authorized"] is not False:
+              raise SystemExit("P020 assessment did not preserve the release block")
+          if any(item.get("status") != "PENDING" for item in assessment["hardware_gates"].values()):
+              raise SystemExit("cloud workflow attempted to satisfy a physical hardware gate")
+          PY
+      - name: Rebuild and verify the pinned H003 Procursus signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -m 700 -p "$RUNNER_TEMP/h003-signer"
+          ./scripts/h003_build_signer.sh --output-dir "$RUNNER_TEMP/h003-signer"
+          test "$(sha256sum "$RUNNER_TEMP/h003-signer/ldid" | awk '{print $1}')" = '15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c'
+          mkdir -m 700 -p build/p020/signer
+          cp "$RUNNER_TEMP/h003-signer/ldid" build/p020/signer/ldid
+          cp "$RUNNER_TEMP/h003-signer/libplist-2.0.so.4" build/p020/signer/libplist-2.0.so.4
+          cp "$RUNNER_TEMP/h003-signer/signer-provenance.json" build/p020/signer-provenance.json
+          chmod 0755 build/p020/signer/ldid
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          signer = Path("build/p020/signer/ldid")
+          runtime = Path("build/p020/signer/libplist-2.0.so.4")
+          receipt = json.loads(Path("build/p020/signer-provenance.json").read_text())
+          digest = hashlib.sha256(signer.read_bytes()).hexdigest()
+          if digest != "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c":
+              raise SystemExit("rebuilt ldid does not match the H003 signer pin")
+          if receipt["result"] != "VERIFIED" or receipt["executable"]["sha256"] != digest or receipt["reproducibility"]["outcome"] != "EXACT_MATCH":
+              raise SystemExit("H003 signer provenance does not report two identical pinned builds")
+          runtime_record = receipt["runtime_dependencies"]["libplist"]
+          if runtime_record["soname"] != "libplist-2.0.so.4" or runtime_record["package"] != "libplist-2.0-4":
+              raise SystemExit("H003 signer runtime dependency identity is unexpected")
+          if runtime_record["package_version"] != "2.3.0-1~exp2build2" or runtime_record["sha256"] != hashlib.sha256(runtime.read_bytes()).hexdigest():
+              raise SystemExit("H003 signer runtime library differs from the pinned provenance")
+          PY
+      - name: Sign and validate the exact-source v0.2.0-rc1 Debian package
+        env:
+          P020_SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/build/p020/signer${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          mkdir -m 700 -p build/p020/signed-input
+          ./scripts/package-rootful.sh \
+            --input-dir build/p020/candidate-inputs/p020-first \
+            --output-dir build/p020/signed-input \
+            --package-version '0.2.0~rc1-1' \
+            --sign-with-ldid "$GITHUB_WORKSPACE/build/p020/signer/ldid" \
+            --entitlements packaging/signing/profiles/amethyst-ios12-rootful.plist
+          pkg=build/p020/signed-input/ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb
+          test -s "$pkg"
+          test "$(git rev-parse HEAD)" = "$P020_SOURCE_SHA"
+          python3 scripts/validate_rootful_package.py "$pkg" \
+            --expected-version '0.2.0~rc1-1' \
+            --ldid build/p020/signer/ldid \
+            --report build/p020/signed-input/signed-validation-pending-host.txt
+          (cd build/p020/signed-input && sha256sum -c "$(basename "$pkg").sha256")
+          python3 - "$pkg" "$P020_SOURCE_SHA" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+          package = Path(sys.argv[1])
+          manifest = json.loads(Path(str(package) + ".manifest.json").read_text())
+          if manifest["source_commit_sha"] != sys.argv[2] or manifest["source_tree_clean"] is not True:
+              raise SystemExit("signed package metadata does not bind the exact clean pushed source")
+          signing = manifest["signing"]
+          if signing["signing_tool_version"] != "2.1.5-procursus7" or signing["signing_tool_sha256"] != "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c":
+              raise SystemExit("signed package used an unexpected signer")
+          if signing["profile_id"] != "amethyst-ios12-rootful" or signing["profile_sha256"] != "cd1358e7c8c3b01da98b5544e3c2ffcdc9d92cf9a3191e45038e8691ef2021ca":
+              raise SystemExit("signed package used an unexpected entitlement profile")
+          if signing["embedded_entitlements"] != "EXACT_MATCH" or signing["signature_verification"] != "PENDING":
+              raise SystemExit("Linux signing step overstated Apple's host signature-integrity result")
+          print("source_commit_sha=" + manifest["source_commit_sha"])
+          print("signed_package_sha256=" + hashlib.sha256(package.read_bytes()).hexdigest())
+          print("entitlements=EXACT_MATCH; Apple host verification=PENDING")
+          PY
+      - name: Upload exact-source signed input for macOS codesign verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P020-v0.2.0-rc1-SIGNED-INPUT-DEVICE-UNVERIFIED
+          if-no-files-found: error
+          path: build/p020/
+
+  macos-signature-integrity:
+    name: Verify signed Mach-O binaries with Apple codesign
+    needs: sign-exact-source
+    runs-on: macos-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact source for the verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sign-exact-source.outputs.source_sha }}
+          persist-credentials: false
+      - name: Download the signed exact-source package
+        uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-P020-v0.2.0-rc1-SIGNED-INPUT-DEVICE-UNVERIFIED
+          path: build/p020
+      - name: Verify both signed executables with Apple codesign
+        id: codesign
+        env:
+          P020_SOURCE_SHA: ${{ needs.sign-exact-source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          pkg=build/p020/signed-input/ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb
+          mkdir -m 700 -p build/p020/macos
+          python3 scripts/verify_signed_candidate_macos.py \
+            --package "$pkg" \
+            --source-sha "$P020_SOURCE_SHA" \
+            --output build/p020/macos/signature-integrity-verification.json
+      - name: Upload actual Apple signature-integrity receipt, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-P020-v0.2.0-rc1-macOS-signature-integrity
+          if-no-files-found: error
+          path: build/p020/macos/signature-integrity-verification.json
+
+  finalize-candidate:
+    name: Bind host verification and inventory the device-unverified RC
+    needs: [sign-exact-source, macos-signature-integrity]
+    if: needs.macos-signature-integrity.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sign-exact-source.outputs.source_sha }}
+          persist-credentials: false
+      - name: Download exact-source signed package and macOS receipt
+        uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-P020-v0.2.0-rc1-SIGNED-INPUT-DEVICE-UNVERIFIED
+          path: build/p020
+      - uses: actions/download-artifact@v4
+        with:
+          name: iOS-Caffeinate-P020-v0.2.0-rc1-macOS-signature-integrity
+          path: build/p020/macos
+      - name: Verify receipt and finalize metadata-only package inventory
+        env:
+          P020_SOURCE_SHA: ${{ needs.sign-exact-source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          signer = Path("build/p020/signer/ldid")
+          runtime = Path("build/p020/signer/libplist-2.0.so.4")
+          receipt = json.loads(Path("build/p020/signer-provenance.json").read_text())
+          if signer.is_symlink() or not signer.is_file():
+              raise SystemExit("downloaded H003 signer is not a regular file")
+          signer_sha = hashlib.sha256(signer.read_bytes()).hexdigest()
+          if signer_sha != "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c" or receipt["executable"]["sha256"] != signer_sha:
+              raise SystemExit("downloaded H003 signer bytes do not match the provenance receipt")
+          runtime_record = receipt["runtime_dependencies"]["libplist"]
+          if runtime.is_symlink() or not runtime.is_file() or hashlib.sha256(runtime.read_bytes()).hexdigest() != runtime_record["sha256"]:
+              raise SystemExit("downloaded H003 libplist runtime does not match the provenance receipt")
+          if runtime_record["package_version"] != "2.3.0-1~exp2build2":
+              raise SystemExit("downloaded H003 runtime package version is unexpected")
+          os.chmod(signer, 0o755)
+          PY
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/build/p020/signer${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          test -s build/p020/macos/signature-integrity-verification.json
+          python3 scripts/finalize_signed_candidate.py \
+            --package build/p020/signed-input/ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb \
+            --signature-receipt build/p020/macos/signature-integrity-verification.json \
+            --source-sha "$P020_SOURCE_SHA" \
+            --ldid build/p020/signer/ldid \
+            --output-dir build/p020/signed-final
+      - name: Create exact-source signed candidate manifest and complete checksum inventory
+        env:
+          P020_SOURCE_SHA: ${{ needs.sign-exact-source.outputs.source_sha }}
+          P020_BRANCH: docs/h004-device-phase0-readiness
+          P020_RUN_ID: ${{ github.run_id }}
+          P020_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          pkg=build/p020/signed-final/ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb
+          python3 scripts/p020_signed_rc_manifest.py \
+            --build-provenance build/p020/P020-BUILD-PROVENANCE.json \
+            --release-manifest build/p020/release-manifest.json \
+            --release-assessment build/p020/release-assessment.json \
+            --package "$pkg" \
+            --package-manifest "$pkg.manifest.json" \
+            --signer-provenance build/p020/signer-provenance.json \
+            --signature-receipt build/p020/macos/signature-integrity-verification.json \
+            --finalization-provenance build/p020/signed-final/finalization-provenance.json \
+            --validation-report build/p020/signed-final/signed-validation.txt \
+            --source-sha "$P020_SOURCE_SHA" \
+            --workflow-run-id "$P020_RUN_ID" \
+            --workflow-run-url "$P020_RUN_URL" \
+            --workflow-branch "$P020_BRANCH" \
+            --output build/p020/signed-final/P020-SIGNED-CANDIDATE-MANIFEST.json
+          python3 scripts/build_candidate_inventory.py --root build/p020 --output build/p020/SHA256SUMS
+          (cd build/p020 && sha256sum -c SHA256SUMS)
+          sha256sum "$pkg"
+          cat build/p020/release-assessment.json
+      - name: Upload signed device-unverified v0.2.0 RC and complete evidence inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-v0.2.0-rc1-SIGNED-DEVICE-UNVERIFIED
+          if-no-files-found: error
+          path: build/p020/

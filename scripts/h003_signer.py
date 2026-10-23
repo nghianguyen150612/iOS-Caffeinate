@@ -26,6 +26,7 @@ PACKAGE_LOCK_KEYS = {
     "g++-13": "H003_GPP13_PACKAGE_VERSION",
     "binutils": "H003_BINUTILS_PACKAGE_VERSION",
     "make": "H003_MAKE_PACKAGE_VERSION",
+    "libplist-2.0-4": "H003_LIBPLIST_RUNTIME_PACKAGE_VERSION",
     "libplist-dev": "H003_LIBPLIST_PACKAGE_VERSION",
     "libssl-dev": "H003_OPENSSL_PACKAGE_VERSION",
     "pkg-config": "H003_PKG_CONFIG_PACKAGE_VERSION",
@@ -224,6 +225,8 @@ def validate_build_fields(fields: dict[str, str], lock: dict[str, str]) -> None:
             raise H003Error("SIGNER_REPRODUCTION_MISMATCH: independent builds do not match the exact signer SHA-256")
     if fields.get("version_banner") != f"Link Identity Editor {lock['H003_SIGNER_VERSION']}":
         raise H003Error("wrong signer version in H003 build provenance")
+    if not re.fullmatch(r"[0-9a-f]{64}", fields.get("libplist_runtime_sha256", "")):
+        raise H003Error("pinned libplist runtime SHA-256 is missing or malformed")
     if fields.get("binary_architecture") != "x86_64" or fields.get("binary_elf_class") != "ELF64" or fields.get("binary_type") != "ELF64-PIE":
         raise H003Error("wrong host architecture or executable type in H003 build provenance")
     if fields.get("result") != "VERIFIED":
@@ -266,6 +269,14 @@ def make_provenance(fields: dict[str, str]) -> dict[str, object]:
             "architecture": fields["binary_architecture"],
             "type": fields["binary_type"],
             "interpreter": fields["binary_interpreter"],
+        },
+        "runtime_dependencies": {
+            "libplist": {
+                "soname": "libplist-2.0.so.4",
+                "sha256": fields["libplist_runtime_sha256"],
+                "package": "libplist-2.0-4",
+                "package_version": fields["package.libplist-2.0-4"],
+            },
         },
         "reproducibility": {
             "build_1_sha256": fields["build_1_sha256"],
@@ -391,6 +402,7 @@ def _build_in_container(output_dir: Path) -> int:
         "build_1_sha256": first_digest,
         "build_2_sha256": second_digest,
         "executable_sha256": identity["sha256"],
+        "libplist_runtime_sha256": "",
         "version_banner": f"Link Identity Editor {identity['version']}",
         "binary_architecture": identity["architecture"],
         "binary_elf_class": identity["elf_class"],
@@ -398,6 +410,22 @@ def _build_in_container(output_dir: Path) -> int:
         "binary_interpreter": identity["interpreter"],
         "result": "VERIFIED",
     }
+    runtime_link = Path("/usr/lib/x86_64-linux-gnu/libplist-2.0.so.4")
+    if runtime_link.is_symlink():
+        runtime_path = runtime_link.resolve(strict=True)
+    elif runtime_link.is_file():
+        runtime_path = runtime_link
+    else:
+        raise H003Error("pinned libplist runtime library is missing from the build container")
+    owner = subprocess.run(["dpkg-query", "-S", str(runtime_link)], check=False, capture_output=True, text=True)
+    if owner.returncode != 0 or not owner.stdout.startswith("libplist-2.0-4"):
+        raise H003Error("pinned libplist runtime library is not owned by the locked runtime package")
+    runtime_output = output_dir / "libplist-2.0.so.4"
+    if runtime_output.exists() or runtime_output.is_symlink():
+        raise H003Error("refusing to overwrite existing H003 libplist runtime output")
+    shutil.copyfile(runtime_path, runtime_output, follow_symlinks=False)
+    runtime_output.chmod(0o644)
+    fields["libplist_runtime_sha256"] = sha256_file(runtime_output)
     validate_build_fields(fields, lock)
     receipt = output_dir / "build-env.txt"
     with receipt.open("x", encoding="utf-8") as stream:
@@ -417,6 +445,7 @@ def _build_in_container(output_dir: Path) -> int:
     os.chown(output, host_uid, host_gid)
     os.chown(receipt, host_uid, host_gid)
     os.chown(provenance_path, host_uid, host_gid)
+    os.chown(runtime_output, host_uid, host_gid)
     print(f"signer_sha256={identity['sha256']}")
     print(f"independent_builds={first_digest},{second_digest}")
     print("signer_provenance=VERIFIED")
@@ -528,9 +557,12 @@ def _run_build(output_arg: Path) -> int:
 
     fields = _parse_fields(output_dir / "build-env.txt")
     validate_build_fields(fields, lock)
+    runtime_output = output_dir / "libplist-2.0.so.4"
+    if runtime_output.is_symlink() or not runtime_output.is_file() or sha256_file(runtime_output) != fields["libplist_runtime_sha256"]:
+        raise H003Error("pinned libplist runtime output differs from the verified container receipt")
     # The build container already checked the banner after the exact hash check.
-    # Recheck the copied bytes on the host without executing a dynamically linked
-    # binary whose pinned libplist runtime exists only in that container.
+    # Recheck signer bytes on the host without executing the binary here;
+    # downstream use must explicitly point at the separately receipted runtime.
     identity = verify_binary_artifact(output_dir / "ldid", lock["H003_SIGNER_SHA256"])
     identity["version"] = fields["version_banner"].removeprefix("Link Identity Editor ")
     if identity["architecture"] != "x86_64":

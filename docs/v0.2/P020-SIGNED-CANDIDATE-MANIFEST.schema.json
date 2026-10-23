@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ios-caffeinate.invalid/schemas/p020-signed-candidate-manifest-v1.schema.json",
+  "title": "P020 signed v0.2.0 release candidate manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "candidate_state", "release_candidate", "source", "package", "build", "signing", "validation", "candidate_workflow"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "candidate_state": {"const": "SIGNED_RC_DEVICE_UNVERIFIED"},
+    "release_candidate": {"const": "v0.2.0-rc1"},
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "branch", "commit_sha", "tree_sha", "worktree_clean"],
+      "properties": {
+        "repository": {"const": "nghianguyen150612/iOS-Caffeinate"},
+        "branch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "tree_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "worktree_clean": {"const": true}
+      }
+    },
+    "package": {
+      "type": "object", "additionalProperties": false,
+      "required": ["identifier", "version", "architecture", "filename", "sha256", "payload_inventory", "sha256_sidecar"],
+      "properties": {
+        "identifier": {"const": "com.ioscaffeinate.cli"},
+        "version": {"const": "0.2.0~rc1-1"},
+        "architecture": {"const": "iphoneos-arm"},
+        "filename": {"const": "ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "payload_inventory": {"$ref": "#/$defs/fileRecord"},
+        "sha256_sidecar": {"$ref": "#/$defs/fileRecord"}
+      }
+    },
+    "build": {
+      "type": "object", "additionalProperties": false,
+      "required": ["provenance", "release_manifest", "release_assessment", "reproducibility", "independent_builds", "target_triple", "minimum_ios_version", "sdk_name", "sdk_version", "xcode_version", "compiler_version", "ci_run_id", "ci_run_url"],
+      "properties": {
+        "provenance": {"$ref": "#/$defs/fileRecord"},
+        "release_manifest": {"$ref": "#/$defs/fileRecord"},
+        "release_assessment": {"$ref": "#/$defs/fileRecord"},
+        "reproducibility": {"const": "REPRODUCIBLE"},
+        "independent_builds": {"const": 2},
+        "target_triple": {"const": "arm64-apple-ios12.0"},
+        "minimum_ios_version": {"const": "12.0"},
+        "sdk_name": {"const": "iPhoneOS"},
+        "sdk_version": {"type": "string", "minLength": 1},
+        "xcode_version": {"type": "string", "minLength": 1},
+        "compiler_version": {"type": "string", "minLength": 1},
+        "ci_run_id": {"type": ["string", "integer"]},
+        "ci_run_url": {"type": "string", "format": "uri"}
+      }
+    },
+    "signing": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "profile_id", "profile_sha256", "entitlements", "embedded_entitlements", "signer_version", "signer_sha256", "signer_provenance", "signature_integrity", "signature_integrity_receipt", "finalization_provenance"],
+      "properties": {
+        "state": {"const": "SIGNATURE_PRESENT"},
+        "profile_id": {"const": "amethyst-ios12-rootful"},
+        "profile_sha256": {"const": "cd1358e7c8c3b01da98b5544e3c2ffcdc9d92cf9a3191e45038e8691ef2021ca"},
+        "entitlements": {"type": "object", "additionalProperties": false, "required": ["com.apple.private.security.no-container"], "properties": {"com.apple.private.security.no-container": {"const": true}}},
+        "embedded_entitlements": {"const": "EXACT_MATCH"},
+        "signer_version": {"const": "2.1.5-procursus7"},
+        "signer_sha256": {"const": "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c"},
+        "signer_provenance": {"$ref": "#/$defs/fileRecord"},
+        "signature_integrity": {"const": "SIGNATURE_VERIFIED"},
+        "signature_integrity_receipt": {"$ref": "#/$defs/fileRecord"},
+        "finalization_provenance": {"$ref": "#/$defs/fileRecord"}
+      }
+    },
+    "validation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["package_validation", "package_validation_report", "native_build_source_match", "host_signature_integrity", "device_execution", "device_package_acceptance", "physical_gates", "release_readiness", "publication_authorized"],
+      "properties": {
+        "package_validation": {"const": "PASS"},
+        "package_validation_report": {"$ref": "#/$defs/fileRecord"},
+        "native_build_source_match": {"const": "PASS"},
+        "host_signature_integrity": {"const": "VERIFIED"},
+        "device_execution": {"const": "NOT_VERIFIED"},
+        "device_package_acceptance": {"const": "NOT_ACCEPTED"},
+        "physical_gates": {"const": "PENDING"},
+        "release_readiness": {"const": "RELEASE_BLOCKED"},
+        "publication_authorized": {"const": false}
+      }
+    },
+    "candidate_workflow": {
+      "type": "object", "additionalProperties": false,
+      "required": ["run_id", "run_url"],
+      "properties": {
+        "run_id": {"type": ["string", "integer"]},
+        "run_url": {"type": "string", "format": "uri"}
+      }
+    }
+  },
+  "$defs": {
+    "fileRecord": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1, "maxLength": 512},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

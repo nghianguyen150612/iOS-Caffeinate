@@ -13,6 +13,8 @@ Cloud engineering does not access the iPad. Device acceptance remains pending un
 
 ## Initial read-only session
 
+The separate H004 Phase 0 baseline may be performed before P011 physical acceptance under its own physical-recovery and authorization checklist. It does not satisfy P018 acceptance or waive the P011 package-acceptance prerequisite below; this P018 session remains gated by the prerequisites above.
+
 Run only these commands first; save their genuine terminal output with timestamps and source/binary identity:
 
 ```sh

@@ -90,6 +90,7 @@ class H003SignerTests(unittest.TestCase):
             "make_version": self.lock["H003_MAKE_VERSION"],
             "libplist_version": self.lock["H003_LIBPLIST_VERSION"],
             "openssl_version": self.lock["H003_OPENSSL_VERSION"],
+            "libplist_runtime_sha256": "a" * 64,
             "build_1_sha256": self.lock["H003_SIGNER_SHA256"],
             "build_2_sha256": self.lock["H003_SIGNER_SHA256"],
             "executable_sha256": self.lock["H003_SIGNER_SHA256"],
@@ -195,6 +196,21 @@ class H003SignerTests(unittest.TestCase):
         self.assertEqual(report["result"], "VERIFIED")
         self.assertEqual(report["source"]["commit"], self.lock["H003_SOURCE_COMMIT"])
         self.assertEqual(report["reproducibility"]["outcome"], "EXACT_MATCH")
+        self.assertEqual(
+            report["runtime_dependencies"]["libplist"],
+            {
+                "soname": "libplist-2.0.so.4",
+                "sha256": "a" * 64,
+                "package": "libplist-2.0-4",
+                "package_version": self.lock["H003_LIBPLIST_RUNTIME_PACKAGE_VERSION"],
+            },
+        )
+
+    def test_malformed_runtime_library_digest_is_rejected(self) -> None:
+        fields = self.valid_build_fields()
+        fields["libplist_runtime_sha256"] = "not-a-digest"
+        with self.assertRaisesRegex(signer.H003Error, "runtime SHA-256"):
+            signer.validate_build_fields(fields, self.lock)
 
 
 if __name__ == "__main__":

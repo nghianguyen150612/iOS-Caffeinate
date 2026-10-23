@@ -2,7 +2,7 @@
 
 **Status: PENDING physical iPad session.** No installation, installed-binary execution, package removal, or rollback is performed by this document or by the P011 cloud workflow. Installation, assertion trials, removal, and rollback each require separate operator authorization during a physically attended session.
 
-P018's initial device session is read-only and is documented in [P018 device acceptance](P018-DEVICE-ACCEPTANCE.md). This P011 procedure describes later package acceptance steps; do not run its installation or rollback phases as part of P018 without separate explicit authorization.
+P018's initial device session is read-only and is documented in [P018 device acceptance](P018-DEVICE-ACCEPTANCE.md). H004 provides the bounded [Phase 0 baseline inspection](H004-PHASE0-CHECKLIST.md), [read-only command plan](H004-READONLY-COMMANDS.md), and [stop conditions](H004-STOP-CONDITIONS.md). H004 does not satisfy P011 acceptance. This P011 procedure describes later package acceptance steps; do not run its installation or rollback phases as part of H004/P018 without separate explicit authorization.
 
 Target: iPad mini 2 A1489 (`iPad4,4`), Apple A7 ARM64, iOS 12.5.7, Amethyst/Procursus rootful. Stable artifact: `ioscaffeinate_0.1.0-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb`, SHA-256 `439d2543adbe1472f82cfd6c9e6bb9dd747da6c31c79f3da1f3da86b8ca9421c`.
 

@@ -1,10 +1,5 @@
 name: Publish signed iOS-Caffeinate v0.1.0 stable
 on:
-  push:
-    branches: [main]
-    paths:
-      - packaging/rootful/VERSION
-      - .github/workflows/publish-stable.yml
   workflow_dispatch:
 permissions:
   contents: write

@@ -17,11 +17,17 @@
 
 Both builds used separate fresh source checkouts and temporary build directories. The executable was hashed and matched against the pin before H003 executed it to inspect its version banner. The H002 legacy validator now applies the same hash-before-execution rule when validating the pinned signer.
 
+## Runtime dependency
+
+The signer links to `libplist-2.0.so.4`. H003 now copies that library from the same digest-pinned Ubuntu container and signed apt snapshot, and binds its SHA-256 and package identity (`libplist-2.0-4`, `2.3.0-1~exp2build2`) into the signer provenance receipt. The R05 signing workflow uses that exact library through a step-local `LD_LIBRARY_PATH` when it runs the signer on GitHub's Linux host. This avoids substituting an unpinned host package. The runtime file is kept alongside the signer in the run-scoped evidence artifact and is not added to the Debian package.
+
+The reproduced runtime SHA-256 is `4177ee2d671eacd7b1a952702ef7e14a479acede369396b2a532de1f142491a4`.
+
 ## New build environment
 
 H003's observed environment is Ubuntu 24.04 on `linux/amd64`, using image `ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac` and the signed apt snapshot `https://snapshot.ubuntu.com/ubuntu/20261022T000000Z`.
 
-The locked toolchain is GCC/G++ 13.3.0, GNU binutils 2.42, GNU Make 4.3, libplist 2.3.0, and OpenSSL 3.0.13. Exact Debian package versions, including Git, Python, pkg-config, and CA certificates, are recorded in `scripts/h003-build-inputs.lock` and in the generated JSON receipt.
+The locked toolchain is GCC/G++ 13.3.0, GNU binutils 2.42, GNU Make 4.3, libplist 2.3.0, and OpenSSL 3.0.13. Exact Debian package versions, including the libplist runtime, Git, Python, pkg-config, and CA certificates, are recorded in `scripts/h003-build-inputs.lock` and in the generated JSON receipt.
 
 The H001 historical image digest and package snapshot receipt were not recoverable. This H003 environment is a new verified observation; its identity is not represented as the former H001 environment. Matching the exact P010 executable hash is required independently of the build environment record.
 

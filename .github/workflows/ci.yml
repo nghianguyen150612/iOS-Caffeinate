@@ -5,6 +5,17 @@ on:
 permissions:
   contents: read
 jobs:
+  h004-operator-package-validation:
+    name: H004 operator package validation (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Validate H004 documents and shell syntax without device execution
+        run: python3 scripts/validate_h004_operator_package.py
+      - name: Validate exact H004 ancestry on the H003 base
+        run: python3 -m unittest discover -s tests -p 'test_h004_stack.py' -v
   linux-protocol:
     runs-on: ubuntu-latest
     steps:
@@ -1624,6 +1635,7 @@ jobs:
 
           sys.path.insert(0, str(Path("scripts").resolve()))
           from h003_stack import StackValidationError, validate_h003_stack
+          from h004_stack import H004StackValidationError, validate_h004_stack
 
           repo = os.environ["GITHUB_REPOSITORY"]
           expected = [
@@ -1796,13 +1808,52 @@ jobs:
                   except StackValidationError as error:
                       raise SystemExit(str(error)) from None
                   integration_mode = "STACKED_H003"
+              elif current["base"]["ref"] == "fix/h003-p011-signer-preflight":
+                  h003 = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/pulls/21"], check=True, capture_output=True, text=True).stdout)
+                  h002 = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/pulls/20"], check=True, capture_output=True, text=True).stdout)
+                  p020 = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/pulls/19"], check=True, capture_output=True, text=True).stdout)
+                  main = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/main"], check=True, capture_output=True, text=True).stdout)
+                  h003_branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/fix/h003-p011-signer-preflight"], check=True, capture_output=True, text=True).stdout)
+                  h002_branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/fix/h002-p011-legacy-checksum"], check=True, capture_output=True, text=True).stdout)
+                  p020_branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/release/p020-v02-integration"], check=True, capture_output=True, text=True).stdout)
+
+                  def is_ancestor(ancestor, commit):
+                      result = subprocess.run(
+                          ["git", "merge-base", "--is-ancestor", ancestor, commit],
+                          check=False, capture_output=True, text=True)
+                      if result.returncode not in (0, 1):
+                          raise SystemExit("could not evaluate H004 stack ancestry")
+                      return result.returncode == 0
+
+                  def merge_base(left, right):
+                      return subprocess.run(
+                          ["git", "merge-base", left, right],
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+                  try:
+                      integration_base = validate_h004_stack(
+                          current_pr=current,
+                          h003_pr=h003,
+                          h002_pr=h002,
+                          p020_pr=p020,
+                          h003_branch_sha=h003_branch["commit"]["sha"],
+                          h002_branch_sha=h002_branch["commit"]["sha"],
+                          p020_branch_sha=p020_branch["commit"]["sha"],
+                          main_sha=main["commit"]["sha"],
+                          source_sha=os.environ["P020_SOURCE_SHA"],
+                          is_ancestor=is_ancestor,
+                          merge_base=merge_base,
+                      )
+                  except H004StackValidationError as error:
+                      raise SystemExit(str(error)) from None
+                  integration_mode = "STACKED_H004"
               else:
                   raise SystemExit("current PR base branch is not a supported P020 integration target")
           else:
               branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/main"], check=True, capture_output=True, text=True).stdout)
               integration_base = {"branch": "main", "sha": branch["commit"]["sha"]}
           Path("build/p020/integration-base.json").write_text(json.dumps(integration_base, sort_keys=True, indent=2) + "\n")
-          if integration_mode in ("STACKED_H002", "STACKED_H003"):
+          if integration_mode in ("STACKED_H002", "STACKED_H003", "STACKED_H004"):
               expected_base_sha = "57b06c534d18f094ad59e4229e626fae51668de9"
               subprocess.run(["git", "merge-base", "--is-ancestor", expected_base_sha, os.environ["P020_SOURCE_SHA"]], check=True)
               actual_merge_base = subprocess.run(["git", "merge-base", os.environ["P020_SOURCE_SHA"], expected_base_sha], check=True, capture_output=True, text=True).stdout.strip()
@@ -1948,6 +1999,15 @@ jobs:
           workflows = [Path(".github/workflows/publish-rc1.yml").read_text(), Path(".github/workflows/publish-stable.yml").read_text()]
           if any("v0.2.0" in workflow or "0.2.0-1" in workflow for workflow in workflows):
               raise SystemExit("existing publication workflow has an unapproved v0.2 trigger or artifact")
+          if any(re.search(r"(?m)^  push:", workflow) for workflow in workflows):
+              raise SystemExit("stable or legacy RC publication must require explicit workflow dispatch")
+          signed_rc = Path(".github/workflows/p020-signed-rc-candidate.yml").read_text()
+          if "branches: [docs/h004-device-phase0-readiness]" not in signed_rc:
+              raise SystemExit("signed RC candidate workflow is not restricted to the reviewed H004 branch")
+          if "contents: write" in signed_rc or re.search(r"gh\s+release\s+(?:create|upload)|git\s+tag|launchctl\s+(?:load|bootstrap|enable|kickstart|start|restart)", signed_rc, re.I):
+              raise SystemExit("signed RC candidate workflow has publication or device-side-effect authority")
+          if not re.search(r"(?m)^  contents: read$", signed_rc):
+              raise SystemExit("signed RC candidate workflow must use read-only repository permissions")
           ci_workflow = Path(".github/workflows/ci.yml").read_text()
           p020_job = ci_workflow.split("  p020-release-readiness-validation:", 1)[1]
           if re.search(r"gh\s+release\s+create|git\s+tag|launchctl\s+(?:load|bootstrap|enable|kickstart|start|restart)|\bldid\b", p020_job, re.I):
