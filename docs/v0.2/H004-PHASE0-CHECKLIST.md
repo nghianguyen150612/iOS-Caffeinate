@@ -37,7 +37,13 @@ Follow [the read-only command plan](H004-READONLY-COMMANDS.md) in order. Begin w
 
 If any required project command is absent or not supported, record `UNAVAILABLE`. Record values that cannot safely be observed as `UNKNOWN`; do not infer a clean or absent state. If execution is denied, unexpectedly terminated, or reports an unplanned error, preserve the exact command, exit/signal result, and observed error, then stop. Do not retry through another shell, privilege, executable, or transport.
 
-If assertion ownership/state or P014 recovery state remains `UNKNOWN`, stop the inspection and preserve that uncertainty. It blocks progression beyond Phase 0, including P011 installation or acceptance; an absent diagnostic, missing journal, or empty process/socket observation does not prove a safe state.
+If assertion ownership/state or P014 recovery state remains `UNKNOWN`, stop the inspection and preserve that uncertainty. It blocks progression beyond Phase 0, including P011 installation or acceptance; a missing journal alone, an absent diagnostic, or an empty process/socket observation does not prove a safe state.
+
+### Fresh-install journal classification
+
+When the package database reports `com.ioscaffeinate.cli` not installed and all standard project executables, project process, socket, lock, registered launchd label, and live plist are absent, a missing P014 journal may be recorded as `MISSING_FIRST_INSTALL_REVIEW_REQUIRED`. It is still not a clean recovery record and does not itself authorize installation. Record whether prior manual/staged project binaries or assertion activity are known, and record direct assertion-owner/cleanup observations. If prior history, assertion ownership, or cleanup remains unknown, stop. Only an independent review of the complete observations and a separate P011 authorization can decide whether a first-install package action is eligible.
+
+The P014 root-only `service recovery reset --reviewed-cleanup --reviewed-supervisor-state` command is not part of H004. If a later, separately authorized v0.2 installation reaches P014 review, follow [P014 device acceptance](P014-DEVICE-ACCEPTANCE.md) and run the command before daemon startup only after its required direct observations are recorded.
 
 ## Immediate disposition
 

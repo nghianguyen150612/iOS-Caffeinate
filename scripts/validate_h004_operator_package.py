@@ -27,6 +27,8 @@ REQUIRED_DOCS = {
         "OBSERVATIONS_RECORDED_REVIEW_PENDING",
         "assertion ownership/state or P014 recovery state remains `UNKNOWN`",
         "blocks progression beyond Phase 0",
+            "MISSING_FIRST_INSTALL_REVIEW_REQUIRED",
+            "missing journal alone",
     ],
     "H004-READONLY-COMMANDS.md": [
         "dpkg-query",
@@ -45,7 +47,8 @@ REQUIRED_DOCS = {
         "SSH",
         "Tailscale",
         "P014 journal",
-        "unknown P014 recovery state blocks progression",
+            "missing journal with prior project runtime history or unknown history",
+            "Do not reset or create a journal during Phase 0",
         "assertion state/ownership/release status is `UNKNOWN`",
     ],
     "H004-EVIDENCE-GUIDE.md": [
@@ -126,6 +129,7 @@ def main() -> int:
         DOCS / "P011-DEVICE-ACCEPTANCE.md",
         DOCS / "P018-DEVICE-ACCEPTANCE.md",
         DOCS / "P019-OPERATOR-RUNBOOK.md",
+        DOCS / "P014-DEVICE-ACCEPTANCE.md",
         DOCS / "P020-HARDWARE-HANDOFF.md",
     ])
     for path in markdown_files:

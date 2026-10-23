@@ -5,7 +5,7 @@
 | Stage | Identity | State in P020 |
 |---|---|---|
 | Unsigned development build | Exact P020 source, iPhoneOS SDK, ARM64 binaries and isolated `.deb` | Prepared by CI; explicitly unsigned and device-unverified |
-| Signed candidate | Same source and payload with verified P010 signer and approved profile | Blocked: pinned signer executable and origin are unavailable |
+| Signed candidate | Same source and payload with H003 reproducibly verified signer and approved profile | R05 exact-source RC workflow prepares a signed device-unverified artifact; Apple host verification and device acceptance remain separate gates |
 | Device-tested candidate | Exact signed package installed under attended authorization | Not performed |
 | Hardware-accepted candidate | Required P011/P012/P013/P014/P016/P018/P019 evidence accepted | Pending physical evidence and independent review |
 | Stable v0.2.0 | Stable package and public release | Not authorized or published |
@@ -29,7 +29,7 @@ Matching source SHAs alone do not establish reproducibility. Even identical unsi
 
 The required signer is `ldid 2.1.5-procursus7`, SHA-256 `15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c`, built from `https://github.com/ProcursusTeam/ldid.git` at commit `aaf8f23d7975ecdb8e77e3a8f22253e0a2352cef`. The approved profile is `amethyst-ios12-rootful`, SHA-256 `cd1358e7c8c3b01da98b5544e3c2ffcdc9d92cf9a3191e45038e8691ef2021ca`. Both exact tool identity and verifiable origin, exact profile bytes, signed binary and package hashes, signing command/result, embedded entitlement inspection, and source-to-signed-binary relationship must be recorded. A matching version string is insufficient.
 
-P020 does not execute an unverified signer and does not create a substitute profile. Until the exact signer is verified, provenance must say `SIGNER_PROVENANCE_BLOCKED` and packages remain unsigned.
+P020 does not execute an unverified signer and does not create a substitute profile. The P020 CI provenance describes its unsigned build stage and continues to record `SIGNER_PROVENANCE_BLOCKED` there. H003 has since independently reproduced and verified the exact signer; the separate R05 RC workflow uses the pinned H003 receipt and does not claim the unsigned CI artifacts were signed.
 
 ## Artifact verification
 

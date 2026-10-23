@@ -1999,6 +1999,15 @@ jobs:
           workflows = [Path(".github/workflows/publish-rc1.yml").read_text(), Path(".github/workflows/publish-stable.yml").read_text()]
           if any("v0.2.0" in workflow or "0.2.0-1" in workflow for workflow in workflows):
               raise SystemExit("existing publication workflow has an unapproved v0.2 trigger or artifact")
+          if any(re.search(r"(?m)^  push:", workflow) for workflow in workflows):
+              raise SystemExit("stable or legacy RC publication must require explicit workflow dispatch")
+          signed_rc = Path(".github/workflows/p020-signed-rc-candidate.yml").read_text()
+          if "branches: [docs/h004-device-phase0-readiness]" not in signed_rc:
+              raise SystemExit("signed RC candidate workflow is not restricted to the reviewed H004 branch")
+          if "contents: write" in signed_rc or re.search(r"gh\s+release\s+(?:create|upload)|git\s+tag|launchctl\s+(?:load|bootstrap|enable|kickstart|start|restart)", signed_rc, re.I):
+              raise SystemExit("signed RC candidate workflow has publication or device-side-effect authority")
+          if not re.search(r"(?m)^  contents: read$", signed_rc):
+              raise SystemExit("signed RC candidate workflow must use read-only repository permissions")
           ci_workflow = Path(".github/workflows/ci.yml").read_text()
           p020_job = ci_workflow.split("  p020-release-readiness-validation:", 1)[1]
           if re.search(r"gh\s+release\s+create|git\s+tag|launchctl\s+(?:load|bootstrap|enable|kickstart|start|restart)|\bldid\b", p020_job, re.I):

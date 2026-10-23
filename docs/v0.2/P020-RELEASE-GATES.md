@@ -45,7 +45,7 @@ A signed, independently reviewed security closeout must enumerate findings and s
 
 ## Current decision
 
-The current evidence inventory contains no accepted physical P019 trial. The pinned signer is also unresolved. The expected outcome is `RELEASE_BLOCKED`, with hardware statuses pending and publication false. The exact blockers are emitted by the evaluator and retained with the CI report; no status string is hardcoded into the decision logic.
+The current evidence inventory contains no accepted physical P019 trial. H003 has verified the pinned signer, but P020 has not admitted candidate-bound P010 signing evidence and independent review; the P011 and remaining physical gates are also pending. The expected outcome remains `RELEASE_BLOCKED`, with hardware statuses pending and publication false. The exact blockers are emitted by the evaluator and retained with the CI report; no readiness status is hardcoded into the decision logic.
 
 ```sh
 python3 scripts/p020_release_gate.py assess \

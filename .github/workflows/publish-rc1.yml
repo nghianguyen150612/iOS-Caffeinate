@@ -1,9 +1,5 @@
 name: Publish iOS-Caffeinate v0.1.0-rc1 signed Debian candidate
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/publish-rc1.yml
   workflow_dispatch:
 permissions:
   contents: write
@@ -13,7 +9,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish-signed-rc1:
-    if: github.repository == 'nghianguyen150612/iOS-Caffeinate'
+    if: github.repository == 'nghianguyen150612/iOS-Caffeinate' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:

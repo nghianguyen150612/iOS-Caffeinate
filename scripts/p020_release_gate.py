@@ -442,7 +442,8 @@ def _evaluate_hardware_gate(name: str, gate: dict[str, Any], store: EvidenceStor
     if not evidence:
         reason = "required physical evidence has not been submitted"
         if name == "p010_signer_provenance":
-            reason = "SIGNER_PROVENANCE_BLOCKED: exact pinned ldid executable and origin review are unavailable"
+            reason = ("SIGNER_PROVENANCE_BLOCKED_FOR_P020_EVIDENCE_ADMISSION: H003 host signer provenance is verified; "
+                      "candidate-bound P010 evidence and independent review remain pending")
         return {"status": "PENDING", "reason": reason, "evidence_count": 0}
     seen: set[str] = set()
     accepted_review_notes: list[str] = []

@@ -501,15 +501,37 @@ static void test_atomic_interruption_preserves_old_record(void) {
 static void test_attended_service_reset_requires_all_reviews(void) {
     char directory[128], path[256], detail[256];
     make_paths(directory, sizeof(directory), path, sizeof(path));
-    assert(service_test_recovery_reset(path, 0, 1, 1) != 0);
-    assert(service_test_recovery_reset(path, 1, 0, 1) != 0);
-    assert(service_test_recovery_reset(path, 1, 1, 0) != 0);
-    assert(service_test_recovery_reset(path, 1, 1, 1) == 0);
     recovery_record_t record;
+    assert(recovery_store_load(path, geteuid(), &record, detail, sizeof(detail)) == RECOVERY_STORE_MISSING);
+    assert(service_test_recovery_reset(path, 0, 1, 1) != 0);
+    assert(recovery_store_load(path, geteuid(), &record, detail, sizeof(detail)) == RECOVERY_STORE_MISSING);
+    assert(service_test_recovery_reset(path, 1, 0, 1) != 0);
+    assert(recovery_store_load(path, geteuid(), &record, detail, sizeof(detail)) == RECOVERY_STORE_MISSING);
+    assert(service_test_recovery_reset(path, 1, 1, 0) != 0);
+    assert(recovery_store_load(path, geteuid(), &record, detail, sizeof(detail)) == RECOVERY_STORE_MISSING);
+    assert(service_test_recovery_reset(path, 1, 1, 1) == 0);
     assert(recovery_store_load(path, geteuid(), &record, detail, sizeof(detail)) == RECOVERY_STORE_OK);
     assert(record.last_exit_class == RECOVERY_EXIT_OPERATOR_REVIEWED_CLEANUP);
     assert(record.cleanup_state == RECOVERY_CLEANUP_CONFIRMED);
     assert(record.process_state == RECOVERY_PROCESS_CLEAN);
+
+    /* The reviewed first-install record authorizes startup only after all gates pass. */
+    int blocked = 1;
+    assert(recovery_store_begin_run(path, geteuid(), &record, &blocked, detail, sizeof(detail)) == 0);
+    assert(blocked == 0);
+    assert(record.process_state == RECOVERY_PROCESS_RUNNING);
+    assert(recovery_store_finish_run(path, geteuid(), &record, 1,
+                                     RECOVERY_EXIT_GRACEFUL_CONFIRMED, 0,
+                                     detail, sizeof(detail)) == 0);
+    assert(recovery_store_begin_run(path, geteuid(), &record, &blocked, detail, sizeof(detail)) == 0);
+    assert(blocked == 0);
+
+    /* A crash after a reviewed startup restores the fail-closed first-run gate. */
+    assert(recovery_store_save_atomic(path, geteuid(), &record, detail, sizeof(detail)) == 0);
+    assert(recovery_store_begin_run(path, geteuid(), &record, &blocked, detail, sizeof(detail)) == 0);
+    assert(blocked == 1);
+    assert(record.cleanup_state == RECOVERY_CLEANUP_UNVERIFIED);
+    assert(record.last_exit_class == RECOVERY_EXIT_UNKNOWN_UNOBSERVED);
 
     write_raw(path, "{broken\n", 0600);
     assert(service_test_recovery_reset(path, 1, 1, 1) != 0);
