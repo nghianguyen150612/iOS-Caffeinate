@@ -117,6 +117,38 @@ class SignedCandidateToolTests(unittest.TestCase):
         self.assertEqual(receipt["method"], "codesign --verify --strict --verbose=4")
         self.assertEqual(json.loads(output.read_text()), receipt)
 
+    def test_macos_verifier_version_probe_failure_does_not_override_successful_binary_checks(self) -> None:
+        package = self.root / "candidate.deb"
+        candidate_deb(package)
+        output = self.root / "receipt.json"
+        real_is_file = Path.is_file
+        real_access = macos_verify.os.access
+
+        def is_file(path: Path) -> bool:
+            return True if path == Path("/usr/bin/codesign") else real_is_file(path)
+
+        def access(path: str | Path, mode: int) -> bool:
+            return True if Path(path) == Path("/usr/bin/codesign") else real_access(path, mode)
+
+        def run(command: list[str], **_: object) -> SimpleNamespace:
+            if command[-1] == "--version":
+                return SimpleNamespace(returncode=1, stdout="", stderr="unsupported version query")
+            return SimpleNamespace(returncode=0, stdout="verified\n", stderr="")
+
+        with (
+            patch.object(Path, "is_file", is_file),
+            patch.object(macos_verify.os, "access", access),
+            patch.object(macos_verify.subprocess, "run", side_effect=run),
+            patch.object(macos_verify, "audit_code_signature", return_value={
+                "independent_code_directory_verified": True, "entitlements_exact_match": True,
+                "adhoc_flag_present": True, "signature_kind": "ADHOC", "device_signature_acceptance": "PENDING",
+            }),
+        ):
+            receipt = macos_verify.verify_package(package, "a" * 40, output, platform_name="darwin")
+
+        self.assertEqual(receipt["status"], "VERIFIED")
+        self.assertEqual(receipt["codesign_version"]["exit_code"], 1)
+
     def test_macos_verifier_preserves_failed_codesign_result(self) -> None:
         package = self.root / "candidate.deb"
         candidate_deb(package)
@@ -213,7 +245,7 @@ class SignedCandidateToolTests(unittest.TestCase):
             "method": "codesign --verify --strict --verbose=4",
             "workflow_run_id": "123",
             "workflow_run_attempt": "1",
-            "codesign_version": {"exit_code": 0},
+            "codesign_version": {"command": ["/usr/bin/codesign", "--version"], "exit_code": 1},
             "macos_version": {"exit_code": 0},
             "binary_results": results,
         }
@@ -292,7 +324,8 @@ class SignedCandidateToolTests(unittest.TestCase):
             "package_file": package.name, "package_sha256": package_sha, "host": "macOS",
             "tool": "/usr/bin/codesign", "method": "codesign --verify --strict --verbose=4",
             "workflow_run_id": "LOCAL_TEST", "workflow_run_attempt": "1",
-            "codesign_version": {"exit_code": 0}, "macos_version": {"exit_code": 0},
+            "codesign_version": {"command": ["/usr/bin/codesign", "--version"], "exit_code": 0},
+            "macos_version": {"exit_code": 0},
             "binary_results": [{
                 "name": name,
                 "package_path": finalizer.BINARIES[name],
@@ -403,7 +436,9 @@ class SignedCandidateToolTests(unittest.TestCase):
             "schema_version": 2, "status": "VERIFIED", "source_commit_sha": source_sha,
             "package_sha256": "f" * 64, "host": "macOS", "tool": "/usr/bin/codesign",
             "method": "codesign --verify --strict --verbose=4", "workflow_run_id": "456",
-            "workflow_run_attempt": "1", "codesign_version": {"exit_code": 0}, "macos_version": {"exit_code": 0},
+            "workflow_run_attempt": "1",
+            "codesign_version": {"command": ["/usr/bin/codesign", "--version"], "exit_code": 0},
+            "macos_version": {"exit_code": 0},
             "binary_results": [
                 {"name": "ios-caffeinate", "binary_sha256": "c" * 64, "exit_code": 0, "apple_codesign_verified": True,
                  "independent_signature_audit": {"independent_code_directory_verified": True, "entitlements_exact_match": True, "adhoc_flag_present": True}},

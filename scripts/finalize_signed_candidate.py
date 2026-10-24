@@ -102,7 +102,9 @@ def validate_receipt(package: Path, package_record: dict[str, Any], receipt: dic
         receipt.get("method") != "codesign --verify --strict --verbose=4" or
         receipt.get("workflow_run_id") != str(workflow_run_id) or
         receipt.get("workflow_run_attempt") != str(workflow_run_attempt) or
-        not isinstance(receipt.get("codesign_version"), dict) or receipt["codesign_version"].get("exit_code") != 0 or
+        not isinstance(receipt.get("codesign_version"), dict) or
+        receipt["codesign_version"].get("command") != ["/usr/bin/codesign", "--version"] or
+        not isinstance(receipt["codesign_version"].get("exit_code"), int) or
         not isinstance(receipt.get("macos_version"), dict) or receipt["macos_version"].get("exit_code") != 0):
         raise FinalizationError("macOS signature-integrity receipt does not match the signed package")
     results = receipt.get("binary_results")

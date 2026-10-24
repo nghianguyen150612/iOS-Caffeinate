@@ -207,7 +207,9 @@ def verify_package(package: Path, source_sha: str, output: Path, *, platform_nam
     )
     version_result = subprocess.run([str(codesign), "--version"], capture_output=True, text=True, check=False)
     os_result = subprocess.run(["/usr/bin/sw_vers", "-productVersion"], capture_output=True, text=True, check=False)
-    status = "VERIFIED" if binaries_verified and version_result.returncode == 0 and os_result.returncode == 0 else "FAILED"
+    # codesign's --version probe is not a portable successful query across
+    # Apple tool versions. Its output is evidence; strict per-binary checks gate.
+    status = "VERIFIED" if binaries_verified and os_result.returncode == 0 else "FAILED"
     run_id = workflow_run_id if workflow_run_id is not None else os.environ.get("GITHUB_RUN_ID", "LOCAL_DIAGNOSTIC")
     run_attempt = workflow_run_attempt if workflow_run_attempt is not None else os.environ.get("GITHUB_RUN_ATTEMPT", "1")
     receipt = {
@@ -219,7 +221,12 @@ def verify_package(package: Path, source_sha: str, output: Path, *, platform_nam
         "host": "macOS",
         "tool": str(codesign),
         "method": "codesign --verify --strict --verbose=4",
-        "codesign_version": {"exit_code": version_result.returncode, "stdout": version_result.stdout, "stderr": version_result.stderr},
+        "codesign_version": {
+            "command": [str(codesign), "--version"],
+            "exit_code": version_result.returncode,
+            "stdout": version_result.stdout,
+            "stderr": version_result.stderr,
+        },
         "macos_version": {"exit_code": os_result.returncode, "stdout": os_result.stdout, "stderr": os_result.stderr},
         "workflow_run_id": str(run_id),
         "workflow_run_attempt": str(run_attempt),
