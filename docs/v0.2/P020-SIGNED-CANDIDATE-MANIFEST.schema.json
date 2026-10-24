@@ -54,13 +54,15 @@
     },
     "signing": {
       "type": "object", "additionalProperties": false,
-      "required": ["state", "profile_id", "profile_sha256", "entitlements", "embedded_entitlements", "signer_version", "signer_sha256", "signer_provenance", "signature_integrity", "signature_integrity_receipt", "finalization_provenance"],
+      "required": ["state", "profile_id", "profile_sha256", "entitlements", "embedded_entitlements", "code_signature_kind", "independent_code_directory_verification", "signer_version", "signer_sha256", "signer_provenance", "signature_integrity", "signature_integrity_receipt", "finalization_provenance"],
       "properties": {
         "state": {"const": "SIGNATURE_PRESENT"},
         "profile_id": {"const": "amethyst-ios12-rootful"},
         "profile_sha256": {"const": "cd1358e7c8c3b01da98b5544e3c2ffcdc9d92cf9a3191e45038e8691ef2021ca"},
         "entitlements": {"type": "object", "additionalProperties": false, "required": ["com.apple.private.security.no-container"], "properties": {"com.apple.private.security.no-container": {"const": true}}},
         "embedded_entitlements": {"const": "EXACT_MATCH"},
+        "code_signature_kind": {"const": "ADHOC"},
+        "independent_code_directory_verification": {"const": "VERIFIED"},
         "signer_version": {"const": "2.1.5-procursus7"},
         "signer_sha256": {"const": "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c"},
         "signer_provenance": {"$ref": "#/$defs/fileRecord"},
@@ -71,12 +73,16 @@
     },
     "validation": {
       "type": "object", "additionalProperties": false,
-      "required": ["package_validation", "package_validation_report", "native_build_source_match", "host_signature_integrity", "device_execution", "device_package_acceptance", "physical_gates", "release_readiness", "publication_authorized"],
+      "required": ["package_validation", "package_validation_report", "native_build_source_match", "apple_codesign", "independent_code_directory", "entitlements_exact_match", "host_signature_integrity", "device_signature_acceptance", "device_execution", "device_package_acceptance", "physical_gates", "release_readiness", "publication_authorized"],
       "properties": {
         "package_validation": {"const": "PASS"},
         "package_validation_report": {"$ref": "#/$defs/fileRecord"},
         "native_build_source_match": {"const": "PASS"},
+        "apple_codesign": {"const": "VERIFIED"},
+        "independent_code_directory": {"const": "VERIFIED"},
+        "entitlements_exact_match": {"const": "EXACT_MATCH"},
         "host_signature_integrity": {"const": "VERIFIED"},
+        "device_signature_acceptance": {"const": "PENDING"},
         "device_execution": {"const": "NOT_VERIFIED"},
         "device_package_acceptance": {"const": "NOT_ACCEPTED"},
         "physical_gates": {"const": "PENDING"},
@@ -86,9 +92,10 @@
     },
     "candidate_workflow": {
       "type": "object", "additionalProperties": false,
-      "required": ["run_id", "run_url"],
+      "required": ["run_id", "run_attempt", "run_url"],
       "properties": {
         "run_id": {"type": ["string", "integer"]},
+        "run_attempt": {"type": ["string", "integer"]},
         "run_url": {"type": "string", "format": "uri"}
       }
     }

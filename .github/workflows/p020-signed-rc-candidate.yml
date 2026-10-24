@@ -1,7 +1,7 @@
 name: P020 signed v0.2.0 RC candidate
 on:
   push:
-    branches: [docs/h004-device-phase0-readiness]
+    branches: [docs/h004-device-phase0-readiness, fix/r05a-apple-signature-integrity]
 permissions:
   actions: read
   contents: read
@@ -35,7 +35,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = 'nghianguyen150612/iOS-Caffeinate'
-          test "$GITHUB_REF" = 'refs/heads/docs/h004-device-phase0-readiness'
+          case "$GITHUB_REF" in
+            refs/heads/docs/h004-device-phase0-readiness|refs/heads/fix/r05a-apple-signature-integrity) ;;
+            *) echo 'Candidate workflow ran from an unapproved branch' >&2; exit 1 ;;
+          esac
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain)"
           echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
@@ -166,6 +169,8 @@ jobs:
               raise SystemExit("signed package used an unexpected entitlement profile")
           if signing["embedded_entitlements"] != "EXACT_MATCH" or signing["signature_verification"] != "PENDING":
               raise SystemExit("Linux signing step overstated Apple's host signature-integrity result")
+          if signing["code_signature_kind"] != "ADHOC":
+              raise SystemExit("signed candidate does not carry the required Apple ad hoc CodeDirectory flag")
           print("source_commit_sha=" + manifest["source_commit_sha"])
           print("signed_package_sha256=" + hashlib.sha256(package.read_bytes()).hexdigest())
           print("entitlements=EXACT_MATCH; Apple host verification=PENDING")
@@ -200,13 +205,22 @@ jobs:
         id: codesign
         env:
           P020_SOURCE_SHA: ${{ needs.sign-exact-source.outputs.source_sha }}
+          P020_RUN_ID: ${{ github.run_id }}
+          P020_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           pkg=build/p020/signed-input/ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb
+          manifest="$pkg.manifest.json"
+          expected_package_sha=$(jq -r '.package.sha256' "$manifest")
+          test "$expected_package_sha" = "$(sha256sum "$pkg" | awk '{print $1}')"
           mkdir -m 700 -p build/p020/macos
           python3 scripts/verify_signed_candidate_macos.py \
             --package "$pkg" \
+            --package-manifest "$manifest" \
+            --expected-package-sha256 "$expected_package_sha" \
             --source-sha "$P020_SOURCE_SHA" \
+            --workflow-run-id "$P020_RUN_ID" \
+            --workflow-run-attempt "$P020_RUN_ATTEMPT" \
             --output build/p020/macos/signature-integrity-verification.json
       - name: Upload actual Apple signature-integrity receipt, including failures
         if: always()
@@ -272,13 +286,16 @@ jobs:
             --package build/p020/signed-input/ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb \
             --signature-receipt build/p020/macos/signature-integrity-verification.json \
             --source-sha "$P020_SOURCE_SHA" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
             --ldid build/p020/signer/ldid \
             --output-dir build/p020/signed-final
       - name: Create exact-source signed candidate manifest and complete checksum inventory
         env:
           P020_SOURCE_SHA: ${{ needs.sign-exact-source.outputs.source_sha }}
-          P020_BRANCH: docs/h004-device-phase0-readiness
+          P020_BRANCH: ${{ github.ref_name }}
           P020_RUN_ID: ${{ github.run_id }}
+          P020_RUN_ATTEMPT: ${{ github.run_attempt }}
           P020_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -295,6 +312,7 @@ jobs:
             --validation-report build/p020/signed-final/signed-validation.txt \
             --source-sha "$P020_SOURCE_SHA" \
             --workflow-run-id "$P020_RUN_ID" \
+            --workflow-run-attempt "$P020_RUN_ATTEMPT" \
             --workflow-run-url "$P020_RUN_URL" \
             --workflow-branch "$P020_BRANCH" \
             --output build/p020/signed-final/P020-SIGNED-CANDIDATE-MANIFEST.json

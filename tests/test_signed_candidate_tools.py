@@ -103,13 +103,18 @@ class SignedCandidateToolTests(unittest.TestCase):
             return True if Path(path) == Path("/usr/bin/codesign") else real_access(path, mode)
 
         with patch.object(Path, "is_file", is_file), patch.object(macos_verify.os, "access", access), \
-             patch.object(macos_verify.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="verified\n", stderr="")) as run:
+             patch.object(macos_verify.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="verified\n", stderr="")) as run, \
+             patch.object(macos_verify, "audit_code_signature", return_value={
+                 "independent_code_directory_verified": True, "entitlements_exact_match": True,
+                 "adhoc_flag_present": True, "signature_kind": "ADHOC", "device_signature_acceptance": "PENDING",
+             }):
             receipt = macos_verify.verify_package(package, "a" * 40, output, platform_name="darwin")
 
         self.assertEqual(receipt["status"], "VERIFIED")
         self.assertEqual(receipt["package_sha256"], hashlib.sha256(package.read_bytes()).hexdigest())
         self.assertEqual({item["name"] for item in receipt["binary_results"]}, set(binaries))
-        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual(receipt["method"], "codesign --verify --strict --verbose=4")
         self.assertEqual(json.loads(output.read_text()), receipt)
 
     def test_macos_verifier_preserves_failed_codesign_result(self) -> None:
@@ -126,7 +131,11 @@ class SignedCandidateToolTests(unittest.TestCase):
             return True if Path(path) == Path("/usr/bin/codesign") else real_access(path, mode)
 
         with patch.object(Path, "is_file", is_file), patch.object(macos_verify.os, "access", access), \
-             patch.object(macos_verify.subprocess, "run", return_value=SimpleNamespace(returncode=1, stdout="", stderr="invalid signature")):
+             patch.object(macos_verify.subprocess, "run", return_value=SimpleNamespace(returncode=1, stdout="", stderr="invalid signature")), \
+             patch.object(macos_verify, "audit_code_signature", return_value={
+                 "independent_code_directory_verified": True, "entitlements_exact_match": True,
+                 "adhoc_flag_present": True, "signature_kind": "ADHOC", "device_signature_acceptance": "PENDING",
+             }):
             receipt = macos_verify.verify_package(package, "a" * 40, output, platform_name="darwin")
         self.assertEqual(receipt["status"], "FAILED")
         self.assertTrue(all(item["exit_code"] == 1 for item in receipt["binary_results"]))
@@ -136,6 +145,25 @@ class SignedCandidateToolTests(unittest.TestCase):
         candidate_deb(package, unsafe_path=True)
         with self.assertRaisesRegex(macos_verify.VerificationError, "unsafe path"):
             macos_verify.read_payload_binary(package, "usr/local/bin/ios-caffeinate")
+
+    def test_macos_verifier_rejects_package_digest_and_source_manifest_mismatch(self) -> None:
+        package = self.root / "candidate.deb"
+        candidate_deb(package)
+        with self.assertRaisesRegex(macos_verify.VerificationError, "expected candidate digest"):
+            macos_verify.verify_package(package, "a" * 40, self.root / "wrong-digest.json",
+                                        platform_name="darwin", expected_package_sha256="0" * 64)
+        manifest = self.root / "package.manifest.json"
+        manifest.write_text(json.dumps({"source_commit_sha": "b" * 40}))
+        with self.assertRaisesRegex(macos_verify.VerificationError, "does not bind the exact source"):
+            macos_verify.verify_package(package, "a" * 40, self.root / "wrong-source.json",
+                                        platform_name="darwin", package_manifest=manifest)
+
+    def test_diagnostic_workflow_is_read_only_and_explicitly_non_approving(self) -> None:
+        workflow = (ROOT / ".github/workflows/r05a-signature-diagnostics.yml").read_text()
+        script = (ROOT / "scripts/r05a_signature_diagnostics.py").read_text()
+        self.assertIn("R05A_DIAGNOSTIC_ONLY_NO_RC_APPROVAL", script)
+        self.assertIn("apple_native_adhoc_signing", script)
+        self.assertNotRegex(workflow + script, r"\b(?:dpkg\s+-i|launchctl\s+(?:load|bootstrap|enable|kickstart)|scp\s|ssh\s+)")
 
     def test_finalizer_accepts_only_matching_package_and_receipt(self) -> None:
         package = self.root / "ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb"
@@ -156,6 +184,7 @@ class SignedCandidateToolTests(unittest.TestCase):
                 "profile_sha256": finalizer.EXPECTED_PROFILE_SHA256,
                 "signing_tool_version": "2.1.5-procursus7",
                 "signing_tool_sha256": "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c",
+                "code_signature_kind": "ADHOC",
                 "embedded_entitlements": "EXACT_MATCH",
                 "signature_verification": "PENDING",
                 "final_binary_sha256": binary_hashes,
@@ -166,25 +195,42 @@ class SignedCandidateToolTests(unittest.TestCase):
             "package_path": relative,
             "binary_sha256": binary_hashes[name],
             "exit_code": 0,
-            "command": ["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", "/tmp/" + name],
+            "command": ["/usr/bin/codesign", "--verify", "--strict", "--verbose=4", "/tmp/" + name],
+            "apple_codesign_verified": True,
+            "independent_signature_audit": {
+                "independent_code_directory_verified": True, "entitlements_exact_match": True,
+                "adhoc_flag_present": True, "device_signature_acceptance": "PENDING",
+            },
         } for name, relative in finalizer.BINARIES.items()]
         receipt = {
-            "schema_version": 1,
+            "schema_version": 2,
             "status": "VERIFIED",
             "source_commit_sha": source_sha,
             "package_file": package.name,
             "package_sha256": package_sha,
             "host": "macOS",
             "tool": "/usr/bin/codesign",
-            "method": "codesign --verify --strict --verbose=2",
+            "method": "codesign --verify --strict --verbose=4",
+            "workflow_run_id": "123",
+            "workflow_run_attempt": "1",
+            "codesign_version": {"exit_code": 0},
+            "macos_version": {"exit_code": 0},
             "binary_results": results,
         }
-        actual_sha, actual_binaries = finalizer.validate_receipt(package, package_record, receipt, source_sha)
+        actual_sha, actual_binaries = finalizer.validate_receipt(package, package_record, receipt, source_sha, "123", "1")
         self.assertEqual(actual_sha, package_sha)
         self.assertEqual(actual_binaries, binary_hashes)
         receipt["package_sha256"] = "0" * 64
         with self.assertRaisesRegex(finalizer.FinalizationError, "receipt does not match"):
-            finalizer.validate_receipt(package, package_record, receipt, source_sha)
+            finalizer.validate_receipt(package, package_record, receipt, source_sha, "123", "1")
+        receipt["package_sha256"] = package_sha
+        receipt["workflow_run_id"] = "another-run"
+        with self.assertRaisesRegex(finalizer.FinalizationError, "receipt does not match"):
+            finalizer.validate_receipt(package, package_record, receipt, source_sha, "123", "1")
+        receipt["workflow_run_id"] = "123"
+        receipt["binary_results"][0]["independent_signature_audit"]["adhoc_flag_present"] = False
+        with self.assertRaisesRegex(finalizer.FinalizationError, "independent signature audit"):
+            finalizer.validate_receipt(package, package_record, receipt, source_sha, "123", "1")
 
     def test_finalizer_writes_validator_sidecars_before_final_validation(self) -> None:
         package_dir = self.root / "input"
@@ -198,6 +244,7 @@ class SignedCandidateToolTests(unittest.TestCase):
             "source_commit_sha": source_sha,
             "signing": {
                 "signature_verification": "PENDING",
+                "code_signature_kind": "ADHOC",
                 "profile_id": finalizer.EXPECTED_PROFILE,
                 "profile_sha256": finalizer.EXPECTED_PROFILE_SHA256,
                 "final_binary_sha256": binary_hashes,
@@ -228,6 +275,7 @@ class SignedCandidateToolTests(unittest.TestCase):
                 "profile_sha256": finalizer.EXPECTED_PROFILE_SHA256,
                 "signing_tool_version": "2.1.5-procursus7",
                 "signing_tool_sha256": "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c",
+                "code_signature_kind": "ADHOC",
                 "embedded_entitlements": "EXACT_MATCH",
                 "signature_verification": "PENDING",
                 "final_binary_sha256": binary_hashes,
@@ -240,15 +288,22 @@ class SignedCandidateToolTests(unittest.TestCase):
         (package_dir / f"{package.name}.sha256").write_text(f"{package_sha}  {package.name}\n")
         receipt_path = self.root / "receipt.json"
         receipt = {
-            "schema_version": 1, "status": "VERIFIED", "source_commit_sha": source_sha,
+            "schema_version": 2, "status": "VERIFIED", "source_commit_sha": source_sha,
             "package_file": package.name, "package_sha256": package_sha, "host": "macOS",
-            "tool": "/usr/bin/codesign", "method": "codesign --verify --strict --verbose=2",
+            "tool": "/usr/bin/codesign", "method": "codesign --verify --strict --verbose=4",
+            "workflow_run_id": "LOCAL_TEST", "workflow_run_attempt": "1",
+            "codesign_version": {"exit_code": 0}, "macos_version": {"exit_code": 0},
             "binary_results": [{
                 "name": name,
                 "package_path": finalizer.BINARIES[name],
                 "binary_sha256": binary_hashes[name],
                 "exit_code": 0,
-                "command": ["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", "/tmp/" + name],
+                "command": ["/usr/bin/codesign", "--verify", "--strict", "--verbose=4", "/tmp/" + name],
+                "apple_codesign_verified": True,
+                "independent_signature_audit": {
+                    "independent_code_directory_verified": True, "entitlements_exact_match": True,
+                    "adhoc_flag_present": True, "device_signature_acceptance": "PENDING",
+                },
             } for name in finalizer.BINARIES],
         }
         receipt_path.write_text(json.dumps(receipt))
@@ -257,6 +312,7 @@ class SignedCandidateToolTests(unittest.TestCase):
         signer.chmod(0o755)
         output_dir = self.root / "final"
         args = SimpleNamespace(package=package, signature_receipt=receipt_path, source_sha=source_sha,
+                               workflow_run_id="LOCAL_TEST", workflow_run_attempt="1",
                                ldid=signer, output_dir=output_dir)
 
         def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
@@ -309,6 +365,7 @@ class SignedCandidateToolTests(unittest.TestCase):
                 "profile_sha256": rc_manifest.EXPECTED_PROFILE_SHA256,
                 "signing_tool_version": rc_manifest.EXPECTED_SIGNER_VERSION,
                 "signing_tool_sha256": rc_manifest.EXPECTED_SIGNER_SHA256,
+                "code_signature_kind": "ADHOC",
                 "embedded_entitlements": "EXACT_MATCH",
                 "signature_verification": "SIGNATURE_VERIFIED",
                 "device_execution_verification": "NOT_VERIFIED",
@@ -343,17 +400,25 @@ class SignedCandidateToolTests(unittest.TestCase):
         assessment = {"decision": "RELEASE_BLOCKED", "publication_authorized": False, "hardware_gates": {"p012": {"status": "PENDING"}}}
         signer = {"result": "VERIFIED", "executable": {"version": rc_manifest.EXPECTED_SIGNER_VERSION, "sha256": rc_manifest.EXPECTED_SIGNER_SHA256}, "reproducibility": {"outcome": "EXACT_MATCH"}}
         receipt = {
-            "status": "VERIFIED", "source_commit_sha": source_sha, "host": "macOS", "tool": "/usr/bin/codesign",
+            "schema_version": 2, "status": "VERIFIED", "source_commit_sha": source_sha,
+            "package_sha256": "f" * 64, "host": "macOS", "tool": "/usr/bin/codesign",
+            "method": "codesign --verify --strict --verbose=4", "workflow_run_id": "456",
+            "workflow_run_attempt": "1", "codesign_version": {"exit_code": 0}, "macos_version": {"exit_code": 0},
             "binary_results": [
-                {"name": "ios-caffeinate", "binary_sha256": "c" * 64},
-                {"name": "ios-caffeinated", "binary_sha256": "d" * 64},
+                {"name": "ios-caffeinate", "binary_sha256": "c" * 64, "exit_code": 0, "apple_codesign_verified": True,
+                 "independent_signature_audit": {"independent_code_directory_verified": True, "entitlements_exact_match": True, "adhoc_flag_present": True}},
+                {"name": "ios-caffeinated", "binary_sha256": "d" * 64, "exit_code": 0, "apple_codesign_verified": True,
+                 "independent_signature_audit": {"independent_code_directory_verified": True, "entitlements_exact_match": True, "adhoc_flag_present": True}},
             ],
         }
         receipt_path = root / "signature-integrity-verification.json"
         receipt_path.write_text(json.dumps(receipt))
         finalization = {
             "source_commit_sha": source_sha, "final_package_sha256": package_sha,
+            "input_package_sha256": "f" * 64, "workflow_run_id": "456", "workflow_run_attempt": "1",
             "macos_receipt_sha256": rc_manifest.sha256(receipt_path),
+            "apple_codesign": "VERIFIED", "independent_code_directory": "VERIFIED",
+            "entitlements_exact_match": "EXACT_MATCH", "device_signature_acceptance": "PENDING",
             "repackaging": "SIGNING_METADATA_ONLY_BINARIES_UNCHANGED", "final_package_validation": "PASS",
             "binary_sha256": {"ios-caffeinate": "c" * 64, "ios-caffeinated": "d" * 64},
         }
@@ -381,12 +446,16 @@ class SignedCandidateToolTests(unittest.TestCase):
                 validation_path=validation,
                 source_sha=source_sha,
                 workflow_run_id="456",
+                workflow_run_attempt="1",
                 workflow_run_url="https://example.invalid/run/456",
                 workflow_branch="docs/h004-device-phase0-readiness",
             )
         self.assertEqual(manifest["candidate_state"], "SIGNED_RC_DEVICE_UNVERIFIED")
         self.assertEqual(manifest["package"]["sha256"], package_sha)
         self.assertEqual(manifest["validation"]["release_readiness"], "RELEASE_BLOCKED")
+        self.assertEqual(manifest["validation"]["apple_codesign"], "VERIFIED")
+        self.assertEqual(manifest["validation"]["independent_code_directory"], "VERIFIED")
+        self.assertEqual(manifest["validation"]["device_signature_acceptance"], "PENDING")
         self.assertFalse(manifest["validation"]["publication_authorized"])
         self.assertEqual(manifest["validation"]["package_validation_report"]["sha256"], rc_manifest.sha256(validation))
 

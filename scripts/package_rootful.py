@@ -16,6 +16,7 @@ import tempfile
 from pathlib import Path
 
 from macho_ios import validate_ios12_arm64, validate_signed_source_identity
+from macho_code_signature import CodeSignatureError, audit_code_signature
 from signing_profile import (
     PROFILE_ID,
     PROFILE_RELATIVE_PATH,
@@ -242,7 +243,7 @@ def main() -> int:
                 assert args.entitlements is not None and profile_hash is not None
                 profile_path = Path(os.path.abspath(args.entitlements))
                 try:
-                    subprocess.run([str(signer), f"-S{profile_path}", str(destination)], check=True, capture_output=True, text=True)
+                    subprocess.run([str(signer), "-Cadhoc", f"-S{profile_path}", str(destination)], check=True, capture_output=True, text=True)
                 except subprocess.CalledProcessError as error:
                     detail = error.stderr.strip() if error.stderr else f"exit {error.returncode}"
                     fail(f"ldid signing failed for {name}: {detail}")
@@ -250,7 +251,14 @@ def main() -> int:
                     validate_ios12_arm64(destination, allow_signature=True, expected_dependencies=EXPECTED_DEPENDENCIES[name])
                     validate_signed_source_identity(source, destination)
                     require_exact_embedded_entitlements(signer, destination)
+                    signature_audit = audit_code_signature(destination.read_bytes(), expected_identifier=name)
+                    if not signature_audit["independent_code_directory_verified"]:
+                        raise CodeSignatureError("CodeDirectory hashes were not independently verified")
+                    if not signature_audit["entitlements_exact_match"] or not signature_audit["adhoc_flag_present"]:
+                        raise CodeSignatureError("signature must carry the exact profile and Apple ad hoc flag")
                 except SigningError as error:
+                    fail(f"{name}: {error}")
+                except CodeSignatureError as error:
                     fail(f"{name}: {error}")
                 except ValueError as error:
                     fail(f"ldid did not produce an inspectable signature for {name}: {error}")
@@ -358,6 +366,7 @@ def main() -> int:
                 "profile_sha256": profile_hash,
                 "signing_tool_version": signer_version,
                 "signing_tool_sha256": signer_hash,
+                "code_signature_kind": "ADHOC" if signer else None,
                 "source_binary_sha256": source_hashes,
                 "final_binary_sha256": final_binary_hashes,
                 "embedded_entitlements": "EXACT_MATCH" if signer else "NOT_APPLICABLE",

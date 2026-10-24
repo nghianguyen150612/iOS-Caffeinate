@@ -4,7 +4,7 @@ This runbook prepares staged procedures for the reference iPad mini 2 (`iPad4,4`
 
 Every package installation, removal, daemon start, recovery reset, state restoration, or other persistent/runtime mutation requires separate explicit operator authorization and a passing prior gate. Stop on unknown assertion ownership, failed release, package/audit mismatch, uncertain recovery, loaded launchd state, or missing physical recovery. Never use a force option or delete persistent state to clear a blocker.
 
-**Current candidate stop:** exact-source run [39975913477](https://github.com/nghianguyen150612/iOS-Caffeinate/actions/runs/39975913477) failed Apple host signature-integrity verification for both ARM64 executables (“code object is not signed at all”). It emitted no finalized candidate manifest or full checksum inventory. Do not perform the v0.2 RC transfer or installation steps below unless a later exact-source run succeeds and its receipt and complete inventory are reviewed.
+**Current candidate stop:** R05 exact-source run [39978072203](https://github.com/nghianguyen150612/iOS-Caffeinate/actions/runs/39978072203) failed Apple host verification for both ARM64 executables (“code object is not signed at all”). R05A has identified a likely missing ad hoc CodeDirectory flag and changed the pinned signer invocation, but its exact-source Apple check and candidate finalization are pending. Do not transfer or install the failed R05 input. This engineering task does not authorize transfer or installation of any corrected candidate; those require completion of H004 and P011 prerequisites and separate operator authorization even if host checks pass.
 
 ## 1. Retrieve and verify the published v0.1.0 P011 package
 

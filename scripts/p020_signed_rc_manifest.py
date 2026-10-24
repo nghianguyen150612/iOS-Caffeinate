@@ -98,7 +98,7 @@ def assemble_manifest(*, build_path: Path, release_path: Path, assessment_path: 
                       package: Path, package_manifest_path: Path, signer_path: Path,
                       signature_receipt_path: Path, finalization_path: Path,
                       validation_path: Path, source_sha: str, workflow_run_id: str,
-                      workflow_run_url: str, workflow_branch: str) -> dict[str, Any]:
+                      workflow_run_attempt: str, workflow_run_url: str, workflow_branch: str) -> dict[str, Any]:
     root = build_path.parent.resolve(strict=True)
     build = read_json(build_path, "P020 build provenance")
     validate_build_provenance(build_path, build, source_sha)
@@ -134,6 +134,7 @@ def assemble_manifest(*, build_path: Path, release_path: Path, assessment_path: 
         signing.get("profile_sha256") != EXPECTED_PROFILE_SHA256 or
         signing.get("signing_tool_version") != EXPECTED_SIGNER_VERSION or
         signing.get("signing_tool_sha256") != EXPECTED_SIGNER_SHA256 or
+        signing.get("code_signature_kind") != "ADHOC" or
         signing.get("embedded_entitlements") != "EXACT_MATCH" or
         signing.get("signature_verification") != "SIGNATURE_VERIFIED" or
         signing.get("device_execution_verification") != "NOT_VERIFIED" or
@@ -150,20 +151,41 @@ def assemble_manifest(*, build_path: Path, release_path: Path, assessment_path: 
 
     receipt_sha = sha256(signature_receipt_path)
     result_items = receipt.get("binary_results")
-    if (receipt.get("status") != "VERIFIED" or receipt.get("source_commit_sha") != source_sha or
+    if (receipt.get("schema_version") != 2 or receipt.get("status") != "VERIFIED" or receipt.get("source_commit_sha") != source_sha or
         receipt.get("host") != "macOS" or receipt.get("tool") != "/usr/bin/codesign" or
+        receipt.get("method") != "codesign --verify --strict --verbose=4" or
+        receipt.get("workflow_run_id") != workflow_run_id or
+        receipt.get("workflow_run_attempt") != finalization.get("workflow_run_attempt") or
+        receipt.get("package_sha256") != finalization.get("input_package_sha256") or
+        not isinstance(receipt.get("codesign_version"), dict) or receipt["codesign_version"].get("exit_code") != 0 or
+        not isinstance(receipt.get("macos_version"), dict) or receipt["macos_version"].get("exit_code") != 0 or
         finalization.get("source_commit_sha") != source_sha or
+        finalization.get("workflow_run_id") != workflow_run_id or
+        finalization.get("workflow_run_attempt") != receipt.get("workflow_run_attempt") or
         finalization.get("final_package_sha256") != package_sha or
         finalization.get("macos_receipt_sha256") != receipt_sha or
+        finalization.get("apple_codesign") != "VERIFIED" or
+        finalization.get("independent_code_directory") != "VERIFIED" or
+        finalization.get("entitlements_exact_match") != "EXACT_MATCH" or
+        finalization.get("device_signature_acceptance") != "PENDING" or
         finalization.get("repackaging") != "SIGNING_METADATA_ONLY_BINARIES_UNCHANGED" or
         finalization.get("final_package_validation") != "PASS" or not isinstance(result_items, list)):
         raise ManifestError("host signature verification or signed package finalization failed")
     expected_final_hashes = signing.get("final_binary_sha256")
     if not isinstance(expected_final_hashes, dict) or set(expected_final_hashes) != {"ios-caffeinate", "ios-caffeinated"}:
         raise ManifestError("final signed executable hashes are missing")
+    if len(result_items) != 2:
+        raise ManifestError("macOS signature receipt must cover exactly two binaries")
     observed = {item.get("name"): item.get("binary_sha256") for item in result_items if isinstance(item, dict)}
     if observed != expected_final_hashes or finalization.get("binary_sha256") != expected_final_hashes:
         raise ManifestError("macOS signature receipt does not cover the exact final package binaries")
+    if any(not isinstance(item, dict) or item.get("exit_code") != 0 or item.get("apple_codesign_verified") is not True or
+           not isinstance(item.get("independent_signature_audit"), dict) or
+           item["independent_signature_audit"].get("independent_code_directory_verified") is not True or
+           item["independent_signature_audit"].get("entitlements_exact_match") is not True or
+           item["independent_signature_audit"].get("adhoc_flag_present") is not True
+           for item in result_items):
+        raise ManifestError("receipt does not preserve successful Apple and independent checks for both binaries")
 
     if (assessment.get("decision") != "RELEASE_BLOCKED" or
         assessment.get("publication_authorized") is not False):
@@ -248,6 +270,8 @@ def assemble_manifest(*, build_path: Path, release_path: Path, assessment_path: 
             "profile_sha256": EXPECTED_PROFILE_SHA256,
             "entitlements": {"com.apple.private.security.no-container": True},
             "embedded_entitlements": "EXACT_MATCH",
+            "code_signature_kind": "ADHOC",
+            "independent_code_directory_verification": "VERIFIED",
             "signer_version": EXPECTED_SIGNER_VERSION,
             "signer_sha256": EXPECTED_SIGNER_SHA256,
             "signer_provenance": record(signer_path),
@@ -259,7 +283,11 @@ def assemble_manifest(*, build_path: Path, release_path: Path, assessment_path: 
             "package_validation": "PASS",
             "package_validation_report": record(validation_path),
             "native_build_source_match": "PASS",
+            "apple_codesign": "VERIFIED",
+            "independent_code_directory": "VERIFIED",
+            "entitlements_exact_match": "EXACT_MATCH",
             "host_signature_integrity": "VERIFIED",
+            "device_signature_acceptance": "PENDING",
             "device_execution": "NOT_VERIFIED",
             "device_package_acceptance": "NOT_ACCEPTED",
             "physical_gates": "PENDING",
@@ -268,6 +296,7 @@ def assemble_manifest(*, build_path: Path, release_path: Path, assessment_path: 
         },
         "candidate_workflow": {
             "run_id": workflow_run_id,
+            "run_attempt": workflow_run_attempt,
             "run_url": workflow_run_url,
         },
     }
@@ -297,6 +326,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--validation-report", type=Path, required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--workflow-run-id", required=True)
+    parser.add_argument("--workflow-run-attempt", required=True)
     parser.add_argument("--workflow-run-url", required=True)
     parser.add_argument("--workflow-branch", required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -310,7 +340,8 @@ def main(argv: list[str] | None = None) -> int:
             package_manifest_path=args.package_manifest, signer_path=args.signer_provenance,
             signature_receipt_path=args.signature_receipt, finalization_path=args.finalization_provenance,
             validation_path=args.validation_report, source_sha=args.source_sha,
-            workflow_run_id=args.workflow_run_id, workflow_run_url=args.workflow_run_url,
+            workflow_run_id=args.workflow_run_id, workflow_run_attempt=args.workflow_run_attempt,
+            workflow_run_url=args.workflow_run_url,
             workflow_branch=args.workflow_branch,
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)

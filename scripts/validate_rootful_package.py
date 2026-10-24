@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path, PurePosixPath
 
 from macho_ios import validate_ios12_arm64
+from macho_code_signature import CodeSignatureError, audit_code_signature
 from signing_profile import (
     PROFILE_ID,
     SigningError,
@@ -348,6 +349,17 @@ def inspect_package(deb: Path, ldid: Path | None = None, expected_version: str |
             require(signing.get("profile_sha256") == profile_hash, "profile SHA-256 differs from package build record")
             require(state_fields.get("profile_id") == PROFILE_ID and state_fields.get("profile_sha256") == profile_hash, "signing-state profile identity mismatch")
             require(signing.get("embedded_entitlements") == "EXACT_MATCH" and state_fields.get("embedded_entitlements") == "EXACT_MATCH", "package build did not record exact embedded entitlement validation")
+            for name, relative in (("ios-caffeinate", "usr/local/bin/ios-caffeinate"),
+                                   ("ios-caffeinated", "usr/local/bin/ios-caffeinated")):
+                try:
+                    audit = audit_code_signature((root / relative).read_bytes(), expected_identifier=name)
+                except CodeSignatureError as error:
+                    raise ValueError(f"BLOCKED: independent Mach-O signature audit failed for {name}: {error}") from None
+                require(audit["independent_code_directory_verified"], f"CodeDirectory hashes were not verified: {name}")
+                require(audit["entitlements_exact_match"], f"independent entitlement set is not exact: {name}")
+                if expected_version == "0.2.0~rc1-1":
+                    require(audit["adhoc_flag_present"], f"CodeDirectory lacks Apple's ad hoc flag: {name}")
+                    require(signing.get("code_signature_kind") == "ADHOC", "v0.2 RC metadata does not identify an Apple ad hoc signature")
             integrity_record = signing.get("signature_integrity")
             require(isinstance(integrity_record, dict), "signature integrity result is malformed")
             require(signing.get("device_execution_verification") == "NOT_VERIFIED", "package build overstates device execution")
