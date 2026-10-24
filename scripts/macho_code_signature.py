@@ -45,7 +45,7 @@ def _subblob(data: bytes, offset: int, expected_magic: int, limit: int) -> bytes
     return data[offset:offset + length]
 
 
-def _validate_requirements(blob: bytes) -> None:
+def _validate_requirements(blob: bytes) -> dict[str, Any]:
     _need(len(blob) >= 12, "Requirements SuperBlob is truncated")
     magic, length, count = struct.unpack_from(">III", blob, 0)
     _need(magic == 0xFADE0C01 and length == len(blob), "Requirements SuperBlob header is invalid")
@@ -63,6 +63,7 @@ def _validate_requirements(blob: bytes) -> None:
         _need(start == cursor, "Requirements SuperBlob contains overlap, a gap, or unindexed data")
         cursor = end
     _need(cursor == len(blob), "Requirements SuperBlob has unexpected trailing data")
+    return {"count": count, "types": sorted(seen)}
 
 
 def _validate_der_entitlements(blob: bytes, *, allow_canonical_boolean: bool = False) -> None:
@@ -281,7 +282,7 @@ def _audit_code_signature(image: bytes, *, expected_identifier: str,
     requirements = entries[2][2]
     xml_blob = entries[5][2]
     der_blob = entries[7][2]
-    _validate_requirements(requirements)
+    requirements_record = _validate_requirements(requirements)
     _need(struct.unpack_from(">I", xml_blob, 0)[0] == 0xFADE7171, "XML entitlement blob magic is invalid")
     _need(len(xml_blob) <= 1024 * 1024, "XML entitlement blob exceeds the supported size limit")
     _need(struct.unpack_from(">I", xml_blob, 4)[0] == len(xml_blob), "XML entitlement blob length is invalid")
@@ -309,6 +310,7 @@ def _audit_code_signature(image: bytes, *, expected_identifier: str,
         "device_signature_acceptance": "PENDING",
         "code_directory": code_directory,
         "superblob": {"length": sb_length, "index_types": sorted(entries)},
+        "requirements": requirements_record,
         "signature_padding_bytes": len(superblob) - sb_length,
         "cms_blob_present": False,
         "empty_adhoc_signature_slot_present": has_empty_adhoc_slot,

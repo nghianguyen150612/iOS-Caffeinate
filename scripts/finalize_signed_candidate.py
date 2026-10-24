@@ -15,6 +15,8 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from signing_profile import ADHOC_REQUIREMENTS_PROFILE, ADHOC_REQUIREMENTS_PROFILE_SHA256
+
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_VERSION = "0.2.0~rc1-1"
@@ -92,6 +94,8 @@ def validate_receipt(package: Path, package_record: dict[str, Any], receipt: dic
         signing.get("signing_tool_version") != "2.1.5-procursus7" or
         signing.get("signing_tool_sha256") != "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c" or
         signing.get("code_signature_kind") != "ADHOC" or
+        signing.get("code_signature_requirement_profile") != ADHOC_REQUIREMENTS_PROFILE or
+        signing.get("code_signature_requirement_profile_sha256") != ADHOC_REQUIREMENTS_PROFILE_SHA256 or
         signing.get("embedded_entitlements") != "EXACT_MATCH" or
         signing.get("signature_verification") != "PENDING"):
         raise FinalizationError("input candidate is not the expected signed, entitlement-checked package awaiting host verification")
@@ -129,6 +133,7 @@ def validate_receipt(package: Path, package_record: dict[str, Any], receipt: dic
             independent.get("independent_code_directory_verified") is not True or
             independent.get("entitlements_exact_match") is not True or
             independent.get("adhoc_flag_present") is not True or
+            independent.get("requirements") != {"count": 0, "types": []} or
             independent.get("device_signature_acceptance") != "PENDING"):
             raise FinalizationError(f"independent signature audit is invalid for {name}")
         verified[name] = item["binary_sha256"]
@@ -149,6 +154,8 @@ def update_payload_metadata(root: Path, receipt: dict[str, Any], receipt_sha: st
     if (build.get("source_commit_sha") != source_sha or not isinstance(signing, dict) or
         signing.get("signature_verification") != "PENDING" or
         signing.get("code_signature_kind") != "ADHOC" or
+        signing.get("code_signature_requirement_profile") != ADHOC_REQUIREMENTS_PROFILE or
+        signing.get("code_signature_requirement_profile_sha256") != ADHOC_REQUIREMENTS_PROFILE_SHA256 or
         signing.get("profile_id") != EXPECTED_PROFILE or
         signing.get("profile_sha256") != EXPECTED_PROFILE_SHA256):
         raise FinalizationError("embedded package-build record is not the expected Linux-signed candidate")
@@ -332,6 +339,8 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
         "apple_codesign": "VERIFIED",
         "independent_code_directory": "VERIFIED",
         "entitlements_exact_match": "EXACT_MATCH",
+        "code_signature_requirement_profile": ADHOC_REQUIREMENTS_PROFILE,
+        "code_signature_requirement_profile_sha256": ADHOC_REQUIREMENTS_PROFILE_SHA256,
         "device_signature_acceptance": "PENDING",
         "binary_sha256": binary_hashes,
         "repackaging": "SIGNING_METADATA_ONLY_BINARIES_UNCHANGED",

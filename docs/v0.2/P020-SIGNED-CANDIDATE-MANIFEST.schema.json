@@ -54,7 +54,7 @@
     },
     "signing": {
       "type": "object", "additionalProperties": false,
-      "required": ["state", "profile_id", "profile_sha256", "entitlements", "embedded_entitlements", "code_signature_kind", "independent_code_directory_verification", "signer_version", "signer_sha256", "signer_provenance", "signature_integrity", "signature_integrity_receipt", "finalization_provenance"],
+      "required": ["state", "profile_id", "profile_sha256", "entitlements", "embedded_entitlements", "code_signature_kind", "code_signature_requirement_profile", "code_signature_requirement_profile_sha256", "independent_code_directory_verification", "signer_version", "signer_sha256", "signer_provenance", "signature_integrity", "signature_integrity_receipt", "finalization_provenance"],
       "properties": {
         "state": {"const": "SIGNATURE_PRESENT"},
         "profile_id": {"const": "amethyst-ios12-rootful"},
@@ -62,6 +62,8 @@
         "entitlements": {"type": "object", "additionalProperties": false, "required": ["com.apple.private.security.no-container"], "properties": {"com.apple.private.security.no-container": {"const": true}}},
         "embedded_entitlements": {"const": "EXACT_MATCH"},
         "code_signature_kind": {"const": "ADHOC"},
+        "code_signature_requirement_profile": {"const": "EMPTY_REQUIREMENTS_SUPERBLOB"},
+        "code_signature_requirement_profile_sha256": {"const": "987920904eab650e75788c054aa0b0524e6a80bfc71aa32df8d237a61743f986"},
         "independent_code_directory_verification": {"const": "VERIFIED"},
         "signer_version": {"const": "2.1.5-procursus7"},
         "signer_sha256": {"const": "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c"},

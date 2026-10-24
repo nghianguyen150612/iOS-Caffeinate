@@ -12,6 +12,8 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from signing_profile import ADHOC_REQUIREMENTS_PROFILE, ADHOC_REQUIREMENTS_PROFILE_SHA256
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "docs/v0.2/P020-SIGNED-CANDIDATE-MANIFEST.schema.json"
@@ -135,6 +137,8 @@ def assemble_manifest(*, build_path: Path, release_path: Path, assessment_path: 
         signing.get("signing_tool_version") != EXPECTED_SIGNER_VERSION or
         signing.get("signing_tool_sha256") != EXPECTED_SIGNER_SHA256 or
         signing.get("code_signature_kind") != "ADHOC" or
+        signing.get("code_signature_requirement_profile") != ADHOC_REQUIREMENTS_PROFILE or
+        signing.get("code_signature_requirement_profile_sha256") != ADHOC_REQUIREMENTS_PROFILE_SHA256 or
         signing.get("embedded_entitlements") != "EXACT_MATCH" or
         signing.get("signature_verification") != "SIGNATURE_VERIFIED" or
         signing.get("device_execution_verification") != "NOT_VERIFIED" or
@@ -157,7 +161,9 @@ def assemble_manifest(*, build_path: Path, release_path: Path, assessment_path: 
         receipt.get("workflow_run_id") != workflow_run_id or
         receipt.get("workflow_run_attempt") != finalization.get("workflow_run_attempt") or
         receipt.get("package_sha256") != finalization.get("input_package_sha256") or
-        not isinstance(receipt.get("codesign_version"), dict) or receipt["codesign_version"].get("exit_code") != 0 or
+        not isinstance(receipt.get("codesign_version"), dict) or
+        receipt["codesign_version"].get("command") != ["/usr/bin/codesign", "--version"] or
+        not isinstance(receipt["codesign_version"].get("exit_code"), int) or
         not isinstance(receipt.get("macos_version"), dict) or receipt["macos_version"].get("exit_code") != 0 or
         finalization.get("source_commit_sha") != source_sha or
         finalization.get("workflow_run_id") != workflow_run_id or
@@ -167,6 +173,8 @@ def assemble_manifest(*, build_path: Path, release_path: Path, assessment_path: 
         finalization.get("apple_codesign") != "VERIFIED" or
         finalization.get("independent_code_directory") != "VERIFIED" or
         finalization.get("entitlements_exact_match") != "EXACT_MATCH" or
+        finalization.get("code_signature_requirement_profile") != ADHOC_REQUIREMENTS_PROFILE or
+        finalization.get("code_signature_requirement_profile_sha256") != ADHOC_REQUIREMENTS_PROFILE_SHA256 or
         finalization.get("device_signature_acceptance") != "PENDING" or
         finalization.get("repackaging") != "SIGNING_METADATA_ONLY_BINARIES_UNCHANGED" or
         finalization.get("final_package_validation") != "PASS" or not isinstance(result_items, list)):
@@ -183,7 +191,8 @@ def assemble_manifest(*, build_path: Path, release_path: Path, assessment_path: 
            not isinstance(item.get("independent_signature_audit"), dict) or
            item["independent_signature_audit"].get("independent_code_directory_verified") is not True or
            item["independent_signature_audit"].get("entitlements_exact_match") is not True or
-           item["independent_signature_audit"].get("adhoc_flag_present") is not True
+           item["independent_signature_audit"].get("adhoc_flag_present") is not True or
+           item["independent_signature_audit"].get("requirements") != {"count": 0, "types": []}
            for item in result_items):
         raise ManifestError("receipt does not preserve successful Apple and independent checks for both binaries")
 
@@ -271,6 +280,8 @@ def assemble_manifest(*, build_path: Path, release_path: Path, assessment_path: 
             "entitlements": {"com.apple.private.security.no-container": True},
             "embedded_entitlements": "EXACT_MATCH",
             "code_signature_kind": "ADHOC",
+            "code_signature_requirement_profile": ADHOC_REQUIREMENTS_PROFILE,
+            "code_signature_requirement_profile_sha256": ADHOC_REQUIREMENTS_PROFILE_SHA256,
             "independent_code_directory_verification": "VERIFIED",
             "signer_version": EXPECTED_SIGNER_VERSION,
             "signer_sha256": EXPECTED_SIGNER_SHA256,

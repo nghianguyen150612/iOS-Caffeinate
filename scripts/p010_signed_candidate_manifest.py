@@ -181,6 +181,8 @@ def main() -> int:
             "profile_sha256": signing.get("profile_sha256"),
             "signing_tool_version": signer_version,
             "signing_tool_sha256": signer_hash,
+            "code_signature_requirement_profile": signing.get("code_signature_requirement_profile"),
+            "code_signature_requirement_profile_sha256": signing.get("code_signature_requirement_profile_sha256"),
             "signature_integrity": verification,
             "embedded_entitlements": "EXACT_MATCH",
         },

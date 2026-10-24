@@ -171,6 +171,8 @@ jobs:
               raise SystemExit("Linux signing step overstated Apple's host signature-integrity result")
           if signing["code_signature_kind"] != "ADHOC":
               raise SystemExit("signed candidate does not carry the required Apple ad hoc CodeDirectory flag")
+          if signing["code_signature_requirement_profile"] != "EMPTY_REQUIREMENTS_SUPERBLOB" or signing["code_signature_requirement_profile_sha256"] != "987920904eab650e75788c054aa0b0524e6a80bfc71aa32df8d237a61743f986":
+              raise SystemExit("signed candidate does not bind the approved empty designated-requirements profile")
           print("source_commit_sha=" + manifest["source_commit_sha"])
           print("signed_package_sha256=" + hashlib.sha256(package.read_bytes()).hexdigest())
           print("entitlements=EXACT_MATCH; Apple host verification=PENDING")

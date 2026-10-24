@@ -19,7 +19,16 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tests/packaging"))
 
-from signing_profile import PROFILE_ID, PROFILE_RELATIVE_PATH, SigningError, load_approved_profile, validate_signer  # noqa: E402
+from signing_profile import (  # noqa: E402
+    ADHOC_REQUIREMENTS_PROFILE,
+    ADHOC_REQUIREMENTS_PROFILE_SHA256,
+    ADHOC_REQUIREMENTS_SUPERBLOB,
+    PROFILE_ID,
+    PROFILE_RELATIVE_PATH,
+    SigningError,
+    load_approved_profile,
+    validate_signer,
+)
 from validate_rootful_package import inspect_package  # noqa: E402
 from p010_release_manifest import release_status  # noqa: E402
 import p010_evidence  # noqa: E402
@@ -38,7 +47,7 @@ KEY = b"com.apple.private.security.no-container"
 def blob(magic, payload):
     return struct.pack(">II", magic, len(payload) + 8) + payload
 
-def signature(binary, flags=2):
+def signature(binary, flags=2, requirements_blob=None):
     if os.environ.get("P010_TEST_UNMARKED") == "1":
         flags = 0
     ncmds, sizeofcmds = struct.unpack_from("<II", binary, 16)
@@ -60,7 +69,11 @@ def signature(binary, flags=2):
         offset += size
     prefix.extend(bytes(dataoff - len(prefix)))
 
-    requirements = struct.pack(">III", 0xfade0c01, 12, 0)
+    if requirements_blob is None:
+        requirement = struct.pack(">II", 0xfade0c00, 8)
+        requirements = struct.pack(">III", 0xfade0c01, 28, 1) + struct.pack(">II", 3, 20) + requirement
+    else:
+        requirements = requirements_blob
     xml = blob(0xfade7171, plistlib.dumps(ENTITLEMENTS, fmt=plistlib.FMT_XML, sort_keys=True))
     der_payload = b"\x31" + bytes((len(KEY) + 7,)) + b"\x30" + bytes((len(KEY) + 5,)) + b"\x0c" + bytes((len(KEY),)) + KEY + b"\x01\x01\x01"
     if os.environ.get("P010_TEST_APPLE_DER") == "1":
@@ -155,6 +168,28 @@ if args[0] == "-e":
                     sys.exit(0)
         offset += size
     sys.exit(3)
+if len(args) == 4 and args[0] == "-Cadhoc" and args[1].startswith("-Q") and args[2].startswith("-S"):
+    if args[1][2:] == "" or pathlib.Path(args[1][2:]).read_bytes() != bytes.fromhex("fade0c010000000c00000000"):
+        print("wrong ad hoc requirement profile", file=sys.stderr)
+        sys.exit(6)
+    if args[2][2:] != os.environ["P010_TEST_PROFILE"]:
+        print("wrong entitlement argument", file=sys.stderr)
+        sys.exit(8)
+    if os.environ.get("P010_TEST_SIGN_FAIL") == "1":
+        print("injected signing failure", file=sys.stderr)
+        sys.exit(9)
+    path = pathlib.Path(args[3])
+    binary_path = path
+    data = bytearray(path.read_bytes())
+    if os.environ.get("P010_TEST_MUTATE_SOURCE") == "1":
+        data[-1] ^= 1
+    try:
+        requirements_blob = None if os.environ.get("P010_TEST_DEFAULT_REQUIREMENTS") == "1" else pathlib.Path(args[1][2:]).read_bytes()
+        path.write_bytes(signature(data, requirements_blob=requirements_blob))
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(7)
+    sys.exit(0)
 if len(args) == 3 and args[0] == "-Cadhoc" and args[1].startswith("-S"):
     if os.environ.get("P010_TEST_SIGN_FAIL") == "1":
         print("injected signing failure", file=sys.stderr)
@@ -189,6 +224,7 @@ class P010SigningTests(unittest.TestCase):
         cls.signer.write_text(FAKE_LDID)
         cls.signer.chmod(0o755)
         cls.env = {**os.environ, "P010_TEST_PROFILE": str(cls.profile)}
+        (cls.root / "empty-requirements.superblob").write_bytes(ADHOC_REQUIREMENTS_SUPERBLOB)
         cls.inputs = cls.root / "input"
         write_source_inputs(cls.inputs)
 
@@ -213,7 +249,8 @@ class P010SigningTests(unittest.TestCase):
         binary = directory / name
         shutil.copyfile(self.inputs / name, binary)
         result = subprocess.run(
-            [str(self.signer), "-Cadhoc", f"-S{self.profile}", str(binary)],
+            [str(self.signer), "-Cadhoc", f"-Q{self.root / 'empty-requirements.superblob'}",
+             f"-S{self.profile}", str(binary)],
             capture_output=True, text=True, env=env or self.env,
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
@@ -247,6 +284,9 @@ class P010SigningTests(unittest.TestCase):
         self.assertEqual(PROFILE_ID, "amethyst-ios12-rootful")
         self.assertEqual(entitlements, {"com.apple.private.security.no-container": True})
         self.assertEqual(digest, hashlib.sha256(self.profile.read_bytes()).hexdigest())
+        self.assertEqual(ADHOC_REQUIREMENTS_PROFILE, "EMPTY_REQUIREMENTS_SUPERBLOB")
+        self.assertEqual(ADHOC_REQUIREMENTS_SUPERBLOB, bytes.fromhex("fade0c010000000c00000000"))
+        self.assertEqual(hashlib.sha256(ADHOC_REQUIREMENTS_SUPERBLOB).hexdigest(), ADHOC_REQUIREMENTS_PROFILE_SHA256)
 
     def test_additional_privileged_entitlement_is_rejected(self) -> None:
         malicious = self.root / "extra.plist"
@@ -286,6 +326,8 @@ class P010SigningTests(unittest.TestCase):
         self.assertEqual(before, {name: hashlib.sha256((self.inputs / name).read_bytes()).hexdigest() for name in before})
         sidecar = json.loads(Path(str(package) + ".manifest.json").read_text())
         self.assertEqual(sidecar["signing"]["profile_id"], PROFILE_ID)
+        self.assertEqual(sidecar["signing"]["code_signature_requirement_profile"], ADHOC_REQUIREMENTS_PROFILE)
+        self.assertEqual(sidecar["signing"]["code_signature_requirement_profile_sha256"], ADHOC_REQUIREMENTS_PROFILE_SHA256)
         self.assertEqual(sidecar["signing"]["source_binary_sha256"], before)
         self.assertEqual(set(sidecar["signing"]["final_binary_sha256"]), set(before))
         self.assertTrue(all(sidecar["signing"]["final_binary_sha256"][name] != before[name] for name in before))
@@ -302,6 +344,14 @@ class P010SigningTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "ldid SHA-256 differs"):
                 inspect_package(package, alternate_signer)
 
+    def test_builder_rejects_pinned_signer_default_designated_requirement(self) -> None:
+        output = self.root / "default-requirements"
+        env = {**self.env, "P010_TEST_DEFAULT_REQUIREMENTS": "1"}
+        result = self.builder(output, profile=self.profile, signer=self.signer, env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("approved empty designated-requirement set", result.stderr)
+        self.assertEqual(list(output.glob("*.deb")), [])
+
     def test_independent_signature_parser_checks_ad_hoc_code_and_special_slots(self) -> None:
         for name in ("ios-caffeinate", "ios-caffeinated"):
             binary = self.signed_fixture(name)
@@ -311,6 +361,7 @@ class P010SigningTests(unittest.TestCase):
             self.assertTrue(audit["adhoc_flag_present"])
             self.assertEqual(audit["signature_kind"], "ADHOC")
             self.assertEqual(audit["code_directory"]["special_slots_verified"], [2, 5, 7])
+            self.assertEqual(audit["requirements"], {"count": 0, "types": []})
 
     def test_independent_parser_accepts_only_explicit_empty_apple_adhoc_wrapper_layout(self) -> None:
         env = {
@@ -328,6 +379,7 @@ class P010SigningTests(unittest.TestCase):
         self.assertTrue(audit["entitlements_exact_match"])
         self.assertTrue(audit["adhoc_flag_present"])
         self.assertTrue(audit["empty_adhoc_signature_slot_present"])
+        self.assertEqual(audit["requirements"], {"count": 0, "types": []})
 
         unmarked = self.signed_fixture(
             "ios-caffeinate",

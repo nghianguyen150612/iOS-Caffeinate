@@ -106,7 +106,8 @@ class SignedCandidateToolTests(unittest.TestCase):
              patch.object(macos_verify.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="verified\n", stderr="")) as run, \
              patch.object(macos_verify, "audit_code_signature", return_value={
                  "independent_code_directory_verified": True, "entitlements_exact_match": True,
-                 "adhoc_flag_present": True, "signature_kind": "ADHOC", "device_signature_acceptance": "PENDING",
+                 "adhoc_flag_present": True, "signature_kind": "ADHOC", "requirements": {"count": 0, "types": []},
+                 "device_signature_acceptance": "PENDING",
              }):
             receipt = macos_verify.verify_package(package, "a" * 40, output, platform_name="darwin")
 
@@ -116,6 +117,36 @@ class SignedCandidateToolTests(unittest.TestCase):
         self.assertEqual(run.call_count, 4)
         self.assertEqual(receipt["method"], "codesign --verify --strict --verbose=4")
         self.assertEqual(json.loads(output.read_text()), receipt)
+
+    def test_macos_verifier_rejects_nonempty_designated_requirements_even_if_apple_passes(self) -> None:
+        package = self.root / "candidate.deb"
+        candidate_deb(package)
+        output = self.root / "receipt.json"
+        real_is_file = Path.is_file
+        real_access = macos_verify.os.access
+
+        def is_file(path: Path) -> bool:
+            return True if path == Path("/usr/bin/codesign") else real_is_file(path)
+
+        def access(path: str | Path, mode: int) -> bool:
+            return True if Path(path) == Path("/usr/bin/codesign") else real_access(path, mode)
+
+        with (
+            patch.object(Path, "is_file", is_file),
+            patch.object(macos_verify.os, "access", access),
+            patch.object(macos_verify.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="verified\n", stderr="")),
+            patch.object(macos_verify, "audit_code_signature", return_value={
+                "independent_code_directory_verified": True, "entitlements_exact_match": True,
+                "adhoc_flag_present": True, "signature_kind": "ADHOC", "requirements": {"count": 1, "types": [3]},
+                "device_signature_acceptance": "PENDING",
+            }),
+        ):
+            receipt = macos_verify.verify_package(package, "a" * 40, output, platform_name="darwin")
+
+        self.assertEqual(receipt["status"], "FAILED")
+        self.assertTrue(all(item["exit_code"] == 0 for item in receipt["binary_results"]))
+        self.assertTrue(all(item["independent_signature_audit"]["requirements"]["count"] == 1
+                            for item in receipt["binary_results"]))
 
     def test_macos_verifier_version_probe_failure_does_not_override_successful_binary_checks(self) -> None:
         package = self.root / "candidate.deb"
@@ -141,7 +172,8 @@ class SignedCandidateToolTests(unittest.TestCase):
             patch.object(macos_verify.subprocess, "run", side_effect=run),
             patch.object(macos_verify, "audit_code_signature", return_value={
                 "independent_code_directory_verified": True, "entitlements_exact_match": True,
-                "adhoc_flag_present": True, "signature_kind": "ADHOC", "device_signature_acceptance": "PENDING",
+                "adhoc_flag_present": True, "signature_kind": "ADHOC", "requirements": {"count": 0, "types": []},
+                "device_signature_acceptance": "PENDING",
             }),
         ):
             receipt = macos_verify.verify_package(package, "a" * 40, output, platform_name="darwin")
@@ -166,7 +198,8 @@ class SignedCandidateToolTests(unittest.TestCase):
              patch.object(macos_verify.subprocess, "run", return_value=SimpleNamespace(returncode=1, stdout="", stderr="invalid signature")), \
              patch.object(macos_verify, "audit_code_signature", return_value={
                  "independent_code_directory_verified": True, "entitlements_exact_match": True,
-                 "adhoc_flag_present": True, "signature_kind": "ADHOC", "device_signature_acceptance": "PENDING",
+                 "adhoc_flag_present": True, "signature_kind": "ADHOC", "requirements": {"count": 0, "types": []},
+                 "device_signature_acceptance": "PENDING",
              }):
             receipt = macos_verify.verify_package(package, "a" * 40, output, platform_name="darwin")
         self.assertEqual(receipt["status"], "FAILED")
@@ -217,6 +250,8 @@ class SignedCandidateToolTests(unittest.TestCase):
                 "signing_tool_version": "2.1.5-procursus7",
                 "signing_tool_sha256": "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c",
                 "code_signature_kind": "ADHOC",
+                "code_signature_requirement_profile": signing_profile.ADHOC_REQUIREMENTS_PROFILE,
+                "code_signature_requirement_profile_sha256": signing_profile.ADHOC_REQUIREMENTS_PROFILE_SHA256,
                 "embedded_entitlements": "EXACT_MATCH",
                 "signature_verification": "PENDING",
                 "final_binary_sha256": binary_hashes,
@@ -231,7 +266,8 @@ class SignedCandidateToolTests(unittest.TestCase):
             "apple_codesign_verified": True,
             "independent_signature_audit": {
                 "independent_code_directory_verified": True, "entitlements_exact_match": True,
-                "adhoc_flag_present": True, "device_signature_acceptance": "PENDING",
+                "adhoc_flag_present": True, "requirements": {"count": 0, "types": []},
+                "device_signature_acceptance": "PENDING",
             },
         } for name, relative in finalizer.BINARIES.items()]
         receipt = {
@@ -263,6 +299,10 @@ class SignedCandidateToolTests(unittest.TestCase):
         receipt["binary_results"][0]["independent_signature_audit"]["adhoc_flag_present"] = False
         with self.assertRaisesRegex(finalizer.FinalizationError, "independent signature audit"):
             finalizer.validate_receipt(package, package_record, receipt, source_sha, "123", "1")
+        receipt["binary_results"][0]["independent_signature_audit"]["adhoc_flag_present"] = True
+        receipt["binary_results"][0]["independent_signature_audit"]["requirements"] = {"count": 1, "types": [3]}
+        with self.assertRaisesRegex(finalizer.FinalizationError, "independent signature audit"):
+            finalizer.validate_receipt(package, package_record, receipt, source_sha, "123", "1")
 
     def test_finalizer_writes_validator_sidecars_before_final_validation(self) -> None:
         package_dir = self.root / "input"
@@ -277,6 +317,8 @@ class SignedCandidateToolTests(unittest.TestCase):
             "signing": {
                 "signature_verification": "PENDING",
                 "code_signature_kind": "ADHOC",
+                "code_signature_requirement_profile": signing_profile.ADHOC_REQUIREMENTS_PROFILE,
+                "code_signature_requirement_profile_sha256": signing_profile.ADHOC_REQUIREMENTS_PROFILE_SHA256,
                 "profile_id": finalizer.EXPECTED_PROFILE,
                 "profile_sha256": finalizer.EXPECTED_PROFILE_SHA256,
                 "final_binary_sha256": binary_hashes,
@@ -308,6 +350,8 @@ class SignedCandidateToolTests(unittest.TestCase):
                 "signing_tool_version": "2.1.5-procursus7",
                 "signing_tool_sha256": "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c",
                 "code_signature_kind": "ADHOC",
+                "code_signature_requirement_profile": signing_profile.ADHOC_REQUIREMENTS_PROFILE,
+                "code_signature_requirement_profile_sha256": signing_profile.ADHOC_REQUIREMENTS_PROFILE_SHA256,
                 "embedded_entitlements": "EXACT_MATCH",
                 "signature_verification": "PENDING",
                 "final_binary_sha256": binary_hashes,
@@ -335,7 +379,8 @@ class SignedCandidateToolTests(unittest.TestCase):
                 "apple_codesign_verified": True,
                 "independent_signature_audit": {
                     "independent_code_directory_verified": True, "entitlements_exact_match": True,
-                    "adhoc_flag_present": True, "device_signature_acceptance": "PENDING",
+                    "adhoc_flag_present": True, "requirements": {"count": 0, "types": []},
+                    "device_signature_acceptance": "PENDING",
                 },
             } for name in finalizer.BINARIES],
         }
@@ -399,6 +444,8 @@ class SignedCandidateToolTests(unittest.TestCase):
                 "signing_tool_version": rc_manifest.EXPECTED_SIGNER_VERSION,
                 "signing_tool_sha256": rc_manifest.EXPECTED_SIGNER_SHA256,
                 "code_signature_kind": "ADHOC",
+                "code_signature_requirement_profile": signing_profile.ADHOC_REQUIREMENTS_PROFILE,
+                "code_signature_requirement_profile_sha256": signing_profile.ADHOC_REQUIREMENTS_PROFILE_SHA256,
                 "embedded_entitlements": "EXACT_MATCH",
                 "signature_verification": "SIGNATURE_VERIFIED",
                 "device_execution_verification": "NOT_VERIFIED",
@@ -441,9 +488,9 @@ class SignedCandidateToolTests(unittest.TestCase):
             "macos_version": {"exit_code": 0},
             "binary_results": [
                 {"name": "ios-caffeinate", "binary_sha256": "c" * 64, "exit_code": 0, "apple_codesign_verified": True,
-                 "independent_signature_audit": {"independent_code_directory_verified": True, "entitlements_exact_match": True, "adhoc_flag_present": True}},
+                 "independent_signature_audit": {"independent_code_directory_verified": True, "entitlements_exact_match": True, "adhoc_flag_present": True, "requirements": {"count": 0, "types": []}}},
                 {"name": "ios-caffeinated", "binary_sha256": "d" * 64, "exit_code": 0, "apple_codesign_verified": True,
-                 "independent_signature_audit": {"independent_code_directory_verified": True, "entitlements_exact_match": True, "adhoc_flag_present": True}},
+                 "independent_signature_audit": {"independent_code_directory_verified": True, "entitlements_exact_match": True, "adhoc_flag_present": True, "requirements": {"count": 0, "types": []}}},
             ],
         }
         receipt_path = root / "signature-integrity-verification.json"
@@ -454,6 +501,8 @@ class SignedCandidateToolTests(unittest.TestCase):
             "macos_receipt_sha256": rc_manifest.sha256(receipt_path),
             "apple_codesign": "VERIFIED", "independent_code_directory": "VERIFIED",
             "entitlements_exact_match": "EXACT_MATCH", "device_signature_acceptance": "PENDING",
+            "code_signature_requirement_profile": signing_profile.ADHOC_REQUIREMENTS_PROFILE,
+            "code_signature_requirement_profile_sha256": signing_profile.ADHOC_REQUIREMENTS_PROFILE_SHA256,
             "repackaging": "SIGNING_METADATA_ONLY_BINARIES_UNCHANGED", "final_package_validation": "PASS",
             "binary_sha256": {"ios-caffeinate": "c" * 64, "ios-caffeinated": "d" * 64},
         }

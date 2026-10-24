@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from macho_code_signature import CodeSignatureError, audit_code_signature
+from signing_profile import ADHOC_REQUIREMENTS_PROFILE, ADHOC_REQUIREMENTS_PROFILE_SHA256
 
 
 MAX_PACKAGE_BYTES = 256 * 1024 * 1024
@@ -151,7 +152,9 @@ def verify_package(package: Path, source_sha: str, output: Path, *, platform_nam
             signing.get("signing_tool_version") != "2.1.5-procursus7" or
             signing.get("signing_tool_sha256") != "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c" or
             signing.get("embedded_entitlements") != "EXACT_MATCH" or
-            signing.get("code_signature_kind") != "ADHOC"):
+            signing.get("code_signature_kind") != "ADHOC" or
+            signing.get("code_signature_requirement_profile") != ADHOC_REQUIREMENTS_PROFILE or
+            signing.get("code_signature_requirement_profile_sha256") != ADHOC_REQUIREMENTS_PROFILE_SHA256):
             raise VerificationError("signed package manifest does not bind the exact source, package, signer, and profile")
     codesign = Path("/usr/bin/codesign")
     if not codesign.is_file() or not os.access(codesign, os.X_OK):
@@ -202,7 +205,8 @@ def verify_package(package: Path, source_sha: str, output: Path, *, platform_nam
         result["exit_code"] == 0 and
         result["independent_signature_audit"].get("independent_code_directory_verified") is True and
         result["independent_signature_audit"].get("entitlements_exact_match") is True and
-        result["independent_signature_audit"].get("adhoc_flag_present") is True
+        result["independent_signature_audit"].get("adhoc_flag_present") is True and
+        result["independent_signature_audit"].get("requirements") == {"count": 0, "types": []}
         for result in results
     )
     version_result = subprocess.run([str(codesign), "--version"], capture_output=True, text=True, check=False)

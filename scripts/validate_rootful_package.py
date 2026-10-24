@@ -19,6 +19,8 @@ from pathlib import Path, PurePosixPath
 from macho_ios import validate_ios12_arm64
 from macho_code_signature import CodeSignatureError, audit_code_signature
 from signing_profile import (
+    ADHOC_REQUIREMENTS_PROFILE,
+    ADHOC_REQUIREMENTS_PROFILE_SHA256,
     PROFILE_ID,
     SigningError,
     load_approved_profile,
@@ -327,6 +329,11 @@ def inspect_package(deb: Path, ldid: Path | None = None, expected_version: str |
         }
         if signed_artifact:
             expected_state_keys.update(("signing_tool_version", "signing_tool_sha256"))
+            if "code_signature_requirement_profile" in state_fields or expected_version == "0.2.0~rc1-1":
+                expected_state_keys.update((
+                    "code_signature_requirement_profile",
+                    "code_signature_requirement_profile_sha256",
+                ))
         require(set(state_fields) == expected_state_keys, "unexpected or missing signing-state fields")
         require(state_fields.get("signature_state") == ("SIGNATURE_PRESENT" if signed_artifact else "UNSIGNED"), "package signature state is inconsistent")
         require(state_fields.get("signature_verification") in ("SIGNATURE_VERIFIED", "PENDING") if signed_artifact else state_fields.get("signature_verification") == "NOT_APPLICABLE", "package signature-verification state is invalid")
@@ -348,6 +355,11 @@ def inspect_package(deb: Path, ldid: Path | None = None, expected_version: str |
             require(profile == {"com.apple.private.security.no-container": True}, "bundled profile differs from the approved entitlement set")
             require(signing.get("profile_sha256") == profile_hash, "profile SHA-256 differs from package build record")
             require(state_fields.get("profile_id") == PROFILE_ID and state_fields.get("profile_sha256") == profile_hash, "signing-state profile identity mismatch")
+            if "code_signature_requirement_profile" in state_fields:
+                require(state_fields.get("code_signature_requirement_profile") == ADHOC_REQUIREMENTS_PROFILE,
+                        "signing-state ad hoc requirement profile is unexpected")
+                require(state_fields.get("code_signature_requirement_profile_sha256") == ADHOC_REQUIREMENTS_PROFILE_SHA256,
+                        "signing-state ad hoc requirement profile digest mismatch")
             require(signing.get("embedded_entitlements") == "EXACT_MATCH" and state_fields.get("embedded_entitlements") == "EXACT_MATCH", "package build did not record exact embedded entitlement validation")
             for name, relative in (("ios-caffeinate", "usr/local/bin/ios-caffeinate"),
                                    ("ios-caffeinated", "usr/local/bin/ios-caffeinated")):
@@ -360,6 +372,12 @@ def inspect_package(deb: Path, ldid: Path | None = None, expected_version: str |
                 if expected_version == "0.2.0~rc1-1":
                     require(audit["adhoc_flag_present"], f"CodeDirectory lacks Apple's ad hoc flag: {name}")
                     require(signing.get("code_signature_kind") == "ADHOC", "v0.2 RC metadata does not identify an Apple ad hoc signature")
+                    require(signing.get("code_signature_requirement_profile") == ADHOC_REQUIREMENTS_PROFILE,
+                            "v0.2 RC metadata does not identify the approved empty ad hoc requirement profile")
+                    require(signing.get("code_signature_requirement_profile_sha256") == ADHOC_REQUIREMENTS_PROFILE_SHA256,
+                            "v0.2 RC ad hoc requirement profile digest mismatch")
+                    require(audit.get("requirements") == {"count": 0, "types": []},
+                            f"ad hoc designated requirements are not empty: {name}")
             integrity_record = signing.get("signature_integrity")
             require(isinstance(integrity_record, dict), "signature integrity result is malformed")
             require(signing.get("device_execution_verification") == "NOT_VERIFIED", "package build overstates device execution")
