@@ -15,6 +15,8 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from signing_profile import ADHOC_REQUIREMENTS_PROFILE, ADHOC_REQUIREMENTS_PROFILE_SHA256
+
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_VERSION = "0.2.0~rc1-1"
@@ -73,7 +75,8 @@ def require_regular(root: Path, relative: str) -> Path:
     return current
 
 
-def validate_receipt(package: Path, package_record: dict[str, Any], receipt: dict[str, Any], source_sha: str) -> tuple[str, dict[str, str]]:
+def validate_receipt(package: Path, package_record: dict[str, Any], receipt: dict[str, Any], source_sha: str,
+                     workflow_run_id: str, workflow_run_attempt: str) -> tuple[str, dict[str, str]]:
     package_sha = sha256(package)
     signing = package_record.get("signing")
     package_identity = package_record.get("package")
@@ -90,14 +93,23 @@ def validate_receipt(package: Path, package_record: dict[str, Any], receipt: dic
         signing.get("profile_sha256") != EXPECTED_PROFILE_SHA256 or
         signing.get("signing_tool_version") != "2.1.5-procursus7" or
         signing.get("signing_tool_sha256") != "15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c" or
+        signing.get("code_signature_kind") != "ADHOC" or
+        signing.get("code_signature_requirement_profile") != ADHOC_REQUIREMENTS_PROFILE or
+        signing.get("code_signature_requirement_profile_sha256") != ADHOC_REQUIREMENTS_PROFILE_SHA256 or
         signing.get("embedded_entitlements") != "EXACT_MATCH" or
         signing.get("signature_verification") != "PENDING"):
         raise FinalizationError("input candidate is not the expected signed, entitlement-checked package awaiting host verification")
-    if (receipt.get("schema_version") != 1 or receipt.get("status") != "VERIFIED" or
+    if (receipt.get("schema_version") != 2 or receipt.get("status") != "VERIFIED" or
         receipt.get("source_commit_sha") != source_sha or receipt.get("package_file") != package.name or
         receipt.get("package_sha256") != package_sha or receipt.get("host") != "macOS" or
         receipt.get("tool") != "/usr/bin/codesign" or
-        receipt.get("method") != "codesign --verify --strict --verbose=2"):
+        receipt.get("method") != "codesign --verify --strict --verbose=4" or
+        receipt.get("workflow_run_id") != str(workflow_run_id) or
+        receipt.get("workflow_run_attempt") != str(workflow_run_attempt) or
+        not isinstance(receipt.get("codesign_version"), dict) or
+        receipt["codesign_version"].get("command") != ["/usr/bin/codesign", "--version"] or
+        not isinstance(receipt["codesign_version"].get("exit_code"), int) or
+        not isinstance(receipt.get("macos_version"), dict) or receipt["macos_version"].get("exit_code") != 0):
         raise FinalizationError("macOS signature-integrity receipt does not match the signed package")
     results = receipt.get("binary_results")
     if not isinstance(results, list) or len(results) != 2:
@@ -113,8 +125,17 @@ def validate_receipt(package: Path, package_record: dict[str, Any], receipt: dic
         item = by_name[name]
         if (item.get("package_path") != relative or item.get("exit_code") != 0 or
             item.get("binary_sha256") != final_hashes.get(name) or
-            item.get("command", [])[:4] != ["/usr/bin/codesign", "--verify", "--strict", "--verbose=2"]):
+            item.get("apple_codesign_verified") is not True or
+            item.get("command", [])[:4] != ["/usr/bin/codesign", "--verify", "--strict", "--verbose=4"]):
             raise FinalizationError(f"macOS signature-integrity result is invalid for {name}")
+        independent = item.get("independent_signature_audit")
+        if (not isinstance(independent, dict) or
+            independent.get("independent_code_directory_verified") is not True or
+            independent.get("entitlements_exact_match") is not True or
+            independent.get("adhoc_flag_present") is not True or
+            independent.get("requirements") != {"count": 0, "types": []} or
+            independent.get("device_signature_acceptance") != "PENDING"):
+            raise FinalizationError(f"independent signature audit is invalid for {name}")
         verified[name] = item["binary_sha256"]
     return package_sha, verified
 
@@ -132,6 +153,9 @@ def update_payload_metadata(root: Path, receipt: dict[str, Any], receipt_sha: st
     signing = build.get("signing")
     if (build.get("source_commit_sha") != source_sha or not isinstance(signing, dict) or
         signing.get("signature_verification") != "PENDING" or
+        signing.get("code_signature_kind") != "ADHOC" or
+        signing.get("code_signature_requirement_profile") != ADHOC_REQUIREMENTS_PROFILE or
+        signing.get("code_signature_requirement_profile_sha256") != ADHOC_REQUIREMENTS_PROFILE_SHA256 or
         signing.get("profile_id") != EXPECTED_PROFILE or
         signing.get("profile_sha256") != EXPECTED_PROFILE_SHA256):
         raise FinalizationError("embedded package-build record is not the expected Linux-signed candidate")
@@ -210,7 +234,10 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
             raise FinalizationError(f"{label} is missing, unsafe, or too large")
     package_record = read_json(package_manifest_path, "signed package manifest")
     receipt = read_json(receipt_path, "macOS signature-integrity receipt")
-    original_sha, binary_hashes = validate_receipt(package, package_record, receipt, args.source_sha)
+    original_sha, binary_hashes = validate_receipt(
+        package, package_record, receipt, args.source_sha,
+        args.workflow_run_id, args.workflow_run_attempt,
+    )
     if package_hash_path.read_text(encoding="utf-8") != f"{original_sha}  {package.name}\n":
         raise FinalizationError("input package SHA-256 sidecar does not match the signed candidate")
     receipt_sha = sha256(receipt_path)
@@ -307,6 +334,14 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
         "input_package_sha256": original_sha,
         "final_package_sha256": final_sha,
         "macos_receipt_sha256": receipt_sha,
+        "workflow_run_id": str(args.workflow_run_id),
+        "workflow_run_attempt": str(args.workflow_run_attempt),
+        "apple_codesign": "VERIFIED",
+        "independent_code_directory": "VERIFIED",
+        "entitlements_exact_match": "EXACT_MATCH",
+        "code_signature_requirement_profile": ADHOC_REQUIREMENTS_PROFILE,
+        "code_signature_requirement_profile_sha256": ADHOC_REQUIREMENTS_PROFILE_SHA256,
+        "device_signature_acceptance": "PENDING",
         "binary_sha256": binary_hashes,
         "repackaging": "SIGNING_METADATA_ONLY_BINARIES_UNCHANGED",
         "final_package_validation": "PASS",
@@ -329,6 +364,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--signature-receipt", type=Path, required=True)
     parser.add_argument("--source-sha", required=True)
+    parser.add_argument("--workflow-run-id", required=True)
+    parser.add_argument("--workflow-run-attempt", required=True)
     parser.add_argument("--ldid", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args(argv)

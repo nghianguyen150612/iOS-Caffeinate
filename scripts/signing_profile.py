@@ -16,6 +16,9 @@ PROFILE_ID = "amethyst-ios12-rootful"
 PROFILE_RELATIVE_PATH = Path("packaging/signing/profiles/amethyst-ios12-rootful.plist")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_ENTITLEMENTS = {"com.apple.private.security.no-container": True}
+ADHOC_REQUIREMENTS_PROFILE = "EMPTY_REQUIREMENTS_SUPERBLOB"
+ADHOC_REQUIREMENTS_SUPERBLOB = bytes.fromhex("fade0c010000000c00000000")
+ADHOC_REQUIREMENTS_PROFILE_SHA256 = "987920904eab650e75788c054aa0b0524e6a80bfc71aa32df8d237a61743f986"
 # The H003 receipt binds this exact Procursus ldid executable to its source,
 # build inputs, and version. Some execution environments omit the no-argument
 # banner even though the executable bytes still match this verified identity.

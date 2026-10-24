@@ -1,0 +1,72 @@
+name: R05A Apple signature root-cause diagnostics
+on:
+  push:
+    branches: [fix/r05a-apple-signature-integrity]
+permissions:
+  actions: read
+  contents: read
+concurrency:
+  group: r05a-signature-diagnostics-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  compare-signature-formats:
+    name: Compare authentic unsigned, H003-signed, Apple ad hoc, and v0.1 controls
+    if: github.repository == 'nghianguyen150612/iOS-Caffeinate'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout the exact R05A source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download authentic failed R05 signed input
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 39978072203
+          github-token: ${{ github.token }}
+          name: iOS-Caffeinate-P020-v0.2.0-rc1-SIGNED-INPUT-DEVICE-UNVERIFIED
+          path: build/r05a/failed
+      - name: Download authentic failed Apple verification receipt
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 39978072203
+          github-token: ${{ github.token }}
+          name: iOS-Caffeinate-P020-v0.2.0-rc1-macOS-signature-integrity
+          path: build/r05a/failure-receipt
+      - name: Download exact-source unsigned P020 control
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 39978081363
+          github-token: ${{ github.token }}
+          name: iOS-Caffeinate-P020-v0.2.0-rc1-UNSIGNED-DEVICE-UNVERIFIED
+          path: build/r05a/unsigned
+      - name: Download the byte-pinned v0.1.0 historical package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -m 700 -p build/r05a/stable
+          gh release download v0.1.0 \
+            --repo nghianguyen150612/iOS-Caffeinate \
+            --pattern 'ioscaffeinate_0.1.0-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb' \
+            --dir build/r05a/stable
+      - name: Capture bounded Apple diagnostics and the separate ad hoc control
+        run: |
+          set -euo pipefail
+          python3 scripts/r05a_signature_diagnostics.py \
+            --failed-package build/r05a/failed/signed-input/ioscaffeinate_0.2.0~rc1-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb \
+            --failed-receipt build/r05a/failure-receipt/signature-integrity-verification.json \
+            --unsigned-dir build/r05a/unsigned/p020-first \
+            --stable-package build/r05a/stable/ioscaffeinate_0.1.0-1_iphoneos-arm_SIGNED-DEVICE-UNVERIFIED.deb \
+            --output-dir build/r05a/diagnostics
+      - name: Upload diagnostic-only receipt and captured command outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-R05A-DIAGNOSTIC-ONLY-NO-RC-APPROVAL
+          if-no-files-found: warn
+          path: build/r05a/diagnostics/

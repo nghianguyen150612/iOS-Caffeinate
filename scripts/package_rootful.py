@@ -16,7 +16,11 @@ import tempfile
 from pathlib import Path
 
 from macho_ios import validate_ios12_arm64, validate_signed_source_identity
+from macho_code_signature import CodeSignatureError, audit_code_signature
 from signing_profile import (
+    ADHOC_REQUIREMENTS_PROFILE,
+    ADHOC_REQUIREMENTS_PROFILE_SHA256,
+    ADHOC_REQUIREMENTS_SUPERBLOB,
     PROFILE_ID,
     PROFILE_RELATIVE_PATH,
     SigningError,
@@ -225,6 +229,11 @@ def main() -> int:
         fail("SOURCE_DATE_EPOCH must be a non-negative integer")
 
     with tempfile.TemporaryDirectory(prefix="ioscaffeinate-rootful-") as temporary:
+        requirements_path = Path(temporary) / "adhoc-requirements.superblob"
+        requirements_path.write_bytes(ADHOC_REQUIREMENTS_SUPERBLOB)
+        requirements_path.chmod(0o600)
+        if sha256(requirements_path) != ADHOC_REQUIREMENTS_PROFILE_SHA256:
+            fail("approved ad hoc requirements SuperBlob differs from its fixed profile digest")
         stage = Path(temporary) / "root"
         control = stage / "DEBIAN"
         control.mkdir(parents=True)
@@ -242,7 +251,9 @@ def main() -> int:
                 assert args.entitlements is not None and profile_hash is not None
                 profile_path = Path(os.path.abspath(args.entitlements))
                 try:
-                    subprocess.run([str(signer), f"-S{profile_path}", str(destination)], check=True, capture_output=True, text=True)
+                    subprocess.run([
+                        str(signer), "-Cadhoc", f"-Q{requirements_path}", f"-S{profile_path}", str(destination),
+                    ], check=True, capture_output=True, text=True)
                 except subprocess.CalledProcessError as error:
                     detail = error.stderr.strip() if error.stderr else f"exit {error.returncode}"
                     fail(f"ldid signing failed for {name}: {detail}")
@@ -250,7 +261,16 @@ def main() -> int:
                     validate_ios12_arm64(destination, allow_signature=True, expected_dependencies=EXPECTED_DEPENDENCIES[name])
                     validate_signed_source_identity(source, destination)
                     require_exact_embedded_entitlements(signer, destination)
+                    signature_audit = audit_code_signature(destination.read_bytes(), expected_identifier=name)
+                    if not signature_audit["independent_code_directory_verified"]:
+                        raise CodeSignatureError("CodeDirectory hashes were not independently verified")
+                    if not signature_audit["entitlements_exact_match"] or not signature_audit["adhoc_flag_present"]:
+                        raise CodeSignatureError("signature must carry the exact profile and Apple ad hoc flag")
+                    if signature_audit.get("requirements") != {"count": 0, "types": []}:
+                        raise CodeSignatureError("ad hoc signature must use the approved empty designated-requirement set")
                 except SigningError as error:
+                    fail(f"{name}: {error}")
+                except CodeSignatureError as error:
                     fail(f"{name}: {error}")
                 except ValueError as error:
                     fail(f"ldid did not produce an inspectable signature for {name}: {error}")
@@ -291,7 +311,12 @@ def main() -> int:
             "device_package_acceptance=NOT_ACCEPTED",
         ]
         if signer:
-            signing_lines.extend((f"signing_tool_version={signer_version}", f"signing_tool_sha256={signer_hash}"))
+            signing_lines.extend((
+                f"signing_tool_version={signer_version}",
+                f"signing_tool_sha256={signer_hash}",
+                f"code_signature_requirement_profile={ADHOC_REQUIREMENTS_PROFILE}",
+                f"code_signature_requirement_profile_sha256={ADHOC_REQUIREMENTS_PROFILE_SHA256}",
+            ))
         signing_text = "\n".join(signing_lines) + "\n"
         signing_state.parent.mkdir(parents=True, exist_ok=True)
         signing_state.write_text(signing_text)
@@ -358,6 +383,9 @@ def main() -> int:
                 "profile_sha256": profile_hash,
                 "signing_tool_version": signer_version,
                 "signing_tool_sha256": signer_hash,
+                "code_signature_kind": "ADHOC" if signer else None,
+                "code_signature_requirement_profile": ADHOC_REQUIREMENTS_PROFILE if signer else None,
+                "code_signature_requirement_profile_sha256": ADHOC_REQUIREMENTS_PROFILE_SHA256 if signer else None,
                 "source_binary_sha256": source_hashes,
                 "final_binary_sha256": final_binary_hashes,
                 "embedded_entitlements": "EXACT_MATCH" if signer else "NOT_APPLICABLE",
@@ -449,6 +477,8 @@ def main() -> int:
             f"source_tree_clean: {str(not bool(status_result.stdout.strip())).lower()}",
             f"profile_id: {PROFILE_ID if signer else 'not-used'}",
             f"profile_sha256: {profile_hash if signer else 'not-used'}",
+            f"code_signature_requirement_profile: {ADHOC_REQUIREMENTS_PROFILE if signer else 'not-used'}",
+            f"code_signature_requirement_profile_sha256: {ADHOC_REQUIREMENTS_PROFILE_SHA256 if signer else 'not-used'}",
             f"signing_tool_version: {signer_version if signer else 'not-used'}",
             f"signing_tool_sha256: {signer_hash if signer else 'not-used'}",
             f"source_cli_sha256: {source_hashes['ios-caffeinate']}",
