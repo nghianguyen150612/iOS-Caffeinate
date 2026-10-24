@@ -190,13 +190,15 @@ def collect_diagnostics(*, failed_package: Path, failed_receipt: Path, unsigned_
         "otool_version": run(["/usr/bin/otool", "-V"]),
         "host_uname": platform.platform(),
     }
-    # Apple codesign does not consistently implement --version as a successful
-    # query. Preserve its output; actual commands below establish availability.
-    for tool_name in ("macos_version", "xcode_version", "otool_version"):
+    # codesign --version and otool -V are not consistent successful version
+    # queries across Apple tool releases. Preserve their outputs; the actual
+    # inspection commands below establish availability.
+    for tool_name in ("macos_version", "xcode_version"):
         if tools[tool_name]["exit_code"] != 0:
             raise DiagnosticError(f"required Apple diagnostic tool is unavailable: {tool_name}")
-    if tools["codesign_version"]["exit_code"] is None:
-        raise DiagnosticError("Apple codesign could not be executed")
+    for tool_name in ("codesign_version", "otool_version"):
+        if tools[tool_name]["exit_code"] is None:
+            raise DiagnosticError(f"required Apple diagnostic tool could not be executed: {tool_name}")
 
     cases_output: dict[str, Any] = {}
     binary_output: dict[tuple[str, str], Path] = {}
