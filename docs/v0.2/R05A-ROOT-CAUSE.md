@@ -1,6 +1,6 @@
 # R05A Apple Code-Signature Root Cause
 
-**Status:** root cause identified; exact-source Apple confirmation and candidate finalization are pending the R05A macOS workflow.
+**Status:** root cause confirmed by the authentic macOS comparison. Corrected-candidate verification and finalization are established separately for each exact PR source commit by the candidate workflow.
 
 ## Finding
 
@@ -14,6 +14,6 @@ Evidence for the mode distinction is in Procursus `ldid` source commit `aaf8f23d
 
 The production package builder now invokes the same pinned signer with `-Cadhoc -S<profile>`. It still requires the pinned signer, exact profile bytes, unchanged entitlement policy, signature-only binary transformation, and matching extracted entitlements. A bounded independent parser validates the Mach-O layout, CodeDirectory, every code-slot hash, requirements and entitlement special-slot hashes, and the ad hoc flag. Apple `codesign --verify --strict` remains a separate required finalization gate.
 
-Confidence in the root cause is **high** based on pinned source documentation, the failed binaries' valid hash coverage with flags zero, and the pinned signer's local flags-zero/flags-two comparison. The macOS diagnostics workflow compares the genuine old unsigned binary, genuine R05 `ldid` output, separate Apple-native ad hoc copies, and byte-pinned v0.1.0 binaries. Its actual command results must be recorded before labeling Apple compatibility confirmed.
+The macOS diagnostics workflow [run 40064018459](https://github.com/nghianguyen150612/iOS-Caffeinate/actions/runs/40064018459), on source `8f61de738d2fe9f402d3ea247071d6aa41bae82c`, compared the genuine unsigned binary, genuine R05 `ldid` output, separate Apple-native ad hoc copies, and byte-pinned v0.1.0 binaries on macOS 26.6.2 with Xcode 26.6. Both Apple-native copies had flags `0x2`, exact entitlements, and passed Apple `codesign --verify --strict --verbose=4`. The failed R05 inputs and v0.1 controls had flags `0` and failed with “code object is not signed at all.” This confirms the missing `CS_ADHOC` flag as the root cause. The corrected exact-source package still requires its own Apple verification and finalization run.
 
 No Apple-signed diagnostic copy is a candidate input. No failed receipt is changed. If either corrected binary fails Apple verification, finalization remains blocked and the failure receipt is retained.

@@ -13,4 +13,6 @@ The production signing identity remains ProcursusTeam `ldid` 2.1.5-procursus7 at
 
 The signed-input manifest and receipt bind source commit, package filename and digest, both binary digests, signer, profile, and exact workflow run ID and attempt. The finalizer accepts only a `VERIFIED` schema-v2 macOS receipt from that same workflow run and attempt, with exit 0 for both Apple commands and all independent signature checks. It validates the package with the pinned signer again, confirms binaries did not change during metadata-only repackaging, and verifies the final package from a fresh extraction. Any missing, failed, mismatched, or copied receipt blocks finalization.
 
+The `codesign --version` probe is stored as environment output because Apple tool releases may reject that query. It does not determine the result: the two exact package binaries must pass `codesign --verify --strict --verbose=4` and the independent CodeDirectory/entitlement audit.
+
 `INDEPENDENT_CODEDIRECTORY_VERIFIED` never substitutes for `APPLE_CODESIGN_VERIFIED`. The diagnostic Apple-native ad hoc output is isolated under a diagnostic-only directory and cannot be submitted to the finalizer. A successful host result leaves device acceptance pending and does not authorize transfer, installation, runtime mutation, tag creation, stable publication, or physical qualification.

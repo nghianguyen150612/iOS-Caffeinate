@@ -24,6 +24,21 @@ The pinned H003 `ldid` binary, SHA-256 `15329a4714608bcfd61717fd2e6dd4fd1aec4896
 
 These standalone diagnostic copies are not the exact-source CI candidate package. The R05A macOS workflow records `codesign -d --verbose=4`, `codesign --verify --strict --verbose=4`, `otool -l`, and `file` outputs for all four comparison cases. Its machine receipt and command outputs are authoritative for Apple-host results.
 
+## Authentic macOS comparison
+
+The diagnostic-only comparison [run 40064018459](https://github.com/nghianguyen150612/iOS-Caffeinate/actions/runs/40064018459) used the exact unsigned and failed R05 inputs, the byte-pinned v0.1.0 package, and separate Apple-native ad hoc copies. The machine receipt is artifact `iOS-Caffeinate-R05A-DIAGNOSTIC-ONLY-NO-RC-APPROVAL` (artifact ID `12548299016`); its SHA-256 is `31327d9b999dcdfe7d038bb720fdb3b7e63d5a5c9adc4aebc7cde12226f817a3`.
+
+| Case | Apple strict verification | Independent result | Finding |
+|---|---:|---|---|
+| Exact-source unsigned | Exit 1 for both | No signature or entitlements | Expected unsigned control |
+| Failed R05 H003 `ldid` package | Exit 1 for both | CodeDirectory, all page hashes, and exact entitlements verified; flags `0x0` | Apple reports “code object is not signed at all” |
+| Apple-native diagnostic ad hoc copies | Exit 0 for both | CodeDirectory and exact entitlements verified; flags `0x2` | Both report “valid on disk”; diagnostic only |
+| Stable v0.1.0 historical package | Exit 1 for both | CodeDirectory and exact entitlements verified; flags `0x0` | Same missing ad hoc flag as R05 |
+
+The host reported macOS `26.6.2` and Xcode `26.6` (`17F113`). Apple `codesign --version` returned 2 because that command does not recognize `--version`; `otool -V` returned 1 because it requires an operation. Those version probes are recorded as environment evidence. The actual `codesign` verification and `otool -l` inspection commands completed and are the relevant tool checks.
+
+The independent parser accepts Apple's empty ad hoc signature wrapper and canonical DER Boolean encoding only in the isolated diagnostic-control path. Production package validation continues to require the pinned ldid SuperBlob layout and its exact entitlements.
+
 ## Parser bounds and rejection coverage
 
 `scripts/macho_code_signature.py` bounds Mach-O headers, load commands, segment ranges, `__LINKEDIT`, the signature area, SuperBlob indexes, subblob lengths, Requirements indexes, CodeDirectory hashes, and padding. It rejects unsupported architectures, malformed or missing CodeDirectories, overlaps/gaps, altered executable bytes, invalid special-slot hashes, changed or extra entitlements, truncated signatures, unexpected slots, and unmarked signatures at the RC acceptance layer. It reports independent CodeDirectory verification separately from Apple `codesign` and device acceptance.
