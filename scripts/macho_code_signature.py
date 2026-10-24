@@ -65,7 +65,7 @@ def _validate_requirements(blob: bytes) -> None:
     _need(cursor == len(blob), "Requirements SuperBlob has unexpected trailing data")
 
 
-def _validate_der_entitlements(blob: bytes) -> None:
+def _validate_der_entitlements(blob: bytes, *, allow_canonical_boolean: bool = False) -> None:
     _need(8 <= len(blob) <= 4096, "DER entitlement blob size is outside the supported bound")
     magic, length = struct.unpack_from(">II", blob, 0)
     _need(magic == 0xFADE7172 and length == len(blob), "DER entitlement blob header is invalid")
@@ -76,7 +76,16 @@ def _validate_der_entitlements(blob: bytes) -> None:
         + b"\x30" + bytes((len(key) + 5,))
         + b"\x0c" + bytes((len(key),)) + key + b"\x01\x01\x01"
     )
-    _need(der == expected, "DER entitlement payload is not the exact approved entitlement set")
+    apple_inner = (
+        b"\x30" + bytes((len(key) + 5,))
+        + b"\x0c" + bytes((len(key),)) + key + b"\x01\x01\xff"
+    )
+    apple_canonical_true = (
+        b"\x70" + bytes((len(apple_inner) + 5,))
+        + b"\x02\x01\x01\xb0" + bytes((len(apple_inner),)) + apple_inner
+    )
+    _need(der == expected or (allow_canonical_boolean and der == apple_canonical_true),
+          "DER entitlement payload is not the exact approved entitlement set")
 
 
 def _validate_code_directory(blob: bytes, image: bytes, identifier: str,
@@ -181,7 +190,8 @@ def image_signature_offset(image: bytes) -> int:
     return signature_offsets[0]
 
 
-def _audit_code_signature(image: bytes, *, expected_identifier: str) -> dict[str, Any]:
+def _audit_code_signature(image: bytes, *, expected_identifier: str,
+                         allow_apple_adhoc_layout: bool = False) -> dict[str, Any]:
     """Verify the exact ldid CodeDirectory, signature blobs, and approved entitlements."""
     _need(len(image) >= 32, "Mach-O header is truncated")
     magic, cpu_type, cpu_subtype, filetype, command_count, command_bytes, _flags, _reserved = struct.unpack_from(
@@ -256,7 +266,15 @@ def _audit_code_signature(image: bytes, *, expected_identifier: str) -> dict[str
         _need(start == cursor, "signature SuperBlob contains overlap, a gap, or unindexed data")
         cursor = end
     _need(cursor == sb_length, "signature SuperBlob has unexpected trailing data")
-    _need(set(entries) == {0, 2, 5, 7}, "signature SuperBlob has missing or unexpected signature slots")
+    expected_entries = {0, 2, 5, 7}
+    has_empty_adhoc_slot = set(entries) == expected_entries | {0x10000}
+    _need(set(entries) == expected_entries or
+          (allow_apple_adhoc_layout and has_empty_adhoc_slot),
+          "signature SuperBlob has missing or unexpected signature slots")
+    if has_empty_adhoc_slot:
+        empty_signature = entries[0x10000][2]
+        _need(len(empty_signature) == 8 and struct.unpack_from(">II", empty_signature, 0) == (0xFADE0B01, 8),
+              "ad hoc signature wrapper must be empty")
     _need(all(byte == 0 for byte in superblob[sb_length:]), "signature area has nonzero padding")
 
     cd_blob = entries[0][2]
@@ -274,12 +292,14 @@ def _audit_code_signature(image: bytes, *, expected_identifier: str) -> dict[str
     _need(isinstance(entitlements, dict) and entitlements == EXPECTED_ENTITLEMENTS and
           all(type(value) is bool for value in entitlements.values()),
           "XML entitlement set differs from the exact approved profile")
-    _validate_der_entitlements(der_blob)
+    _validate_der_entitlements(der_blob, allow_canonical_boolean=allow_apple_adhoc_layout)
     code_directory = _validate_code_directory(
         cd_blob, image, expected_identifier, {2: requirements, 5: xml_blob, 7: der_blob}
     )
     flags = code_directory["flags"]
     adhoc = bool(flags & CS_ADHOC)
+    _need(not has_empty_adhoc_slot or adhoc,
+          "empty signature wrapper is only supported for ad hoc CodeDirectories")
     _need(flags & ~CS_ADHOC == 0, "CodeDirectory has unexpected signing flags")
     return {
         "independent_code_directory_verified": True,
@@ -291,13 +311,19 @@ def _audit_code_signature(image: bytes, *, expected_identifier: str) -> dict[str
         "superblob": {"length": sb_length, "index_types": sorted(entries)},
         "signature_padding_bytes": len(superblob) - sb_length,
         "cms_blob_present": False,
+        "empty_adhoc_signature_slot_present": has_empty_adhoc_slot,
     }
 
 
-def audit_code_signature(image: bytes, *, expected_identifier: str) -> dict[str, Any]:
+def audit_code_signature(image: bytes, *, expected_identifier: str,
+                         allow_apple_adhoc_layout: bool = False) -> dict[str, Any]:
     """Translate malformed binary parsing errors into a stable fail-closed result."""
     try:
-        return _audit_code_signature(image, expected_identifier=expected_identifier)
+        return _audit_code_signature(
+            image,
+            expected_identifier=expected_identifier,
+            allow_apple_adhoc_layout=allow_apple_adhoc_layout,
+        )
     except CodeSignatureError:
         raise
     except (struct.error, IndexError, OverflowError, RecursionError):

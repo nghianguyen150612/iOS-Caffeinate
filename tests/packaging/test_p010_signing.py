@@ -63,6 +63,9 @@ def signature(binary, flags=2):
     requirements = struct.pack(">III", 0xfade0c01, 12, 0)
     xml = blob(0xfade7171, plistlib.dumps(ENTITLEMENTS, fmt=plistlib.FMT_XML, sort_keys=True))
     der_payload = b"\x31" + bytes((len(KEY) + 7,)) + b"\x30" + bytes((len(KEY) + 5,)) + b"\x0c" + bytes((len(KEY),)) + KEY + b"\x01\x01\x01"
+    if os.environ.get("P010_TEST_APPLE_DER") == "1":
+        inner = b"\x30" + bytes((len(KEY) + 5,)) + b"\x0c" + bytes((len(KEY),)) + KEY + b"\x01\x01\xff"
+        der_payload = b"\x70" + bytes((len(inner) + 5,)) + b"\x02\x01\x01\xb0" + bytes((len(inner),)) + inner
     der = blob(0xfade7172, der_payload)
 
     def make_cd(code_bytes):
@@ -95,6 +98,8 @@ def signature(binary, flags=2):
 
     def superblob(cd):
         children = [(0, cd), (2, requirements), (5, xml), (7, der)]
+        if os.environ.get("P010_TEST_EMPTY_ADHOC_SLOT") == "1":
+            children.append((0x10000, blob(0xfade0b01, b"")))
         table_end = 12 + len(children) * 8
         indexes = []
         offset = table_end
@@ -306,6 +311,32 @@ class P010SigningTests(unittest.TestCase):
             self.assertTrue(audit["adhoc_flag_present"])
             self.assertEqual(audit["signature_kind"], "ADHOC")
             self.assertEqual(audit["code_directory"]["special_slots_verified"], [2, 5, 7])
+
+    def test_independent_parser_accepts_only_explicit_empty_apple_adhoc_wrapper_layout(self) -> None:
+        env = {
+            **self.env,
+            "P010_TEST_EMPTY_ADHOC_SLOT": "1",
+            "P010_TEST_APPLE_DER": "1",
+        }
+        binary = self.signed_fixture("ios-caffeinate", env=env)
+        with self.assertRaisesRegex(CodeSignatureError, "signature slots"):
+            audit_code_signature(binary.read_bytes(), expected_identifier="ios-caffeinate")
+        audit = audit_code_signature(
+            binary.read_bytes(), expected_identifier="ios-caffeinate", allow_apple_adhoc_layout=True
+        )
+        self.assertTrue(audit["independent_code_directory_verified"])
+        self.assertTrue(audit["entitlements_exact_match"])
+        self.assertTrue(audit["adhoc_flag_present"])
+        self.assertTrue(audit["empty_adhoc_signature_slot_present"])
+
+        unmarked = self.signed_fixture(
+            "ios-caffeinate",
+            env={**env, "P010_TEST_UNMARKED": "1"},
+        )
+        with self.assertRaisesRegex(CodeSignatureError, "only supported for ad hoc"):
+            audit_code_signature(
+                unmarked.read_bytes(), expected_identifier="ios-caffeinate", allow_apple_adhoc_layout=True
+            )
 
     def test_independent_signature_parser_detects_modified_executable_bytes(self) -> None:
         binary = self.signed_fixture("ios-caffeinate")

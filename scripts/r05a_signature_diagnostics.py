@@ -75,9 +75,13 @@ def run(command: list[str]) -> dict[str, Any]:
         return {"command": command, "exit_code": None, "stdout": "", "stderr": "", "error": str(error)}
 
 
-def signature_audit(binary: bytes, name: str) -> dict[str, Any]:
+def signature_audit(binary: bytes, name: str, *, apple_native_control: bool = False) -> dict[str, Any]:
     try:
-        return audit_code_signature(binary, expected_identifier=name)
+        return audit_code_signature(
+            binary,
+            expected_identifier=name,
+            allow_apple_adhoc_layout=apple_native_control,
+        )
     except CodeSignatureError as error:
         return {
             "independent_code_directory_verified": False,
@@ -231,14 +235,15 @@ def collect_diagnostics(*, failed_package: Path, failed_receipt: Path, unsigned_
         target.write_bytes(data)
         target.chmod(0o700)
         sign_result = run([
-            "/usr/bin/codesign", "--force", "--sign", "-", "--entitlements", str(profile), str(target),
+            "/usr/bin/codesign", "--force", "--sign", "-", "--identifier", name,
+            "--entitlements", str(profile), str(target),
         ])
         adhoc_binaries[name] = target
         cases_output[adhoc_case]["binaries"][name] = {
             "unsigned_source_sha256": sha256_bytes(data),
             "diagnostic_copy_sha256_after_signing": sha256_file(target),
             "apple_native_adhoc_signing": sign_result,
-            "independent_signature_audit": signature_audit(target.read_bytes(), name),
+            "independent_signature_audit": signature_audit(target.read_bytes(), name, apple_native_control=True),
             "commands": {},
         }
 
