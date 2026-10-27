@@ -65,7 +65,11 @@ jobs:
             dist/ios-caffeinated
             dist/SHA256SUMS
             dist/build-info.json
-            build/h005/ABI-INSPECTION.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS-Caffeinate-H005-ABI-INSPECTION-ONLY
+          if-no-files-found: error
+          path: build/h005/ABI-INSPECTION.txt
   ios-artifact-inspection:
     needs: ios-cross-build
     runs-on: macos-latest
