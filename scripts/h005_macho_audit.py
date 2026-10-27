@@ -54,6 +54,8 @@ def inspect(binary: Path, sdk_version: str, xcode_version: str, clang_version: s
     ))
     if not min_os_matches:
         raise InspectionError("Mach-O minimum iOS version is not 12.0")
+    if "LC_CODE_SIGNATURE" in load_commands:
+        raise InspectionError("cross-build input must be unsigned before the pinned H005B signing step")
     if "iokit.framework" not in dependencies.lower():
         raise InspectionError("IOKit.framework is missing from the load dependencies")
     if "corefoundation.framework" not in dependencies.lower():
@@ -65,6 +67,7 @@ def inspect(binary: Path, sdk_version: str, xcode_version: str, clang_version: s
         "IORegistryEntryCreateCFProperties",
         "IOObjectRelease",
         "dlsym",
+        "alarm",
     )
     for symbol in required_imports:
         if symbol not in undefined:
@@ -102,6 +105,7 @@ def inspect(binary: Path, sdk_version: str, xcode_version: str, clang_version: s
         "IOPMCopyAssertionsByProcess=runtime_dlsym_only",
         "IOPMCopyAssertionsStatus=runtime_dlsym_only",
         "assertion_mutation_imports=NONE",
+        "execution_timeout_seconds=15",
         "runtime_behavior=UNVERIFIED_ON_IOS_12.5.7",
         "device_transfer=NOT_PERFORMED",
         "",

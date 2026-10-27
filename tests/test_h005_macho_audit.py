@@ -17,7 +17,7 @@ class MachOAuditTests(unittest.TestCase):
             "otool -L": ("/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit\n"
                          "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation\n"),
             "nm -u": ("U _IOServiceMatching\nU _IOServiceGetMatchingService\n"
-                      "U _IORegistryEntryCreateCFProperties\nU _IOObjectRelease\nU _dlsym\n"),
+                      "U _IORegistryEntryCreateCFProperties\nU _IOObjectRelease\nU _dlsym\nU _alarm\n"),
             "strings": "IOPMCopyAssertionsByProcess\nIOPMCopyAssertionsStatus\n",
         }
 
@@ -31,6 +31,7 @@ class MachOAuditTests(unittest.TestCase):
         self.assertIn("minimum_os=12.0", report)
         self.assertIn("IOPMCopyAssertionsStatus=runtime_dlsym_only", report)
         self.assertIn("assertion_mutation_imports=NONE", report)
+        self.assertIn("execution_timeout_seconds=15", report)
 
     def test_optional_iopm_direct_link_fails_closed(self) -> None:
         self.outputs["nm -u"] += "U _IOPMCopyAssertionsByProcess\n"

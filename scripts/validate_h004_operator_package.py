@@ -49,7 +49,7 @@ REQUIRED_DOCS = {
         "P014 journal",
             "missing journal with prior project runtime history or unknown history",
             "Do not reset or create a journal during Phase 0",
-        "assertion state/ownership/release status is `UNKNOWN`",
+        "critical query is unavailable/incomplete",
     ],
     "H004-EVIDENCE-GUIDE.md": [
         "DEVICE_REPORTED",
@@ -76,7 +76,22 @@ REQUIRED_DOCS = {
         "UNAVAILABLE",
         "UNKNOWN",
         "assertion_mutation_attempted",
+        "xnu-4903.221.2",
+        "MAGIC_PACKET_WAKE_ENABLED",
+        "NO_ACTIVE_SLEEP_PREVENTION_OBSERVED_COMPLETE",
+        "NOT_PERFORMED_NO_PROCESS_NAMES_QUERIED",
+        "execution_timeout_seconds",
         "Do not stage or transfer this diagnostic under H004",
+    ],
+    "H005B-DIAGNOSTIC-RUNBOOK.md": [
+        "H005B-SIGNED-DEVICE-UNVERIFIED",
+        "separate written authorization",
+        "independent reviewer",
+        "codesign --verify --strict --verbose=4",
+        "exactly once in the foreground",
+        "ACTIVE_SLEEP_PREVENTION_OWNER_UNKNOWN",
+        "PENDING_SEPARATE_AUTHORIZATION",
+        "separate cleanup authorization",
     ],
     "H005-DPKG-AUDIT-EXCEPTION.md": [
         "missing the `md5sums` control file",
@@ -95,6 +110,7 @@ REQUIRED_DOCS = {
         "physical acceptance has not been performed",
         "Do not stage or transfer the H005 binary",
         "independent local physical recovery",
+        "H005B diagnostic runbook",
     ],
 }
 
@@ -161,6 +177,7 @@ def main() -> int:
         DOCS / "P019-OPERATOR-RUNBOOK.md",
         DOCS / "P014-DEVICE-ACCEPTANCE.md",
         DOCS / "P020-HARDWARE-HANDOFF.md",
+        DOCS / "H005B-DIAGNOSTIC-RUNBOOK.md",
     ])
     for path in markdown_files:
         content = path.read_text(encoding="utf-8")

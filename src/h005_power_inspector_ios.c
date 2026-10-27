@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 /*
  * These private-on-iOS APIs use the IOPMLib.h ABI documented by Apple for
@@ -474,11 +475,17 @@ int main(int argc, char **argv)
         return 64;
     }
 
+    (void)alarm(H005_EXECUTION_TIMEOUT_SECONDS);
     h005_collect(&provider, &snapshot);
+    (void)alarm(0);
     if (!h005_write_json(&snapshot, output, sizeof(output), &output_size)) {
-        fputs("{\"schema\":\"ioscaffeinate.h005.power-inspector.v1\","
+        fputs("{\"schema\":\"ioscaffeinate.h005.power-inspector.v2\","
               "\"read_only\":true,\"assertion_mutation_attempted\":false,"
-              "\"classification\":\"UNKNOWN\",\"enumeration_complete\":false,"
+              "\"execution_timeout_seconds\":15,"
+              "\"classification\":\"UNKNOWN\","
+              "\"project_assertion_attribution\":\"NOT_PERFORMED_NO_PROCESS_NAMES_QUERIED\","
+              "\"sleep_prevention_ownership\":\"UNESTABLISHED\","
+              "\"enumeration_complete\":false,"
               "\"error\":\"OUTPUT_LIMIT\"}\n", stdout);
         return 21;
     }
