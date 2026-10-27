@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -30,9 +31,28 @@ def inspect(binary: Path, sdk_version: str, xcode_version: str, clang_version: s
 
     if "mach-o" not in description.lower() or "arm64" not in description.lower():
         raise InspectionError("binary is not a Mach-O ARM64 executable")
-    if not ("platform IOS" in load_commands or "LC_VERSION_MIN_IPHONEOS" in load_commands):
+    build_commands = re.findall(
+        r"\bcmd LC_BUILD_VERSION\b(.*?)(?=\n\s*Load command\b|\Z)",
+        load_commands,
+        flags=re.DOTALL,
+    )
+    ios_build_commands = [
+        block for block in build_commands
+        if re.search(r"^\s*platform\s+2\s*$", block, flags=re.MULTILINE)
+        or re.search(r"^\s*platform\s+IOS\s*$", block, flags=re.MULTILINE)
+    ]
+    legacy_ios_command = "LC_VERSION_MIN_IPHONEOS" in load_commands
+    if not ios_build_commands and not legacy_ios_command:
         raise InspectionError("Mach-O load commands do not identify the iOS platform")
-    if "minos 12.0" not in load_commands and "version 12.0" not in load_commands:
+    min_os_matches = any(
+        re.search(r"^\s*minos\s+12\.0\s*$", block, flags=re.MULTILINE)
+        for block in ios_build_commands
+    ) or (legacy_ios_command and re.search(
+        r"\bcmd LC_VERSION_MIN_IPHONEOS\b.*?^\s*version\s+12\.0\s*$",
+        load_commands,
+        flags=re.DOTALL | re.MULTILINE,
+    ))
+    if not min_os_matches:
         raise InspectionError("Mach-O minimum iOS version is not 12.0")
     if "iokit.framework" not in dependencies.lower():
         raise InspectionError("IOKit.framework is missing from the load dependencies")

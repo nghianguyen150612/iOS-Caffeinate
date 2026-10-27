@@ -12,7 +12,8 @@ class MachOAuditTests(unittest.TestCase):
         self.binary = Path("build/h005/ios-power-preflight-inspector")
         self.outputs = {
             "file": "build/h005/ios-power-preflight-inspector: Mach-O 64-bit executable arm64",
-            "otool -l": "cmd LC_BUILD_VERSION\nplatform IOS\nminos 12.0\nsdk 26.0\n",
+            "otool -l": ("Load command 8\ncmd LC_BUILD_VERSION\nplatform 2\n"
+                         "minos 12.0\nsdk 26.0\n"),
             "otool -L": ("/System/Library/Frameworks/IOKit.framework/Versions/A/IOKit\n"
                          "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation\n"),
             "nm -u": ("U _IOServiceMatching\nU _IOServiceGetMatchingService\n"
@@ -38,9 +39,17 @@ class MachOAuditTests(unittest.TestCase):
                 audit.inspect(self.binary, "12.4", "Xcode test", "Apple clang test")
 
     def test_wrong_minimum_os_is_rejected(self) -> None:
-        self.outputs["otool -l"] = "cmd LC_BUILD_VERSION\nplatform IOS\nminos 13.0\nsdk 26.0\n"
+        self.outputs["otool -l"] = ("Load command 8\ncmd LC_BUILD_VERSION\nplatform 2\n"
+                                     "minos 13.0\nsdk 26.0\n")
         with patch.object(audit, "command", side_effect=self.fake_command):
             with self.assertRaisesRegex(audit.InspectionError, "minimum iOS version"):
+                audit.inspect(self.binary, "12.4", "Xcode test", "Apple clang test")
+
+    def test_ios_simulator_platform_is_rejected(self) -> None:
+        self.outputs["otool -l"] = ("Load command 8\ncmd LC_BUILD_VERSION\nplatform 7\n"
+                                     "minos 12.0\nsdk 26.0\n")
+        with patch.object(audit, "command", side_effect=self.fake_command):
+            with self.assertRaisesRegex(audit.InspectionError, "do not identify the iOS platform"):
                 audit.inspect(self.binary, "12.4", "Xcode test", "Apple clang test")
 
     def test_mutation_import_is_rejected(self) -> None:
