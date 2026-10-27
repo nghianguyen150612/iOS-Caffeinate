@@ -52,7 +52,7 @@ Schema v2 adds `assertion_domain`, per-record `assertion_role` and owner state, 
 | `ACTIVE_SLEEP_PREVENTION_OWNER_IDENTIFIED` | A recognized active sleep-prevention type is tied to a PID, or the documented CPU Dark Wake driver bit is tied to a driver owner label. This does not identify a process name or attribute it to iOS-Caffeinate. |
 | `ACTIVE_SLEEP_PREVENTION_OWNER_UNKNOWN` | A relevant active aggregate has no matching per-process owner, or a relevant active owner key is missing. This blocks clearance. |
 | `NO_ACTIVE_SLEEP_PREVENTION_OBSERVED_COMPLETE` | All critical sources are complete and recognized, with no active sleep-prevention owner observed. This is a bounded snapshot, not a safety certificate or proof that a project process is absent. |
-| `UNESTABLISHED` | A critical source is unavailable/incomplete, an active type/driver bit is unknown, a driver owner is unknown, or evidence conflicts. This blocks clearance. |
+| `UNESTABLISHED` | A critical source is unavailable/incomplete, an active display-only record does not establish system-sleep ownership, an active type/driver bit is unknown, a driver owner is unknown, or evidence conflicts. This blocks clearance. |
 
 The global `classification` remains separate. Any observed process record, nonzero aggregate, driver mask, or driver record yields `ASSERTIONS_PRESENT`, including known unrelated system assertion types and network wake configuration. A recognized unrelated network assertion is not automatically labeled an unresolved iOS-Caffeinate sleep assertion; this diagnostic does not perform project-process attribution.
 
