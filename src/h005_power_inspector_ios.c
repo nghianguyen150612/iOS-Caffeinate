@@ -313,7 +313,9 @@ static void h005_query_driver_assertions(struct h005_snapshot *snapshot)
         snapshot->driver_registry.reason = H005_REASON_SERVICE_UNAVAILABLE;
         return;
     }
-    service = IOServiceGetMatchingService(kIOMasterPortDefault, matching);
+    /* The SDK marks kIOMasterPortDefault unavailable on iOS; zero is the
+     * documented default-port value accepted by IOServiceGetMatchingService. */
+    service = IOServiceGetMatchingService(MACH_PORT_NULL, matching);
     if (service == IO_OBJECT_NULL) {
         snapshot->driver_registry.state = H005_SOURCE_UNAVAILABLE;
         snapshot->driver_registry.reason = H005_REASON_SERVICE_UNAVAILABLE;
