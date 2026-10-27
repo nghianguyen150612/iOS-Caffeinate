@@ -4,7 +4,7 @@
 
 H005 is host-side preparation only. It does not certify H004 as `PASS`, establish P011 acceptance, or qualify v0.2.0-rc1. The current H004 state remains `INCOMPLETE / REVIEW_PENDING`; physical acceptance has not been performed. No official iOS-Caffeinate installation, daemon start, package transfer, assertion operation, reboot, or device control was performed by this work.
 
-The H005 assertion inspector is not part of the package and must not be staged or transferred under H004 authorization. Physical deployment/execution needs a separate reviewed and authorized session. If available local read-only methods cannot directly establish driver and process assertion state/ownership during H004, record `UNKNOWN` and stop.
+The H005 assertion inspector is not part of the package and must not be staged or transferred under H004 authorization. Physical deployment/execution needs a separate reviewed and authorized session described in the [H005B diagnostic runbook](H005B-DIAGNOSTIC-RUNBOOK.md). XNU `xnu-4903.221.2` identifies driver mask bit `0x100` as magic-packet wake enabled; the previously reported `en0` record is not equivalent to a user-space `PreventUserIdleSystemSleep` assertion. This source interpretation does not independently verify the device's current state or attribute the record to a process. If H004's already available read-only methods cannot establish complete process, aggregate, and driver state/ownership, record `UNKNOWN` and stop.
 
 ## Previously reported observations
 
@@ -17,7 +17,7 @@ The following are retained as **operator-reported preliminary observations**. Th
 | Official iOS-Caffeinate installation | None detected | Must be confirmed from the live package database and paths. |
 | Project state and log directories | Reported absent | Must be confirmed by read-only metadata checks; do not read unrelated logs. |
 | Project process/socket/launchd observations | Previously absent | Must be repeated locally and captured with exact commands and exit results. |
-| Driver assertion | `IOPMrootDomain`, type mask `0x100`, owner `en0`, ID `500`, level `255` | This is a reported positive driver assertion observation. It is not independently verified and must not be treated as absent or cleared. |
+| Driver assertion | `IOPMrootDomain`, type mask `0x100`, owner `en0`, ID `500`, level `255` | Operator-reported positive driver-domain observation. XNU source defines `0x100` as magic-packet wake enabled; it is not equivalent to `PreventUserIdleSystemSleep`. The current device observation, enumeration completeness, and process ownership are not independently verified. |
 | Process-level assertion ownership | Not yet verified | This remains a stop condition until directly and completely observed. |
 | Historical October 18 trial logs | Unavailable | Do not reconstruct or infer trial acceptance from memory. |
 | Physical acceptance | Not performed | H004 and P011 remain pending. |

@@ -70,6 +70,100 @@ jobs:
           name: iOS-Caffeinate-H005-ABI-INSPECTION-ONLY
           if-no-files-found: error
           path: build/h005/ABI-INSPECTION.txt
+  h005b-inspector-cross-build:
+    name: H005B standalone inspector cross-build (iOS 12 ARM64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Build and ABI-audit the unsigned standalone inspector
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          mkdir -p build/h005b/cross
+          H005_OUTPUT_DIR=build/h005b/cross ./scripts/build_h005_inspector.sh
+          git rev-parse HEAD > build/h005b/cross/source-commit.txt
+          git rev-parse 'HEAD^{tree}' > build/h005b/cross/source-tree.txt
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: H005B-UNSIGNED-CROSS-BUILD-INTERNAL
+          if-no-files-found: error
+          path: build/h005b/cross/
+  h005b-inspector-sign:
+    name: H005B pinned signing and independent Mach-O audit
+    needs: h005b-inspector-cross-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: H005B-UNSIGNED-CROSS-BUILD-INTERNAL
+          path: build/h005b/cross
+      - name: Validate H005B mocks and build the exact pinned H003 signer
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_h005b_artifact tests.test_h005b_stack tests.test_h005_dpkg_exception tests.test_h005_macho_audit -v
+          ./scripts/test_h005_inspector.sh
+          mkdir -m 700 -p build/h005b/signer
+          ./scripts/h003_build_signer.sh --output-dir build/h005b/signer
+          test "$(sha256sum build/h005b/signer/ldid | awk '{print $1}')" = '15329a4714608bcfd61717fd2e6dd4fd1aec48965fa90dd312a94ed9e6d7093c'
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          test "$(git rev-parse HEAD)" = "$(cat build/h005b/cross/source-commit.txt)"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$(cat build/h005b/cross/source-tree.txt)"
+      - name: Sign only the standalone diagnostic with the reviewed R05A profile
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/build/h005b/signer${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          mkdir -m 700 -p build/h005b/pre-apple
+          python3 scripts/h005b_artifact.py sign \
+            --binary build/h005b/cross/ios-power-preflight-inspector \
+            --abi-report build/h005b/cross/ABI-INSPECTION.txt \
+            --signer "$GITHUB_WORKSPACE/build/h005b/signer/ldid" \
+            --signer-provenance build/h005b/signer/signer-provenance.json \
+            --source-sha "$(cat build/h005b/cross/source-commit.txt)" \
+            --source-tree "$(cat build/h005b/cross/source-tree.txt)" \
+            --output-dir build/h005b/pre-apple
+      - uses: actions/upload-artifact@v4
+        with:
+          name: H005B-SIGNED-PENDING-APPLE-VERIFICATION
+          if-no-files-found: error
+          path: build/h005b/pre-apple/
+  h005b-inspector-apple-verification:
+    name: H005B Apple strict signature verification
+    needs: h005b-inspector-sign
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: H005B-SIGNED-PENDING-APPLE-VERIFICATION
+          path: build/h005b/pre-apple
+      - name: Verify source identity and the exact signed candidate
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          test "$(git rev-parse HEAD)" = "$(cat build/h005b/pre-apple/source-commit.txt)"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$(cat build/h005b/pre-apple/source-tree.txt)"
+          mkdir -m 700 -p build/h005b/final
+          python3 scripts/h005b_artifact.py verify \
+            --candidate-dir build/h005b/pre-apple \
+            --source-sha "$(cat build/h005b/pre-apple/source-commit.txt)" \
+            --source-tree "$(cat build/h005b/pre-apple/source-tree.txt)" \
+            --output-dir build/h005b/final
+      - uses: actions/upload-artifact@v4
+        with:
+          name: H005B-SIGNED-DEVICE-UNVERIFIED
+          if-no-files-found: error
+          path: build/h005b/final/
   ios-artifact-inspection:
     needs: ios-cross-build
     runs-on: macos-latest
@@ -1648,6 +1742,7 @@ jobs:
           from h003_stack import StackValidationError, validate_h003_stack
           from h004_stack import H004StackValidationError, validate_h004_stack
           from h005_stack import H005StackValidationError, validate_h005_stack
+          from h005b_stack import H005BStackValidationError, validate_h005b_stack
           from r05a_stack import R05AStackValidationError, validate_r05a_stack
 
           repo = os.environ["GITHUB_REPOSITORY"]
@@ -1950,13 +2045,64 @@ jobs:
                   except H005StackValidationError as error:
                       raise SystemExit(str(error)) from None
                   integration_mode = "STACKED_H005"
+              elif current["base"]["ref"] == "feat/h005-physical-preflight-inspector":
+                  h005 = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/pulls/24"], check=True, capture_output=True, text=True).stdout)
+                  r05a = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/pulls/23"], check=True, capture_output=True, text=True).stdout)
+                  h004 = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/pulls/22"], check=True, capture_output=True, text=True).stdout)
+                  h003 = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/pulls/21"], check=True, capture_output=True, text=True).stdout)
+                  h002 = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/pulls/20"], check=True, capture_output=True, text=True).stdout)
+                  p020 = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/pulls/19"], check=True, capture_output=True, text=True).stdout)
+                  main = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/main"], check=True, capture_output=True, text=True).stdout)
+                  h005_branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/feat/h005-physical-preflight-inspector"], check=True, capture_output=True, text=True).stdout)
+                  r05a_branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/fix/r05a-apple-signature-integrity"], check=True, capture_output=True, text=True).stdout)
+                  h004_branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/docs/h004-device-phase0-readiness"], check=True, capture_output=True, text=True).stdout)
+                  h003_branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/fix/h003-p011-signer-preflight"], check=True, capture_output=True, text=True).stdout)
+                  h002_branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/fix/h002-p011-legacy-checksum"], check=True, capture_output=True, text=True).stdout)
+                  p020_branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/release/p020-v02-integration"], check=True, capture_output=True, text=True).stdout)
+
+                  def is_ancestor(ancestor, commit):
+                      result = subprocess.run(
+                          ["git", "merge-base", "--is-ancestor", ancestor, commit],
+                          check=False, capture_output=True, text=True)
+                      if result.returncode not in (0, 1):
+                          raise SystemExit("could not evaluate H005B stack ancestry")
+                      return result.returncode == 0
+
+                  def merge_base(left, right):
+                      return subprocess.run(
+                          ["git", "merge-base", left, right],
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+                  try:
+                      integration_base = validate_h005b_stack(
+                          current_pr=current,
+                          h005_pr=h005,
+                          r05a_pr=r05a,
+                          h004_pr=h004,
+                          h003_pr=h003,
+                          h002_pr=h002,
+                          p020_pr=p020,
+                          h005_branch_sha=h005_branch["commit"]["sha"],
+                          r05a_branch_sha=r05a_branch["commit"]["sha"],
+                          h004_branch_sha=h004_branch["commit"]["sha"],
+                          h003_branch_sha=h003_branch["commit"]["sha"],
+                          h002_branch_sha=h002_branch["commit"]["sha"],
+                          p020_branch_sha=p020_branch["commit"]["sha"],
+                          main_sha=main["commit"]["sha"],
+                          source_sha=os.environ["P020_SOURCE_SHA"],
+                          is_ancestor=is_ancestor,
+                          merge_base=merge_base,
+                      )
+                  except H005BStackValidationError as error:
+                      raise SystemExit(str(error)) from None
+                  integration_mode = "STACKED_H005B"
               else:
                   raise SystemExit("current PR base branch is not a supported P020 integration target")
           else:
               branch = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/branches/main"], check=True, capture_output=True, text=True).stdout)
               integration_base = {"branch": "main", "sha": branch["commit"]["sha"]}
           Path("build/p020/integration-base.json").write_text(json.dumps(integration_base, sort_keys=True, indent=2) + "\n")
-          if integration_mode in ("STACKED_H002", "STACKED_H003", "STACKED_H004", "STACKED_R05A", "STACKED_H005"):
+          if integration_mode in ("STACKED_H002", "STACKED_H003", "STACKED_H004", "STACKED_R05A", "STACKED_H005", "STACKED_H005B"):
               expected_base_sha = "57b06c534d18f094ad59e4229e626fae51668de9"
               subprocess.run(["git", "merge-base", "--is-ancestor", expected_base_sha, os.environ["P020_SOURCE_SHA"]], check=True)
               actual_merge_base = subprocess.run(["git", "merge-base", os.environ["P020_SOURCE_SHA"], expected_base_sha], check=True, capture_output=True, text=True).stdout.strip()

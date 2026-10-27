@@ -11,6 +11,7 @@
 #define H005_MAX_DRIVER_ASSERTIONS 32
 #define H005_TEXT_CAPACITY 64
 #define H005_JSON_CAPACITY 16384
+#define H005_EXECUTION_TIMEOUT_SECONDS 15
 
 enum h005_source_state {
     H005_SOURCE_NOT_RUN = 0,
@@ -35,6 +36,13 @@ enum h005_classification {
     H005_ASSERTIONS_PRESENT,
     H005_UNAVAILABLE,
     H005_UNKNOWN
+};
+
+enum h005_sleep_prevention_assessment {
+    H005_SLEEP_UNESTABLISHED = 0,
+    H005_SLEEP_NO_ACTIVE_PREVENTION_OBSERVED,
+    H005_SLEEP_ACTIVE_OWNER_IDENTIFIED,
+    H005_SLEEP_ACTIVE_OWNER_UNKNOWN
 };
 
 struct h005_source {
@@ -98,6 +106,7 @@ struct h005_snapshot {
 
     bool enumeration_complete;
     enum h005_classification classification;
+    enum h005_sleep_prevention_assessment sleep_prevention_assessment;
 };
 
 struct h005_provider {
@@ -120,6 +129,8 @@ bool h005_add_driver_assertion(struct h005_snapshot *snapshot,
 const char *h005_classification_name(enum h005_classification classification);
 const char *h005_source_state_name(enum h005_source_state state);
 const char *h005_source_reason_name(enum h005_source_reason reason);
+const char *h005_sleep_prevention_assessment_name(
+    enum h005_sleep_prevention_assessment assessment);
 int h005_exit_code(enum h005_classification classification);
 
 /* Writes one bounded JSON object. Returns false if it cannot fit in capacity. */
