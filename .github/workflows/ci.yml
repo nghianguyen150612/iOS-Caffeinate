@@ -137,7 +137,7 @@ jobs:
   h005b-inspector-apple-verification:
     name: H005B Apple strict signature verification
     needs: h005b-inspector-sign
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
         with:
