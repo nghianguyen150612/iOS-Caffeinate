@@ -154,6 +154,22 @@ static void mock_network_aggregate(struct h005_snapshot *snapshot)
     (void)h005_add_aggregate_status(snapshot, &record);
 }
 
+static void mock_legacy_display_assertion(struct h005_snapshot *snapshot)
+{
+    struct h005_process_assertion record;
+    mock_empty_process(snapshot);
+    snapshot->process_entries_seen = 1;
+    memset(&record, 0, sizeof(record));
+    record.pid_known = true;
+    record.pid = 25;
+    record.type_known = true;
+    (void)snprintf(record.type, sizeof(record.type), "NoDisplaySleepAssertion");
+    record.level_known = true;
+    record.level_recognized = true;
+    record.level = 255;
+    (void)h005_add_process_assertion(snapshot, &record);
+}
+
 static void mock_unknown_process_owner(struct h005_snapshot *snapshot)
 {
     struct h005_process_assertion record;
@@ -329,6 +345,23 @@ static void test_known_network_assertion_is_not_sleep_prevention(void)
     assert(strstr(output, "NOT_PERFORMED_NO_PROCESS_NAMES_QUERIED") != NULL);
 }
 
+static void test_legacy_no_display_sleep_is_display_only_and_not_cleared(void)
+{
+    const struct h005_provider provider = {
+        mock_legacy_display_assertion, mock_empty_aggregate, mock_empty_driver
+    };
+    struct h005_snapshot snapshot;
+    char output[H005_JSON_CAPACITY];
+
+    h005_collect(&provider, &snapshot);
+    assert(snapshot.classification == H005_ASSERTIONS_PRESENT);
+    assert(snapshot.enumeration_complete);
+    assert(snapshot.sleep_prevention_assessment == H005_SLEEP_UNESTABLISHED);
+    assert(h005_write_json(&snapshot, output, sizeof(output), NULL));
+    assert(strstr(output, "NoDisplaySleepAssertion") != NULL);
+    assert(strstr(output, "\"assertion_role\":\"DISPLAY_ONLY\"") != NULL);
+}
+
 static void test_unknown_owner_and_unmatched_aggregate_block_clearance(void)
 {
     const struct h005_provider process_owner = {
@@ -454,6 +487,7 @@ int main(void)
     test_any_user_or_driver_record_is_positive_evidence();
     test_driver_magic_packet_bit_is_not_user_sleep_prevention();
     test_known_network_assertion_is_not_sleep_prevention();
+    test_legacy_no_display_sleep_is_display_only_and_not_cleared();
     test_unknown_owner_and_unmatched_aggregate_block_clearance();
     test_unknown_types_and_driver_owners_are_not_cleared();
     test_active_owner_evidence_does_not_override_incomplete_source();

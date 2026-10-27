@@ -107,11 +107,11 @@ static enum h005_assertion_role h005_assertion_role(const char *type, bool known
     }
     if (strcmp(type, "PreventUserIdleSystemSleep") == 0 ||
         strcmp(type, "PreventSystemSleep") == 0 ||
-        strcmp(type, "NoIdleSleepAssertion") == 0 ||
-        strcmp(type, "NoDisplaySleepAssertion") == 0) {
+        strcmp(type, "NoIdleSleepAssertion") == 0) {
         return H005_ROLE_SLEEP_PREVENTION;
     }
-    if (strcmp(type, "PreventUserIdleDisplaySleep") == 0) {
+    if (strcmp(type, "PreventUserIdleDisplaySleep") == 0 ||
+        strcmp(type, "NoDisplaySleepAssertion") == 0) {
         return H005_ROLE_DISPLAY_ONLY;
     }
     if (strcmp(type, "NetworkAccess") == 0) {
