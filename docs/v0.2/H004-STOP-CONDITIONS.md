@@ -33,6 +33,8 @@ Stop immediately and preserve observations if:
 
 An absent CLI, unsupported project command, missing optional health source, or unavailable telemetry is recorded as `UNAVAILABLE` and is not retried. A value that cannot safely be established is `UNKNOWN`. These states do not become `false`, `clear`, or `PASS`.
 
+The reported IOPMrootDomain driver assertion (`0x100`, owner `en0`, ID `500`, level `255`) is a positive operator-reported observation pending direct review. Treat it as unresolved until a separately authorized local read-only observation establishes the current state. The H005 inspector cannot be transferred or executed under H004; an unavailable or incomplete existing query is `UNKNOWN` and stops progression.
+
 ## At a stop
 
 - Stop issuing commands. Keep the operator physically present.

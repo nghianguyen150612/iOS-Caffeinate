@@ -66,6 +66,36 @@ REQUIRED_DOCS = {
         "OBSERVATIONS_RECORDED_REVIEW_PENDING",
         "DEVICE_VERIFIED",
     ],
+    "H005-POWER-ASSERTION-INSPECTOR.md": [
+        "IOPMCopyAssertionsByProcess",
+        "IOPMCopyAssertionsStatus",
+        "AVAILABLE_MAC_OS_X_VERSION_10_5_AND_LATER",
+        "DriverPMAssertionsDetailed",
+        "NO_ASSERTIONS_OBSERVED",
+        "ASSERTIONS_PRESENT",
+        "UNAVAILABLE",
+        "UNKNOWN",
+        "assertion_mutation_attempted",
+        "Do not stage or transfer this diagnostic under H004",
+    ],
+    "H005-DPKG-AUDIT-EXCEPTION.md": [
+        "missing the `md5sums` control file",
+        "173 entries",
+        "cy+cpu.*",
+        "H005_DPKG_AUDIT_TECHNICAL_SHAPE_MATCH_REVIEW_REQUIRED",
+        "never accepts the exception",
+        "independent human reviewer",
+        "only the `/.` marker",
+    ],
+    "H005-ACCEPTANCE-HANDOFF.md": [
+        "2026-10-25 20:41:49",
+        "owner `en0`, ID `500`, level `255`",
+        "Process-level assertion ownership",
+        "Historical October 18 trial logs",
+        "physical acceptance has not been performed",
+        "Do not stage or transfer the H005 binary",
+        "independent local physical recovery",
+    ],
 }
 
 
