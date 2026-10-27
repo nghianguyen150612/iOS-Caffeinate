@@ -1,6 +1,6 @@
 # R05 Release Blocker Matrix
 
-**Assessment date:** 2026-10-24 UTC
+**Assessment date:** 2026-10-27 UTC
 **Reference target:** iPad mini 2 A1489 (`iPad4,4`), iOS 12.5.7, Amethyst/Procursus rootful
 **Stable v0.2.0 publication:** not authorized; no stable tag or release is created by R05.
 
@@ -22,9 +22,9 @@ This matrix distinguishes host validation from device evidence. A hash or CI res
 
 | Gate | Current classification | Required next evidence/action |
 |---|---|---|
-| H004 Phase 0 | `INCOMPLETE / REVIEW_PENDING`. The supplied SSH observations are preliminary, not a complete direct inspection or P009 record. | Physically attended, read-only H004 inspection; preserve actual timestamps, sources, clock basis, outputs, recovery method, and independent review. Do not fill the blank result template from this summary. |
-| First-install baseline | `MISSING_FIRST_INSTALL_REVIEW_REQUIRED`. Supplied observations report package absent, no standard project binaries/process/socket/lock/launchd registration/live plist, and no P014 journal. A missing journal alone does not establish a safe baseline. | Establish known prior runtime/assertion history and direct assertion-owner/cleanup state. Unknown ownership or history remains a stop. No journal reset is part of H004. |
-| Package database audit | `REVIEW_REQUIRED`. SSH notes report warnings involving virtual hardware-capability packages; five representative packages were reported installed and payload-empty. | Capture complete `dpkg --audit` output and package identities on device; independent review must resolve or explicitly bound the warnings before installation. Five samples do not establish the state of every warning. |
+| H004 Phase 0 | `INCOMPLETE / REVIEW_PENDING`. The supplied observations remain operator-reported and are not a complete direct inspection or P009 record. | Physically attended, read-only H004 inspection; preserve actual timestamps, sources, clock basis, outputs, recovery method, and independent review. Do not fill the blank result template from the reported observations. |
+| First-install baseline | `MISSING_FIRST_INSTALL_REVIEW_REQUIRED`. Operator reports no official package, project state/log directories, project process/socket/launchd observation, and records a boot time of 2026-10-25 20:41:49. A missing journal or boot time alone does not establish a safe baseline. | Establish known prior runtime/assertion history and direct assertion-owner/cleanup state. Unknown ownership or history remains a stop. No journal reset is part of H004. |
+| Package database audit | `REVIEW_REQUIRED`. Operator reports 173 warnings in the missing-`md5sums` control-file category, with virtual-package metadata as a source-backed hypothesis. | Capture the complete warning set and every database record; validate exact metadata and `/.` file lists, then require independent human review. The extra `cy+cpu.*` entry is unresolved. Empty output or five samples cannot clear the gate. |
 | P011 v0.1.0 acceptance | `PENDING`. Host validation passed; device installation, execution, bounded assertion, stop, cleanup, state preservation, and rollback have not been accepted. | Complete H004 and the attended P011 steps with separate authorization for installation and each other state-changing operation. |
 | v0.2.0-rc1 installed identity and execution | `PENDING`. No RC package has been installed or run on the device. | Verify exact RC artifact SHA and source manifest, then perform separately authorized attended installation only after the P011/Phase 0 gates pass. Record AMFI/codesign logs and actual CLI/daemon results. |
 | P012 physical trials | `PENDING`. | Complete the protocol's 24 valid physical trials and analysis; do not derive trials from CI or SSH anecdotes. |
@@ -36,8 +36,10 @@ This matrix distinguishes host validation from device evidence. A hash or CI res
 | P020 candidate-bound P010 evidence | `PENDING`. H003 signer provenance is available, while P020 still requires signed candidate-bound evidence and independent review. | Admit only the exact RC's source, package, signed binary hashes, profile, signer receipt, and verification outcome; obtain the required external review. |
 | Stable v0.2.0 release | `RELEASE_BLOCKED`; `publication_authorized=false`. | Satisfy all physical gates and signed reviewer receipts, rerun the exact P020 evaluator, and obtain explicit human publication approval as a separate action. |
 
-## Supplied SSH observations (preliminary only)
+## Operator-reported observations (preliminary only; not independently reviewed device evidence)
 
-The operator reports `iPad4,4`, iOS 12.5.7, and `iphoneos-arm` rootful; package `com.ioscaffeinate.cli` absent; no CLI or daemon at standard paths; no observed project daemon process, socket, lock, registered launchd label, or live plist; and no existing P014 recovery journal. These observations are useful for planning the attended inspection but lack the complete command log, timestamps/timebase, direct physical recovery confirmation, full package audit, and independent review required for H004/P011 acceptance.
+The operator reports the target as iPad mini 2 A1489 (`iPad4,4`), iOS 12.5.7, Amethyst/Procursus rootful; boot time `2026-10-25 20:41:49` as displayed by the device; no official iOS-Caffeinate installation; absent project state and log directories; and previously absent project process/socket/launchd observations. The operator also reports an IOPMrootDomain driver assertion with type mask `0x100`, owner `en0`, ID `500`, level `255`; process-level assertion ownership is not verified. Historical October 18 trial logs are unavailable, and physical acceptance has not been performed.
+
+These reports lack the complete raw command log, timebase/uncertainty, direct physical recovery confirmation, full package audit capture, current complete assertion enumeration, and independent review required for H004/P011 acceptance. The reported boot time does not prove that all post-boot assertions are clear. See the [H005 acceptance handoff](H005-ACCEPTANCE-HANDOFF.md) for the next-session prerequisites.
 
 The package database warning summary remains open for review. No package names or additional audit results are inferred here. No physical device command, package installation, journal mutation, stable publication, or release authorization was performed for R05.

@@ -4,6 +4,8 @@
 
 Phase 0 records the device's existing state. It is not P011 installation or acceptance, P018 export, P019 reliability testing, or a release decision. Keep all host-side H003 evidence separate from actual device observations.
 
+Use the [H005 acceptance handoff](H005-ACCEPTANCE-HANDOFF.md) for the reported boot time, project-state, audit, and assertion context. Those reports are not prefilled device evidence. The standalone [H005 power inspector](H005-POWER-ASSERTION-INSPECTOR.md) is not authorized for transfer or execution under H004; if already available approved read-only methods cannot establish complete assertion state and ownership, record `UNKNOWN` and stop.
+
 ## Host prerequisites checked
 
 - Requested repository head: `fb39559766144ab0cf4327273ff3188c58200b6b` (H003).
@@ -27,6 +29,7 @@ Complete every item before beginning. Any unchecked or unknown item blocks inspe
 - [ ] Operator and device UTC clock sources, timebase identifiers, and known uncertainty can be recorded. Do not set or correct either clock during inspection.
 - [ ] A secure evidence destination is ready. Raw output stays private, access-restricted, and outside CI, the repository, and shared artifacts.
 - [ ] The operator has explicitly approved the Phase 0 read-only scope and stop rules. This approval does not include any P011 installation or acceptance action.
+- [ ] An independent reviewer is identified and will review the complete private raw capture before any H004 disposition or dpkg exception acceptance. The reviewer need not be physically present, but cannot accept from derived validator output alone.
 - [ ] P012 safety findings and the applicable P011/P018/P019 procedures have been reviewed. The later P011 physical acceptance gate remains pending.
 
 If the local inspection method or independent recovery is unavailable, record the blocker and stop. Do not try remote SSH or Tailscale as a substitute.
@@ -38,6 +41,8 @@ Follow [the read-only command plan](H004-READONLY-COMMANDS.md) in order. Begin w
 If any required project command is absent or not supported, record `UNAVAILABLE`. Record values that cannot safely be observed as `UNKNOWN`; do not infer a clean or absent state. If execution is denied, unexpectedly terminated, or reports an unplanned error, preserve the exact command, exit/signal result, and observed error, then stop. Do not retry through another shell, privilege, executable, or transport.
 
 If assertion ownership/state or P014 recovery state remains `UNKNOWN`, stop the inspection and preserve that uncertainty. It blocks progression beyond Phase 0, including P011 installation or acceptance; a missing journal alone, an absent diagnostic, or an empty process/socket observation does not prove a safe state.
+
+Treat a reported or directly observed driver assertion as positive evidence until its current type, owner, level, and status are independently reviewed. The reported boot time does not prove that all post-boot assertions are clear.
 
 ### Fresh-install journal classification
 

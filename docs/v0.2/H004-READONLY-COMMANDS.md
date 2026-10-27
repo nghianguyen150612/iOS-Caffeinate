@@ -4,6 +4,8 @@ This plan is for a separately authorized, physically attended Phase 0 inspection
 
 Use the local shell and installed system utilities that are already present. Capture output on the secure separate destination; do not redirect or `tee` output to the iPad, create on-device evidence files, or persist device shell history. Capture the exact command, UTC observation time, exit code, and unedited stdout/stderr in the private session record. Never include credentials in commands. An `UNAVAILABLE` or `UNKNOWN` result stays explicit.
 
+For the previously reported assertion and package-audit context, use the [H005 acceptance handoff](H005-ACCEPTANCE-HANDOFF.md), [power inspector compatibility note](H005-POWER-ASSERTION-INSPECTOR.md), and [dpkg exception procedure](H005-DPKG-AUDIT-EXCEPTION.md). H004 does not authorize staging or transferring the standalone inspector; if currently available local read-only methods cannot establish complete assertion state and ownership, record `UNKNOWN` and stop.
+
 ## 0. Session context and timebase
 
 Before the first device command, record session ID, operator attendance, power/charging observation, independent recovery method, host clock source, UTC, timebase ID, and uncertainty. Do not adjust clocks. At the device, run:
@@ -48,6 +50,8 @@ dpkg --audit
 ```
 
 These report the package database record and incomplete-package audit. Preserve the command exit status even when “not installed” is reported. A partial, contradictory, or unreadable database is a blocker. Do not run `dpkg -i`, `dpkg --configure`, `dpkg --remove`, `apt`, or any repair command.
+
+For the reported virtual-package warning, capture the complete audit output, stderr, and exit code. Follow the bounded [H005 dpkg review](H005-DPKG-AUDIT-EXCEPTION.md) for every warning package and its associated database records. Empty output or `install ok installed` status alone does not clear the audit gate.
 
 ## 3. Project executable paths, metadata, and hashes
 
@@ -135,6 +139,8 @@ If a plist is present and readable, record its metadata and run `plutil -lint` o
 For each present regular, non-symlink plist, record its SHA-256 with the single utility selected in section 3. If the selected utility fails, record the exact error and stop; do not switch utilities.
 
 Before continuing, compare process, socket, lock, assertion, and launchd observations. A mismatch, unexpected owner, assertion state/ownership that remains `UNKNOWN`, loaded service with no explainable registration, or other ambiguous service state is an immediate stop. Do not invoke project status commands to work around a stop condition. Unknown assertion state blocks all progression beyond Phase 0.
+
+The reported driver assertion (`0x100`, owner `en0`, ID `500`, level `255`) is not independently verified and remains a potential active assertion. Preserve it as positive operator-reported context. Do not infer that a reboot cleared it or that an absent project process/socket/launchd registration proves assertion clearance.
 
 ## 5. P014 recovery journal metadata
 

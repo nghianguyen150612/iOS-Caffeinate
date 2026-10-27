@@ -35,6 +35,8 @@ H004 disposition is limited to `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `INCOMPL
 | Debian architecture |  |  |
 | Package database status/version/architecture |  |  |
 | `dpkg --audit` result and exit code |  |  |
+| H005 dpkg technical shape-check result (does not accept exception) |  |  |
+| Independent human dpkg exception decision, reviewer and capture hashes |  |  |
 | Existing CLI path/type/owner/mode |  |  |
 | Existing daemon path/type/owner/mode |  |  |
 | Existing `ic` path/type/target |  |  |
@@ -58,6 +60,8 @@ Do not attribute H003 signer/profile identities to the device. The host-only rec
 | Live launchd plist presence/hash/syntax |  |  |
 | Launchd label registration |  |  |
 | Assertion state and owner, if safely observable |  |  |
+| Driver assertion source completeness and registry summary/details |  |  |
+| Process assertion source availability/completeness and owner mapping |  |  |
 | P014 journal presence/owner/mode/size/mtime |  |  |
 | P014 read-only recovery status and blocker |  |  |
 | P015 Server Mode policy version/validity/explanation |  |  |

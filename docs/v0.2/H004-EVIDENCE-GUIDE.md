@@ -1,6 +1,6 @@
 # H004 — Evidence Guide
 
-This guide applies to a real, separately authorized Phase 0 session. No H004 device observations have been collected by preparing these documents. Host CI, simulations, H003 receipts, and manually typed worksheet values remain host-side or operator-recorded material; they are never represented as on-device command output.
+This guide applies to a real, separately authorized Phase 0 session. No H004 device observations have been collected by preparing these documents. The preliminary items in the [H005 acceptance handoff](H005-ACCEPTANCE-HANDOFF.md) and [R05 blocker matrix](R05-RELEASE-BLOCKER-MATRIX.md) are operator-reported only; they are not independently reviewed device evidence or raw command output. Host CI, simulations, H003 receipts, and manually typed worksheet values remain host-side or operator-recorded material; they are never represented as on-device command output.
 
 ## Session identity and clocks
 

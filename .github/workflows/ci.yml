@@ -48,6 +48,10 @@ jobs:
       - name: Cross-compile with official iPhoneOS SDK for iOS 12 ARM64
         run: |
           ./scripts/build-macos.sh
+          ./scripts/test_h005_inspector.sh
+          python3 -m unittest tests.test_h005_dpkg_exception -v
+          python3 -m unittest tests.test_h005_macho_audit -v
+          ./scripts/build_h005_inspector.sh
           test -L dist/ic
           test "$(readlink dist/ic)" = ios-caffeinate
           (cd dist && shasum -a 256 -c SHA256SUMS)
@@ -61,6 +65,7 @@ jobs:
             dist/ios-caffeinated
             dist/SHA256SUMS
             dist/build-info.json
+            build/h005/ABI-INSPECTION.txt
   ios-artifact-inspection:
     needs: ios-cross-build
     runs-on: macos-latest
